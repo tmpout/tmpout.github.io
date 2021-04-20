@@ -1,0 +1,175 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+PT_NOTE Disinfector                                                        │                   █   │
+~ manizzle                                                                 └───────────────────█ ──┘
+
+Hi all. Just to start, I am not an AVer. AVs suck, they are buggy and are usually prone to 
+exploitation. Feel free to fuzz the hell out of lief and capstone. I am sure they have bugs.
+Now on to how to disinfect...
+
+The PT_NOTE injection technique is quite clean and allows for a ready made memory slot to be filled
+with goodies. But with all infection techniques, there is usually always a disinfection technique.
+This is the nature of life.
+
+I like to think of the easy by which to disinfect as a way to measure just how good an infection
+technique is. The more constants in a disinfection technique, the more likely it will be broken 
+quicker. The game of cat and mouse goes on and on, and is the only way to develop more and more 
+insiduous virii. Keep playing the game with yourself and your virus will be the thing of madness 
+and wonder. 
+
+In this disinfection we use the fact that most virii will try to load the PT_NOTE segment as far
+away as possible in case the binary is large and they are trying to make sure the goodies dont get
+mapped over and cause some loading issues with the binary cause you gotta be surreptitious right?
+
+We use Kmeans as a way to start and cluster the PT_LOAD segments together and we use the the inertia
+of the clusters relative to their centroids as a way to measure how well Kmeans even did. Usually 
+for infections there is 1 PT_NOTE being infected but maybe sblip will tell you later, sometimes 
+there are 2 :)
+
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+
+Once we have found out which segments seems to be mapped a bit farther than usual (though if you 
+wanted to map the PT_NOTE inbetween valid PT_LOADS and re-base the whole image, I mean who would do
+such a thing?), we can begin to delve into its code.
+
+Usually these virii will do some more worming around, infecting more files, but at some point they
+need to let the program continue execution, you know, to avoid suspicion. We can assume that the jmp
+to the original entry point occurs at the end of the infected PT_NOTE segment so we look for that.
+
+Sometimes the jmp is direct, sometimes it is derived. We just follow the jmp target to a point where
+it adds the OEP to the base it calculated before (if you want to get really fancy, you can always 
+use a use-def chain, but of course the virii can get even fancier and force you to resolve your 
+chain cross function boundaries OH MY!)
+
+  add {target}, CONST
+
+Pop that back into your PHDR and you're back to the action
+
+Better luck next time friend!
+
+##################################################################
+
+#!/usr/bin/env python3
+
+from capstone import *
+from collections import Counter
+import lief
+import math
+import numpy as np
+from sklearn.cluster import KMeans
+import sys
+
+# dont be an anti-re sucker dude
+SUCKER_PUNCH = 3
+# tested on a few large and small binaries
+# most normal binaries fall within the range of 1.0SOMETHING
+# even large multi-megabytes ones. I am sure we can find something
+# that breaks it though
+INERTIA_RATIO = 1.1
+
+def find_anomalous_load_segment(segment_ranges):
+  segment_array = np.array(segment_ranges)
+  cluster_2 = KMeans(n_clusters=2, random_state=0).fit(segment_array)
+  cluster_1 = KMeans(n_clusters=1, random_state=0).fit(segment_array)
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+    print("No anomaly detected")
+    return None
+  cluster_counts = {v:k for k,v in Counter(cluster_2.labels_.tolist()).items()}
+  if 1 not in cluster_counts:
+    print("No singular cluster found")
+    return None
+  return segment_array[np.where(cluster_2.labels_ == cluster_counts[1])[0]][0]
+
+
+def find_oep(segment_bytes, segment_start):
+  # we support x64-64 for now but this can be easily ported to 
+  # other architectures as needed. Would be cool to use an IR 
+  # here so that it is cross-platform
+  md = Cs(CS_ARCH_X86, CS_MODE_64)
+  md.skipdata = True
+  oep = None
+  last_jump = None
+  early_bail = 0
+  for r in [instr for instr in md.disasm(segment_bytes, segment_start)][::-1]:
+    if last_jump:
+      # if we see an instruction of the form 
+      # add {target}, CONST
+      # we are probably adding the OEP to the base address
+      # We can make this more generic by actually constructing a
+      # real use-def chain here and solving for the actual value of 
+      # rax here. Would require for finding functions like get_rip
+      # which are used to make jmps to the relative code easier
+      if last_jump + ", " in r.op_str and "add" == r.mnemonic.strip():
+        try:
+          oep = int(r.op_str.split(",")[1].strip(), 16)
+          break
+        except Exception as e:
+          # keep going, but unlikely we find it now
+          # keep trying a few more, but not too much
+          # you dont want to be suckered by some anti-re
+          early_bail += 1
+          if early_bail == SUCKER_PUNCH:
+            break
+          continue
+    if not last_jump and r.mnemonic.strip() == "jmp":
+      target = r.op_str.strip()
+      # Try to see if the jmp happens directly
+      # then take that value as the OEP
+      try:
+        oep = int(target, 16)
+        break
+      except Exception as e:
+        # If not, it is probably a register jump
+        oep = None
+        last_jump = target
+  return oep
+
+def main():
+  l = lief.parse(sys.argv[1])
+  load_segs = [ [ll.virtual_address, ll.virtual_address + ll.virtual_size]
+        for ll in l.segments
+        if ll.type == lief.ELF.SEGMENT_TYPES.LOAD
+      ]
+  anomalous_segment_start, anomalous_segment_end = find_anomalous_load_segment(load_segs)
+  segment_bytes = l.get_content_from_virtual_address(anomalous_segment_start, anomalous_segment_end)
+  real_oep = find_oep(bytes(segment_bytes), anomalous_segment_start)
+  print("found OEP: ", hex(real_oep))
+  l.header.entrypoint = real_oep
+  l.write(sys.argv[1] + ".cleaned")
+
+if __name__ == "__main__":
+  main()
+
+
+</pre></div></center></body></html>

@@ -1,0 +1,226 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Interview: herm1t                                      │                   █   │
+~ tmp.0ut Staff                                        └───────────────────█ ──┘
+
+t0:
+  Talk to us about the evolution of Linux vx over the years - what was it like 
+  when there wasn't the wealth of documentation there is today, what discoveries
+  in this area inspired you, and where do you see it going?
+
+herm1t:
+  The articles by Silvio Cesare and grugq helped a lot, as well as Tracy Reed's
+  mailing list. There were also a few encounters with Bliss and some other early
+  viruses on production systems I was working at. As for documentation, I share
+  the early OSS attitude "read the source, Luke", it's the best kind of 
+  documentation. Though the hacking scene of 90s and early 2000s captured my 
+  imagination I was shy and thought that nobody is interested in my little hobby
+  and am was slowly progressing through technicalities until counterintelligence
+  and police knocked at my door.
+
+t0:
+  Were you in undernet #vir / #virus in the late 90's ?
+
+herm1t:
+  I tried :-) But with my lousy language skills and being unable to explain why
+  am I here, I got quickly banned from chans, just to return and quietly listen
+  and being bored by endless and unrelated chit-chats.
+
+t0:
+  Tell us about the evolution of your own ELF vx writing - what techniques did 
+  you use first, what did you do next, what was the hardest technique you did?
+  or the one you are most proud of?
+
+herm1t:
+  The most significant thing I learnt that you don't need assembly to get the 
+  things right (But you should learn asm anyway). As real-coderz-use-asm dude 
+  I reproduced Silvio's segment thing in asm and continued in the same way for
+  years until I realized that low-level stuff is unnecessary. One can easily 
+  inject the code filelessly from memory, find imports and all such stuff 
+  without even bother about insns length and such, that makes a life much better
+  :-)
+
+t0:
+  Which methods of infections do you prefer, and which techniques do you like 
+  more? How you think, what we can expect in the future?
+
+herm1t:
+  Classical file viruses are long time dead. And there are a lot of modern 
+  malware that exploits two glaring security holes in unix systems (LD_PRELOAD
+  and ptrace), though, with ptrace restricted and possibility that LD_PRELOAD 
+  will be shut down as well, the old time infection techniques could be re-used
+  again, eg by replacing libz.so in sshd by some lib-boring-something or adding
+  a snippet to the binary :-) It's a shame that sshd backdors (like in ESET's 
+  "Darkside") or something like Darkleech still needs to be recompiled on target
+  system. It seems that blackhats has missed their classes and trying to 
+  reinvent the wheel.
+
+t0:
+  Do you think ELF virus writing has a future ? Are we staying in the past ?
+
+herm1t:
+  With Linux in every phone, in IOTs and desktops I am sure that the arts of ELF
+  infection and system's internals will be popular again.
+
+t0:
+  Have you seen the new CET / -fcf-protection that is implemented on 95% of 
+  binaries in Ubuntu 20.04? Do you have thoughts on this, or have you messed 
+  around with it yet?
+
+herm1t:
+  I am not familiar with CET yet, but there is a story I can tell you. Once I 
+  was after some guy and was I lacked (to complete the security check up) was 
+  his phone number. I tried to OSINT but to no avail. Then I just mailed him 
+  from some phony account and wrote "mail me your phone, ASAP" and what do you
+  think? he did. One cannot guarantee security by pure technical means. there 
+  will be always a loophole.
+
+t0:
+  What do you think about modern malware?
+
+herm1t:
+  Most of the time it's extremely boring (but still effective)
+
+t0:
+  Do you think the VX scene still has a chance? With everything that happened 
+  during more recent times, malware focused on monetization, etc. What happened
+  with VXHeavens? Plans for the future? In which ways do you think malware 
+  writing has changed since the last decade?
+
+herm1t:
+  The scene as we knew it is dead (I discussed it with LovinGod recently and he 
+  called VXH a "coffin of a scene"), but there could be a wider community, since
+  both virus writing and hacking in general became more actual than ever. Back 
+  in 2018 I spotted the webshell (installed by anyone but me) on ministry of 
+  justice of ukraine and made some lulz on them on facebook. cyberpolice took it
+  seriously and they decided to raid the messenger. i knew about the raid in 
+  advance and shout down the site (cause sharing of viruses in Ukraine is 
+  illegal in any form), may be I will restore it in some form again. With court
+  hearing on "Greta case" four days ahead I find it hard to set a date :-)
+
+  btw, with all these endbr64 stuff in .plt and elsewhere, if you modify the 
+  binary it will "protect" your virus from "unauthorized" rets :-)
+
+t0:
+  Talk to us about your own linux viruses - Casher, Cavity, Pulpit, other?
+
+herm1t:
+  Most of my viruses were focused on tricks with the ELF format, I just opened
+  some random executable and looked through the sections with a few questions in
+  mind - could it be moved or shrinked to make some space? could you get control
+  from it to avoid touching entry point? So the viruses does exactly just that, 
+  "Coin" got more space from segment alignment requirements, "Caveat" put loader
+  in PHT, "Arches" used functions padding, "Hasher" played with .hash, "PiLoT" 
+  with .plt; more recent ones is about stop using assembly, stop DOS-like 
+  patterns of using syscalls directly and switch to imports from libc which is 
+  always present in memory and go deeper to self-relocation (RELx) and 
+  metamorphism (Lacrimae). Since that time I am still interested in glibc/kernel
+  internals at it helped me a lot with system programming and security (which I 
+  am doing for a living)
+
+t0:
+  What do you think about metamorphism in script languages ? I'm thinking about
+  "Metamorphism and Self-Compilation in JavaScript" written by SPTH
+
+herm1t:
+  Getting back to technical stuff, you probably knew that I am a big fan of 
+  compilers related stuff and I am dead sure that stuff like DSL and compilers
+  are the next big thing after metamorphism, being it scripts (which is less 
+  complicated) or machine code.
+
+t0:
+  how did you learn these other skills - the social engineering - does it come 
+  naturally to you or did you study psychology, or read about social engineering
+  others did?
+
+herm1t:
+  Any large bureaucracy has inherent weaknesses, it's the system and it can be 
+  hacked, if you knew how legitimate request looks like you could forge it, by 
+  using interagency rivalry you could left them no choice but to proceed. Having
+  access to hacked mails you can get virtually into the head of the target and 
+  manipulate person into doing something you need. I more like the process, that
+  very moment when you find your way around the security. But the "message" 
+  phase, when you put the dumped info online and tip of the press is the same.
+  You need to deliver your message both to the targets to make them sorrow and
+  wide audience, to convince people that that was right thing to do, so it a bit
+  like hacking but with people instead of machines.
+
+t0:
+  What do you think about CTFs and other hacking competitions ?
+
+herm1t:
+  I don't like CTFs cause I hate time pressure. I know how to do things quick 
+  and stay calm, but it ticks me off when I see clocks ticking.
+
+t0:
+  Have you damaged your own system testing a virus? If yes can you talk a bit 
+  about the case?
+
+herm1t:
+  Since none of my viruses has destructive payloads and usually they were 
+  intentionally limited to current directory it was safe to test them. May be
+  one or two times they escape but it is easy to reinstall affected packages.
+
+t0:
+  What would your dream virii look be like?
+
+herm1t:
+  Complexity, irregularity. More complex, more better.
+
+t0:
+  What other places outside technology do you look to get inspiration from?
+
+herm1t:
+  It's hard for me to find something outside technology, surely I do usual 
+  things all the people do, but my favorites are math, cryptography and messing
+  in politics.
+
+t0:
+  Can you share some thoughts on ransomeware?
+
+herm1t:
+  Ransomware is old as our field are. The AIDS trojan was written in 1989! Wide
+  use of cryptocurrency and its less traceable nature made the proliferation of
+  ransomware inevitable. From technical point of view it's boring (except for 
+  hilarious mistakes in cryptography some authors did, like generating the key
+  by RNG seeded with time(NULL), and after public humiliation replacing it by 
+  something like md5(time(NULL))
+
+t0:
+  This is your free space, herm1t. Here you can leave anything you want: greets 
+  or wishes for friends or someone else, etc.
+
+herm1t:
+  Greetz to all hackers and vxers of past and future :)
+</pre></div></center></body></html>

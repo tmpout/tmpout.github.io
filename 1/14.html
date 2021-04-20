@@ -1,0 +1,1813 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+GONE IN 360 SECONDS                                         │                   █   │
+Linux/Retaliation                                           │                   █   │
+~ qkumba 2021                                               └───────────────────█ ──┘
+
+When you think of Linux viruses, you probably think of simple direct-action infectors
+that just append to the last section and change the entrypoint. Well, here's one that
+does a little more than that.
+
+
+<b>YOU DROPPED SOMETHING</b>
+
+Let's start with the dropper that starts the whole sequence. The first thing that the
+dropper intends to do is seed the Random Number Generator (RNG). The RNG is WELL512a
+(Well Equidistributed Long-period Linear), a RNG with good distribution and small 
+generator size. Unfortunately, the dropper has a bug where the time() call is made 
+after the seed is stored, instead of before, so the result is not used and the seed
+is always zero. As a result, all replicants follow the same initial sequence until 
+they start infecting files. That's not a good way to start.
+
+The virus is composed of 275 blocks of code, each of which performs some small 
+operations. This is a rarely-used technique, introduced by the BadBoy virus for DOS
+over 20 years previously. The blocks exist in order to allow them to be encrypted and
+decrypted individually. This prevents the complete virus code from being dumped from 
+memory and analysed freely. The same idea was used by the Elkern virus for Windows a 
+decade earlier, and remains a powerful technique. However, this virus takes the idea 
+even further: the blocks are not self-contained subroutines, but rather arbitrary
+numbers of instructions, split to reduce the amount of code that is exposed at any 
+one time. The blocks can also call each other freely, since the virus keeps track of
+the call-depth, and can recrypt the individual blocks as they exit.
+
+To encrypt a block, the encryption routine begins by choosing a single random number
+as the basis for selecting ten instructions randomly from table of operations which 
+are used to permutate the encryption key. This permutation seed is saved along with 
+the encrypted block, to allow direct decryption later.
+
+The table is composed entirely of two-byte instructions, and includes duplicate 
+entries (12/30, and 15/31, are identical), presumably to pad the size of the table
+to a power of two:
+
+    ROL DL, 1 (0xD0 0xC2)
+    ROL DH, 1 (0xD0 0xC6)
+    ROL EDX, 1 (0xD1 0xC2)
+    ROL DL, CL (0xD2 0xC2)
+    ROL DH, CL (0xD2 0xC6)
+    ROL EDX, CL (0xD3 0xC2)
+    ADD DL, CL (0x00 0xCA)
+    SUB DL, CL (0x28 0xCA)
+    XOR DL, CL (0x30 0xCA)
+    ADD DH, CL (0x00 0xCE)
+    SUB DH, CL (0x28 0xCE)
+    XOR DL, CL (0x30 0xCA)
+    ADD EDX, ECX (0x01 0xCA) (12)
+    SUB EDX, ECX (0x29 0xCA)
+    XOR EDX, ECX (0x31 0xCA)
+    BSWAP EDX (0x0F 0xCA) (15)
+    MOV DL, DL (0x88 0xD2)
+    ADD DL, DH (0x00 0xF2)
+    SUB DL, DH (0x28 0xF2)
+    XOR DL, DH (0x30 0xF2)
+    NOT DL (0xF6 0xD2)
+    NOT DH (0xF6 0xD6)
+    NOT EDX (0xF7 0xD2)
+    NEG DL (0xF6 0xDA)
+    NEG DH (0xF6 0xDE)
+    NEG EDX (0xF7 0xDA)
+    INC DL (0xFE 0xC2)
+    INC DH (0xFE 0xC6)
+    INC EDX (0xFF 0xC2)
+    ROL EDX, CL (0xD3 0xC2)
+    ADD EDX, ECX (0x01 0xCA) (30)
+    BSWAP EDX (0x0F 0xCA) (31)
+
+The operations affect only the edx register, or part thereof, since that is the 
+register that holds the encryption key. The ecx register holds the number of bytes
+left to encrypt, allowing for position-dependent permutations of the encryption key.
+
+Note that since the number of random instructions is even, and the table contains a 
+collection of instructions that are mirrors of each other, for certain keys the 
+permutation will undo itself. Further, the virus uses only half of the value returned
+by the RNG, and allows that half-value to be zero. As a result, the half-value will 
+be zero 50% of the time! This means that 12 of the 32 instructions in the table have
+no effect on the initial value of the key. However, the virus has a mitigation for 
+this problem: the encryption key is permutated further by iterating across an 
+anti-debugging routine. The intention here is that if the anti-debugging routine is 
+altered in any way (for example, by placing breakpoints in it) then future decryption
+will fail.
+
+
+<b>SYSCALL OF THE WILD</b>
+
+The virus carries a table containing syscall numbers that are "safe" to call, along
+with a description of the number and type of parameters, and the expected failure 
+code for when the call fails. This table is used as an anti-debugging measure 
+elsewhere in the virus code. The dropper encrypts this table next.
+
+To encrypt this table, the dropper begins by calculating the CRC32 of the unencrypted
+table, using the ISO-3309 reverse polynomial (0xEDB88320), and then encrypting the 
+table using the same random-key-permutation technique as for the code blocks. Here, 
+again, the virus uses a truncated value from the RNG. In this case, the value is 
+truncated to less than <i>one quarter</i> of the original value, so there is an 
+approximately 81% chance of a zero as the initial key!
+
+This encryption pass is different, though, because the virus discards the permutation
+seed value after it is used. Thus, in order to decrypt the table, the virus is 
+"forced" (really by choice) to iterate through all possible combinations of the ten
+random instructions, and to calculate the CRC32 each time of the resulting decrypted
+data, until the calculated checksum matches the checksum that was saved in the table
+before the table was encrypted.
+
+This technique is known as Random Decoding Algorithm(*), first used by the RDAFighter
+virus for DOS in 1996. By using the technique on small data blocks, the performance
+is acceptable while still offering some level of protection against casual reverse
+engineering. The virus uses RDA to encrypt both the infected file's data section 
+address and the hooked prologue magic value. Obviously, in the dropper neither of 
+these values is set yet, but for compatibility with the virus code, they must be 
+encrypted anyway.
+
+At this point, the dropper has completed its initialisation routines. Next the 
+dropper prints some messages and then runs the virus entrypoint, as though the 
+dropper were an infected file.
+
+(*) the author of RDAFighter called it "Random Decoding Algorithm", but somehow I've
+    always mistakenly called it "Random Decryption Algorithm". This is also how you 
+    find out that I wrote chapter 7 of "The Art of Computer Virus Research and 
+    Defense" for Péter Szőr.
+
+
+<b>RED FLAG</b>
+
+The actual virus code begins by saving the CPU flags on the stack, and then calling
+an anti-debugging routine. The anti-debugging routine checks if the virus's ultimate
+return address has a breakpoint introduced, a sure sign that someone is attempting to
+trap the virus exit routine using a debugger, before the host original entrypoint is 
+called. The routine also checks if the trap flag is set in the saved CPU flags, as an
+attempt to detect single-stepping using a debugger. Of course, this check always 
+fails, since a debugger will clear the flag in the saved flags image.
+
+There is a way to capture the true flag state by using an additional instruction, and
+several viruses are known to use this technique. It was well-known during the DOS 
+days, and then forgotten for many years, until it was "discovered" as a modern 
+anti-debugging technique. It seems that the virus author missed the rediscovery...
+in all 65 places in the virus code that call this routine.
+
+The routine also checks if the caller's return address matches an instruction to 
+restore the CPU flags from the stack. A mismatch here is a sure sign that someone is 
+attempting to step over the anti-debugging routine using a debugger. In any case, if 
+any of the checks fail, then the virus overwrites itself with a random value from 
+memory and allows itself to crash.
+
+If the checks pass, then the virus checks the requested state. The virus supports two
+states of interest: one is if the code has been run already (i.e., in a shared 
+library), and the other is if there is a request to terminate infection (e.g., 
+because some anti-detection check failed in the virus code). The two states are 
+checked by comparing a memory location with specific values.
+
+If the code has been run already, then 0x1BADDEED (i.e., "One Bad Deed") will be 
+returned. It is perhaps a coincidence that 0x1BADDEED is the same "I am here" return
+value from the first member of the Ginger family for DOS in 1993.
+
+If there is a request to terminate infection, then 0x1BAD5EED (i.e., "One Bad Seed") 
+will be returned. It is perhaps even more of a coincidence that the first member of 
+the Ginger family was named "Bad Seed".
+
+If neither state is active, then the virus checks the type of the infected file. If
+the file is not a relocatable object, then the virus uses RDA to decrypt the hooked
+prologue magic values, described later. In either case, the virus installs a SIGILL
+handler intended to last for the entire execution time of the process. The SIGILL 
+handler serves to intercept the illegal opcodes that the virus uses as an 
+anti-analysis technique.
+
+When a SIGILL signal is raised, the virus checks if the signal site is within the 
+bounds of the virus code, and, if so, checks if the current byte at the signal site
+is one of two specific illegal opcodes (the virus does not check si_code first). 
+If neither of the expected illegal opcodes was used, then the virus displays the 
+following message before terminating the process:
+
+    Illegal Instruction. But what really is 'Illegal'?
+    Look at vxheavens.com..
+    kidz with ill skillz get harrassed by cops still.
+
+Yes, “harassed” is spelled incorrectly in the virus.
+
+One of the illegal opcodes is used as a trigger to decrypt the block following 
+immediately the illegal opcode; the other illegal opcode is used to trigger 
+re-encryption of the preceding block before resuming execution at the following 
+location.
+
+If the signal site is not within the bounds of the virus code, then the virus checks
+if the bytes following the illegal opcode match either of the magic values that the 
+virus uses to identify a hooked prologue. If neither of the magic values matches, 
+then the virus displays the message above and terminates the process. Otherwise, the
+virus executes its local copy of the hooked prologue (see below), and then resumes 
+execution of the host code.
+
+At this point the virus uses RDA to decrypt the host's data section address. If the 
+resulting address is "valid", then the infected file had a ".data" section that the 
+virus encrypted during infection. The address is considered valid if the length is 
+not 4Gb-1 bytes in length. 4Gb-2 bytes should be enough for everyone, I suppose.
+
+If the data section was encrypted, then the virus uses RDA to decrypt the 128-bit 
+BTEA (Block Tiny Encryption Algorithm) key, and then uses that key to decrypt the 
+host's entire data section.
+
+The combination of hooked prologues and encrypted data section make disinfecting a 
+file more trouble than it's worth, and there is still more that the virus can do to 
+files. I hope that you have backups.
+
+If the host had a ".bss" section, then the virus initialises it on behalf of the host
+(because when executed, the polymorphic decryptor might have written random values to
+it), but using a very inefficient store-loop (bzero is another option which the virus
+uses elsewhere, but it is only slightly faster, and it requires the size to be a 
+multiple of four which makes it potentially incompatible here).
+
+The virus also installs a SIGTRAP handler intended to last for the entire execution 
+time of the process. If installation fails for either of the signal handlers, then 
+the virus displays the following message before terminating the process:
+
+    Strange signals you have.. very strange ;)
+
+The SIGTRAP handler serves as both an anti-debugging mechanism, and an anti-analysis
+mechanism. It functions as an anti-debugging mechanism by intercepting the two 
+debugger-specific opcodes: INT3 and ICEBP. It functions as an anti-analysis mechanism
+because of what it does with those two opcodes (see below). This technique is similar
+to "nanomites", first used by the Armadillo Protector in the early 2000s, and taken 
+to its extreme by the Stutter virus for Windows in 2007.
+
+This code reads like the virus world's greatest hits collection. ;-)
+
+
+<b>IT'S A TRAP!</b>
+
+When a SIGTRAP signal is raised, the virus checks if the signal site is within the 
+bounds of the virus code. Rather than checking si_code, the virus checks if the 
+previous or current byte at the signal site is either of those debugger-specific 
+opcodes. If the signal site is not within the bounds of the virus code, or if neither
+of the expected debugger-specific opcodes was used, then the virus displays the 
+following message before terminating the process:
+
+    Break Me, Break it and Break it again.
+
+(the same message appears if the RDA fails to find the correct key, most likely due 
+to the presence of a debugger altering the anti-debugging routine).
+
+If the INT3 opcode was used, then the virus treats it as a CALL instruction, and uses
+the following two encrypted bytes as the 16-bit relative offset of the routine to run
+next. The virus treats the ICEBP opcode as a SYSCALL instruction, and uses the 
+following byte as the encrypted 8-bit syscall number.
+
+The virus is hostile to the presence of ptrace. It begins by enabling the ptrace 
+option that allows a child to trace the parent process. Then the virus attempts to 
+spawn a new copy of the process. If the spawn request fails, then the virus 
+terminates infection via the 0x1BAD5EED marker, and resumes execution of the host 
+code.
+
+Otherwise, there is now a parent and child process, so the parent process waits for 
+the child process to exit, and then checks the exit code. The child process attempts
+to attach a ptrace to the parent process, then to detach from the parent process, if
+successful, and finally return with a non-zero exit code.
+
+If the attachment fails, then ptrace is presumed to be active already, and the child 
+exits with no exit code. If the child process returns a non-zero exit code, then the 
+virus resumes execution. Otherwise, with 67% chance the virus terminates infection 
+via the 0x1BAD5EED marker, and resumes execution of the host code. However, for the 
+other 33% of the time, the virus intentionally makes random syscalls in an infinite 
+loop, with unpredictable effects.
+
+
+<b>RANDAMN</b>
+
+If the virus passes the ptrace check, then it initialises its RNG state. Only now?!
+
+It is a bug in the virus code that the state is set only now, despite the numerous 
+calls to the RNG that have occurred already. However, this is how the virus operates.
+
+The virus permutates the RNG state iterating over the virus code, and then discards 
+the first 150 results from the RNG (because they're not "random enough"? We'll never
+know), before calling it twice more to acquire the BTEA key for use later.
+
+The virus constructs a random extension for the temporary files that it creates 
+during the infection process. The extension is composed of a random number of four 
+to six letters, chosen randomly from the range of 'a' to 'v', and using a randomly
+generated mixture of upper- and lower-case.
+
+The virus generates two unique magic values to identify which of the two prologues 
+have been hooked by the virus during the infection process. The prologue hooks are 
+described later in more detail.
+
+The virus also chooses a random number of polymorphic decryptors, from one to four, 
+that will be created later to protect the virus code in executables (the virus only 
+ever uses one decryptor in relocatable objects).
+
+The virus is interested in how long the system has been running. If the up-time is 
+less than 17 minutes, then the virus terminates infection via the 0x1BAD5EED marker,
+and resumes execution of the host code. This allows the virus to avoid systems that 
+have been booted specifically to watch the infection behaviour.
+
+The virus queries the last modification time for the "/etc/hostname" file, and 
+compares it to the current time. If the file was modified less than ten days earlier,
+then the virus terminates infection via the 0x1BAD5EED marker, and resumes execution
+of the host code. This allows the virus to avoid systems that have been created 
+specifically to watch the infection behaviour.
+
+If the hostname file's last modification time matches the time that was saved in the 
+infected file at the time of infection, then the virus assumes that the infected file
+is running on the same machine as it was when the file was infected. In that case, 
+the virus enables the payload activation.
+
+Next, the virus queries the current working directory, and the current time, and 
+calculates a time five seconds in the future. This value is important later.
+
+At this point, the initialisation phase of the virus is complete.
+
+
+<b>PAY IT FORWARD</b>
+
+If the infected file is an executable, then the payload activation trigger is 
+checked. If the payload activation was enabled, then every time the infected file is
+run at least 90 days after infection, the virus displays the following message, and 
+pauses for up to seven seconds (subject to no events interrupting the sleep, such as
+the process being killed), before resuming execution:
+
+    <<=- [Linux64.Retaliation V1.0] - Coded by JPanic - Australia 2013/2014 -=>>
+
+If the infected file is an executable, then the virus hooks up to 13 entries in the 
+.got (Global Offset Table):
+
+    __lxstat64
+    __openat_2
+    __xstat64
+    __lxstat
+    __xstat
+    fopen
+    fopen64
+    open
+    open64
+    bfd_openr
+    execve
+    signal
+    sigaction
+
+The last two functions control signal behaviour. The virus intercepts attempts to 
+manipulate SIGILL or SIGTRAP signals. In the case of signal(), the virus intercepts
+attempts to install a handler, and substitutes its existing handler instead. In the
+case of sigaction(), the virus disallows changes to the signal action.
+
+The other 11 functions specify a file as a parameter. For those functions, if 
+infection behaviour has not been disabled because of other conditions, then the virus
+examines the specified file for its potential to be infected on access, before 
+calling the original function.
+
+For both types of infected file, the virus attempts to infect any of the following 
+files directly, if they exist, each with 50% chance:
+
+    /bin/cp
+    /usr/bin/ld
+    /bin/ls
+    /usr/bin/gcc
+    /usr/bin/ld.gold
+    /usr/bin/ld.bfd
+    /usr/bin/zip
+
+Then the virus attempts to infect all files in the current directory, until the 
+current time exceeds the future time that the virus calculated earlier. If the virus
+completes infecting the files in the current directory before the time runs out, then
+with 50% chance it attempts to infect files in:
+
+    /bin
+
+or with 25% chance it attempts to infect files in
+
+    /usr/bin
+
+until the current time exceeds the future time that the virus calculated earlier.
+
+Once the time has run out, or the virus runs out of files to infect directly, if the
+infected file is a relocatable object, then the virus terminates infection via the 
+0x1BAD5EED marker, and resumes execution of the host code. Otherwise, the virus 
+resumes execution of the host code, in anticipation of the host code accessing 
+additional files and triggering further infections.
+
+
+<b>INFECTIOUS GROOVES</b>
+
+In order to infect a file, the virus accepts filenames which end in ".o", other than
+"crt.o", or filenames which begin with "ld.", or any filename without an extension.
+
+It ignores any file which is accessed twice in a row, any non ".o" file that is less
+than three hours old, any file that is larger than eight megabytes, any file that is
+smaller than two kilobytes, any executable that is smaller than eight kilobytes, and
+anything that is not a file at all (e.g., a directory, a pipe, a symbolic link).
+
+If the file is considered to be acceptable, then the virus creates a temporary file 
+by appending to the filename the random extension created previously, and then opens
+the original file for read/write.
+
+The virus reads the ELF header from the original file, and verifies that it is 
+well-formed: it must be an ELF for an x64 system (64-bit, little-endian, x64 system),
+using the Unix SYSV version 0 ABI. It must not be infected already, it must have the 
+expected sizes for the ELF header and sections headers, it must have at least six 
+sections, but not more than 63 of them, and it must be either a relocatable object or
+an executable.
+
+The infection marker is that the padding bytes are non-zero. While the virus writes 
+in the padding bytes one of several different markers chosen randomly from a list 
+that it carries, it does not verify any of them specifically.
+
+If the file is a relocatable object, then it must be a ".o" file with no program 
+headers. If the file is an executable, then it must not be a ".o" file, the program 
+header size must be the expected size, and there must be at least four program 
+headers, but no more than 16 of them.
+
+The virus parses the program header table in executables, to ensure that the program
+headers fit entirely within the bounds of the file, and watching for PT_NOTE and 
+PT_LOAD entries that will be loaded into memory. The virus requires a PT_NOTE entry,
+and remembers the last-loaded program header, and the largest alignment factor used 
+in the file.
+
+As an anti-harvesting technique, the virus checks if four filenames in a row differ 
+by a constant amount (e.g., goat1, goat2, goat3, goat4, but also works if the files 
+are found in reverse order). If such a sequence is found, then the virus terminates 
+infection via the 0x1BAD5EED marker, and resumes execution of the host code.
+
+The check can be bypassed by skipping the fourth member of the sequential group 
+(e.g., goat1, goat2, goat3, goat5...).
+
+As an anti-harvesting technique, the virus checks if four files in a row differ in 
+size by a constant amount (e.g., all the same size, or goat1 is 100 bytes, goat2 is 
+200 bytes, goat3 is 300 bytes, goat5 is 400 bytes..., but also works if the files are
+found in reverse order). If such a sequence is found, then the virus terminates 
+infection via the 0x1BAD5EED marker, and resumes execution of the host code.
+
+The check can be bypassed by adjusting the file size of the fourth member of the 
+sequential group (e.g., goat5 is one byte larger than the goat1-3).
+
+The virus iterates through the section table, skipping purely virtual sections, and 
+reading the other sections into memory. It keeps track of relocation sections by type
+rather than name, and associates the target section with the relocation section as 
+the source. There is a minor bug in the virus code, where if the relocation section 
+is the first section in the file, then it will not be recognised as being present.
+
+The virus fetches from the file the index for the string table section, in order to 
+parse the section table names. There is a minor bug in the virus code, where it 
+assumes that the index is always valid. If the index is large enough that the virus 
+accesses unmapped memory, then the virus will crash.
+
+The virus iterates through the section table again, watching for sections with 
+specific names. The section names to match are not visible in the virus code. 
+Instead, the virus calculates a hash of the name and compares it with a set of 
+hashes that the virus carries. The names of interest to the virus are:
+
+    .text
+    .data
+    .bss
+    .plt
+    .dynamic
+    .gnu.prelink_undo
+    .rela.dyn
+    .rodata
+
+The virus requires both ".text" and ".data" to be present in the file. ".dynamic" is
+never used by the virus. Perhaps it was an intended feature that was not released.
+
+As an anti-harvesting technique, the virus checks if three files in a row (not 
+counting files that have either no ".text" section or no section header table) have 
+the same CRC32 value for their .text section (e.g., goat1==goat2==goat3). If such a 
+sequence is found, then the virus terminates infection via the 0x1BAD5EED marker, and
+resumes execution of the host code.
+
+The check can be bypassed by adjusting the file contents of the third member of the 
+sequential group (e.g., goat3 is a different file than goat1 and goat2).
+
+The virus initialises the poly engine once per process (See below). Using the same 
+engine configuration for all replicants in one session prevents a complete detection 
+from being made from analysing samples alone, because the full capabilities of the 
+engine might not be used.
+
+The virus also requires that the ".plt" section exists for executables, or the 
+".text" section exists for relocatable objects, that a relocation table exists for
+that section, that the symbol table exists for the relocation table, and that the 
+string table exists for the symbol table. If any of these elements is missing, then 
+the virus skips the file and continues execution. Of course, the virus cleans up 
+first, by closing the file handles, deleting the temporary file, and restoring the 
+current directory.
+
+
+<b>FIVE SECOND RULE</b>
+
+If the file to infect is an executable, then the virus requires that the ".data" 
+section is at least four bytes long. If the section is too small, then the virus will
+crash. Otherwise, the virus searches the entire section for the string "TSM!". The 
+search is done by comparing every byte of the section with every byte of the string, 
+instead of searching the section repeatedly for the first character of the string and
+then attempting to match the rest. This inefficiency allows a (poor) filesystem-level
+(as opposed to individual file-level) inoculation by placing a collection of crafted 
+goat files as the first entries in the directory, that each have a huge data section.
+
+The result would be that the five-seconds timeout would trigger before any important 
+files are reached.
+
+If the string is found then the virus skips the file and continues execution. This 
+action prevents the virus from infecting a file that was linked after being infected
+as a relocatable object.
+
+The virus checks if the file has either a ".gnu.prelink_undo" section, or a ".bss" 
+section and a ".rela.dyn" section and relocation items in the ".rela.dyn" section 
+pointing into the ".bss" section. The virus uses this information later in the 
+infection process.
+
+The virus parses the file's symbol table to find any of the 13 function names that it
+wants to hook. For each one that is found, the virus scans the file's relocation 
+table to find the corresponding reference to the address. When the relocation item is
+found, the virus redirects that reference to the address of the original function in 
+the virus code.
+
+Next, the virus makes a copy of itself, and fills its variable space with random 
+values.
+
+At this point, the virus finally checks the attributes of the ".data" section. Up to 
+this point, the virus assumed that the section was freely accessible and contained 
+meaningful content. Now it checks that the section content is really supplied by the 
+file, that it will be loaded into memory, and that it is writable. If any of these 
+checks fails, then the virus skips the file and continues execution. Otherwise, the 
+virus encodes the address and size of the section, the BTEA key, and the hooked 
+prologue magic values, calculates a time 90 days in the future for the payload 
+activation.
+
+The virus checks if the ".bss" section exists and has relocation items pointing into 
+it. If there is a ".bss" section without relocations, then the virus records the 
+address and size of the section so that the polymorphic decryptor can make use of it.
+
+The virus saves the original entrypoint, the new entrypoint, and the virus size in 
+variables for use by the polymorphic engine.
+
+The virus sets the new section start position equal to the current end of the file, 
+in preparation for appending virus code
+
+If the ".gnu.prelink_undo" section exists in the file to infect, and the last two 
+sections are the prelink and the section name string table, in that order, then the 
+virus remembers the prelink section file offset, in preparation for rebuilding the 
+infected file. The virus then adjusts the file offset of the last section to the next
+aligned address in memory, and then calls the poly engine to generate as many 
+decryptors as was specified earlier.
+
+If the prelink section exists, then the virus inserts a new unnamed section before 
+the prelink section, and places the virus code in the new section. The virus updates
+the prelink section number and the section name string table number, and aligns the 
+sections appropriately to account for the inserted content, before rebuilding the 
+program and section header tables.
+
+If the prelink section does not exist, then the virus writes its code to the end of 
+the file, and replaces the PT_NOTE program header with a PT_LOAD program header, with
+read/write/execute attributes. Note that since the entrypoint is inside this new 
+PT_LOAD program header, there is no reference to it in any of the section headers. 
+This alone is highly suspicious.
+
+The memory size for the virus section is set to a number chosen randomly up to 16 
+kilobytes larger than what is needed to hold the virus code, as a way to avoid a 
+simple heuristic based on the size of the section.
+
+If the file to infect is a relocatable object, then the virus fetches the location of
+the ".bss" or ".data" section, whichever one exists. The section is used to hold a 
+"run already" marker to prevent the virus from running the decryptor more than once 
+per session. The virus makes a copy of itself, and fills its variable space with 
+random values. Then it marks the ".data" and ".bss" sections as unavailable in the 
+virus code.
+
+The virus parses the symbols in the file, watching for all STT_SECTION symbols that 
+refer to any of the ".text", ".data", or the chosen "run already" section. Then the 
+virus parses the symbols in the file, watching for up to 64 globally-visible STT_FUNC
+symbols. If no such symbols exist, then the virus skips the file and continues 
+execution. If only one such symbol exists, then the virus uses it. Otherwise, the 
+virus chooses randomly from the set of symbols that it found. The address for the 
+chosen symbol will become the hidden entrypoint for the virus code, and the original 
+content will be appended to the virus code. When the relocatable object is linked 
+into an executable, then calling the symbol will run the virus code first.
+
+The virus calls the poly engine to generate a single decryptor, adds the 
+"run already" entry in the chosen section, adds a relocation item for the 
+"run already" marker and the original entrypoint (the polymorphic decryptor transfers
+control absolutely to the original entrypoint, as opposed to relatively), and then 
+appends the "TSM!" text to the ".data" section.
+
+When writing out the ELF header for either file format, the virus chooses randomly 
+from one of the following markers to place in the padding bytes:
+
+    [jp]
+    [JP]
+    JKP!
+    NOP!
+    IR/G
+    7DFB
+    Sep!
+    TSM!
+
+However, as noted above, the virus checks only if the padding bytes are non-zero, 
+without verifying the contents.
+
+If the file to infect is an executable, then as an infection-dependency technique, 
+the virus searches the entire ".text" section for all appearances of two instruction
+sequences:
+
+    PUSH RBP (0x55)
+    MOV RBP, RSP (0x48 0x89 0xE5)
+
+    CMP EAX, -1 (0x48 0x83 0xF8 0xFF)
+
+For each sequence that is found, the virus replaces it with an instruction sequence 
+that is guaranteed to raise a signal if executed, followed by one of the two hooked
+prologue magic values, corresponding to the sequence that was replaced.
+
+With 25% chance, the illegal instruction sequence will be one of the following:
+
+    0xFE 0xFE (unassigned range)
+    0xFE 0xFF (unassigned range)
+    0xFF 0xFE (unassigned range)
+    0xFF 0xFF (unassigned range)
+
+With 33% chance, the illegal instruction sequence will be the following:
+
+    0x8D 0xC0-0xFF (illegal LEA)
+
+With 33% chance overall, the illegal instruction sequence will be one of the 
+following (once selected, some of the instructions are slightly more likely to 
+be chosen than others):
+
+    0x06 (PUSH ES)
+    0x07 (POP ES)
+    0x0E (PUSH CS)
+    0x16 (PUSH SS)
+    0x17 (POP SS)
+    0x1E (PUSH DS)
+    0x1F (POP DS)
+    0x37 (AAA)
+    0x3F (AAS)
+    0x60 (PUSHA)
+    0x61 (POPA)
+    0x62 (BOUND)
+    0x82 (undocumented alternative for 0x80)
+    0x9A (CALL FAR)
+    0xC4 (LES)
+    0xC5 (LDS)
+    0xD4 (AAM)
+    0xD5 (AAD)
+    0xD6 (undocumented SALC)
+    0xEA (JMP FAR)
+
+Note that all of these opcodes are illegal only because they are used in a 64-bit
+context. The second byte is chosen randomly in all cases.
+
+Otherwise, the illegal instruction sequence will be one of the following:
+
+    0xC6 0x08-0x3F (illegal MOV)
+    0xC6 0x48-0x7F (illegal MOV)
+    0xC6 0x88-0xBF (illegal MOV)
+    0xC6 0xC8-0xFF (illegal MOV)
+    0xC7 0x08-0x3F (illegal MOV)
+    0xC7 0x48-0x7F (illegal MOV)
+    0xC7 0x88-0xBF (illegal MOV)
+    0xC7 0xC8-0xFF (illegal MOV)
+
+This makes disinfection very difficult because to find and replace these instructions
+requires parsing the entire file correctly, and to somehow know which of the two 
+candidate instructions is the one to use when restoring.
+
+If the file to infect is an executable, then the virus encrypts the ".data" section 
+as a final act.
+
+
+<b>LET'S PLAY MONO-POLY</b>
+
+This virus has some interesting properties. The relocatable object infection is 
+perhaps the first of its kind on Linux (the first known infector of object files is
+the Zhengxi virus for DOS in 1995), and the prelink support is inspired. However, the
+most notable part of the virus is clearly the polymorphic engine. It's far from the 
+most polymorphic engine that I've ever seen (e.g., subroutines are not essential, so 
+they can be skipped; they don't accept stack parameters, so they always return with a
+balanced stack; recursion is arbitrarily limited to a small degree, etc.), but it's 
+probably the most ambitious engine that I've ever seen.
+
+The engine emits instructions that handle bytes, words, dwords, and qwords 
+interchangeably, with layered encryption, dummy subroutines and loops, fake 
+branches... it even issues syscalls with known-bad parameters and checks for the 
+proper error codes.
+
+The only two bugs that I found would trigger rarely. The first bug requires all 
+registers to have been allocated before the garbage "if" generator is called. That 
+bug will result in an infinite loop. The second bug requires that garbage syscalls 
+are enabled, and that the READLINK entry is chosen out of the 92 (some entries are 
+duplicated) other possible candidates. The entry has the wrong error code defined. 
+That bug will result in undefined behaviour, depending on whether or not the virus 
+chose to check the error code. Other than the two bugs, there is also one unresolved
+question that looks like an oversight, and a few lines that are out of place (unused
+assignments).
+
+
+<b>BEGIN COUNTDOWN</b>
+
+The polymorphic engine begins by setting some feature flags randomly. The features 
+determine things like decryption direction, the scale of garbage instruction, use of
+the stack by garbage instructions, and the use of garbage syscalls.
+
+It chooses the size of the "already run" variable in relocatable object files. With 
+50% chance, it will be a dword; otherwise with 25% chance each, it will be a byte or
+a word. It chooses the value of the "already run" variable, based on the size of the
+value, but always excluding zero.
+
+The engine sets the loop-control conditions randomly, based on the CPU flags of sign,
+parity, and overflow. Unfortunately for the virus writer, the settings are not random
+at all. The operation for assigning the "already run" value clears the sign flag 
+approximately 87% of the time. When the sign flag is cleared, the overflow flag is 
+cleared as a side-effect. That leaves only the parity flag, but even that one is 
+clear 50% of the time.
+
+The engine chooses a comparison type randomly, based on the control conditions that 
+are available. A comparison against zero is always available, but the other three 
+(sign, parity and sign/overflow) depend on the settings.
+
+The engine chooses a size for the mmap syscall, where the decrypted code will be 
+written when running from a relocatable object. The engine adds up to 16kb randomly,
+in addition to virus size, perhaps to prevent a heuristic detection based on the 
+allocation size.
+
+The engine chooses randomly the size of reads and writes for the decryption loop. 
+Bytes, words, and dwords, are possibilities.
+
+The engine chooses randomly the registers to use for the read and write pointers. 
+However, only the extended registers (r8-r15) are allowed here.
+
+The engine chooses randomly the register to hold the loop counter. Only the general
+registers (EAX/ECX/EDX/EBX/ESI/EDI/EBP) are allowed here.
+
+The engine chooses randomly the size of the loop counter adjustment. Words, dwords,
+and qwords, are possibilities.
+
+The engine chooses randomly the register to hold the data to be decrypted, depending
+on the size of the read/write operation. Only a restricted set of the general 
+registers (AL/BL/CL/DL or EAX/ECX/EDX/EBX/ESI/EDI/EBP) are allowed here.
+
+The engine chooses randomly the register to hold the decryption key, depending on the
+size of the read/write operation. Only the general registers (AL/BL/CL/DL/AH/BH/CH/DH
+or EAX/ECX/EDX/EBX/ESI/EDI/EBP) are allowed here.
+
+With 50% chance, the engine chooses randomly to use a register to hold the decryption
+key permutation value, depending on the size of the read/write operation. Only the 
+general registers (AL/BL/CL/DL/AH/BH/CH/DH or EAX/ECX/EDX/EBX/ESI/EDI/EBP) are 
+allowed here.
+
+The engine chooses randomly a 32-bit value for the initial key, and a 32-bit value 
+for the initial key permutation (even if it won't be used).
+
+The engine chooses randomly the branch type, based on the comparison type. JNZ, JNS,
+JS, JNC, JC, JG, JGE are all considered.
+
+The engine chooses randomly the actual decryption operation. Only a single operation
+is used: XOR, ADD, or SUB.
+
+The engine chooses randomly the order for pushing registers (AX, CX, DX, BX, BP, SI,
+DI, and R8-R15 - SP is excluded) to the stack when they are used.
+
+The engine chooses randomly the order for initialising the count, the encryption key,
+the key permutation (if any), the source pointer, and the destination pointer (if 
+they're different).
+
+The engine chooses randomly the order for initialising the parameters for the mmap 
+syscall, if a relocatable object will be infected.
+
+The engine chooses randomly how many operations to apply to the encryption key per 
+loop-iteration. The value is different for relocatable objects (2, 4, or 8) compared
+to executables (4, 8, or 16).
+
+The engine chooses randomly the maximum number of garbage instructions to emit (2, 4,
+or 8) in the "SMALL GARBAGE" routine (see below).
+
+The engine chooses randomly the maximum number of stack slots (1, 2, 4, or 8) that 
+can be used by garbage instructions. This number includes both register saves and 
+garbage variables.
+
+The engine chooses randomly the maximum number of stack variables (1-8) that can be 
+saved on the stack. The number cannot exceed the number of stack slots available.
+
+Now the polymorphic engine is fully initialised and ready for use.
+
+
+<b>LIFTOFF!</b>
+
+If the file to infect is a relocatable object, and if the feature is not enabled to
+call (as opposed to jump to) the decrypted virus code, then the virus disables the 
+use of stack variables in the polymorphic decryptor.
+
+If the file to infect is an executable, and the features are enabled to emit "large"
+garbage and to reserve space before the decryptor, then the engine moves the 
+decryptor start down by 2000 bytes + a random number in the range of 0-2000 more 
+bytes. This cavity will be filled later by the engine.
+
+If the feature is enabled to always save all registers, or if only one layer of 
+decryption will be used, then the engine saves all registers. If the feature is 
+enabled to save the CPU flags, then the engine emits a:
+
+    PUSHF (0x9C)
+
+first. The engine pushes to the stack the general registers (RAX, RCX, RDX, RBX, RBP,
+RSI, and RDI - RSP is excluded) and the extended registers (R8-R15), in the order 
+chosen during the initialisation phase. The engine calls the "SMALL GARBAGE" routine
+(see below) after each PUSH instruction.
+
+If the feature is enabled to make use of stack variables, then the engine emits:
+
+    SUB RSP, count*8 (0x80/0x81/0x83 /5)
+
+to reserve space on the stack for garbage writes.
+
+If the file to infect is an executable, then the engine enables temporarily the 
+feature to use the stack for additional garbage PUSH and POP instructions.
+
+If the file to infect is a relocatable object, then the engine emits a:
+
+    MOV reg, val (0x48 0xB8-0xBF)
+
+that holds the 64-bit address of the "already run" variable in the ".data" section,
+followed by a call to the "SMALL GARBAGE" routine (see below). If the feature was 
+enabled to force the check directly, then the engine emits one of the following:
+
+    ADD [reg], 0 (0x80/0x81/0x83 /0)
+    AND [reg], -1 (0x80/0x81/0x83 /4)
+    CMP [reg], 0 (0x80/0x81/0x83 /7)
+    OR [reg], 0 (0x80/0x81/0x83 /1)
+    SUB [reg], 0 (0x80/0x81/0x83 /5)
+    XOR [reg], 0 (0x80/0x81/0x83 /6)
+    TEST [reg], -1 (0xF6/0xF7 /0 /1)
+
+Otherwise, with 50% chance, the engine calls the "READ MEMORY" routine (see below),
+followed by a call to the "SMALL GARBAGE" routine (see below), followed by a call 
+to the "CHECK CONDITION" routine (see below).
+
+Otherwise, the engine does one of the following:
+
+    calls the "SET REGISTER" routine (see below) with a value of 0, to assign reg2
+    emits CMP [reg1], reg2 (0x38/39)
+    
+    calls the "SET REGISTER" routine (see below) a value of -1, to assign reg2
+    emits AND [reg1], reg2 (0x20/21)
+    
+    calls the "SET REGISTER" routine (see below) a value of -1, to assign reg2
+    emits TEST [reg1], reg2 (0x84/85)
+
+The engine emits a long conditional branch (0x0F 0x8x) instruction chosen randomly
+from the set of conditions that were enabled during the initialisation phase. Then
+the engine calls the "SMALL GARBAGE" routine (see below).
+
+If the feature is not enabled to set the "already run" variable using a register, 
+then the engine calls the "WRITE MEMORY VALUE" routine (see below), and pass the 
+value to check, followed by a call to the "SMALL GARBAGE" routine (see below). 
+Otherwise, the engine calls the "SET REGISTER" routine (see below), and passes the
+value to check, followed by a call to the "SMALL GARBAGE" routine (see below), then
+calls the "WRITE MEMORY REGISTER" routine (see below), and allowing the "XCHG" 
+instruction, before making another call to the "SMALL GARBAGE" routine (see below).
+
+The engine emits the loop-specific variable assignments in random order.
+For the loop count, the engine emits:
+
+    MOV reg, val ((0x48) 0xB8-0xBF)
+
+and then calls the "LARGE GARBAGE" routine (see below).
+
+For the encryption key, the engine calls the "SET REGISTER" routine (see below) with
+the value of the encryption key, and then calls the "LARGE GARBAGE" routine (see 
+below).
+
+If there is a key permutation value in use, then the engine calls the "SET REGISTER"
+routine (see below) with the value of the permutation value, and then calls the 
+"LARGE GARBAGE" routine (see below).
+
+If the file to infect is a relocatable object, then the engine emits a
+
+    MOV reg, val (0x48 0xB8-0xBF)
+
+where "val" is the 64-bit source address in the ".data" section where the encrypted 
+virus body was placed.
+
+If the file to infect is an executable, then the engine sets the source address via a
+call to the "COPY REGISTER" routine (see below), if the destination register was set 
+already, and the feature is enabled to copy between pointers. Otherwise, the engine 
+calls the "SET REGISTER" routine (see below) with the value of the source address.
+
+In either case, the engine calls the "LARGE GARBAGE" routine (see below) afterwards.
+
+If the file to infect is a relocatable object, then the engine generates the 
+parameters for the mmap call in random order. It calls the "SET REGISTER" routine 
+(see below) with a value of 9 (mmap) to set the AX register; 0 (NULL, kernel choice
+for the address) to set the DI register; the size of the virus, plus the padding, to
+set the SI register; 7 (PROT_READ, PROT_WRITE, PROT_EXEC) to set the DX register; 
+0x22 (MAP_PRIVATE, MAP_ANONYMOUS flags) to set the R10 register; -1 (no file 
+descriptor) to set the value of the R8 register; and 0 (no initial content) to set 
+the value of the R9 register. After each call to the "SET REGISTER" routine, the 
+virus calls the "SMALL GARBAGE" routine (see below).
+
+If the file to infect is an executable, then the engine sets the destination address
+via the "COPY REGISTER" routine (see below), if the source register was set already,
+and the feature is enabled to copy between pointers. Otherwise, the engine calls the
+"SET REGISTER" routine (see below) with the value of the destination address.
+
+In either case, the engine calls the "LARGE GARBAGE" routine (see below) afterwards.
+
+The engine calls the "EMPTY STACK" routine (see below), to discard any additional 
+allocation that the "LARGE GARBAGE" routine (see below) might have made if the 
+feature was enabled to make use of stack variables.
+
+
+<b>THROWN FOR A LOOP</b>
+
+This point marks the top of the decryption loop.
+
+The engine enables the feature to use the stack for additional garbage PUSH and POP
+instructions, before calling the "LARGE GARBAGE" routine (see below), and then 
+calling the "READ MEMORY" routine (see below) to read some encrypted data from source
+memory. That call is followed by another call to the "LARGE GARBAGE" routine (see 
+below).
+
+The engine chooses a random number of operations to apply to the encryption key, and
+the key permutation, if the permutation is in use, based on the level that was 
+selected during the initialisation phase. The number of operations is in the range of
+the chosen number up to twice the chosen number.
+
+If the feature is enabled to interleave the operations between the encryption key, 
+and the key permutation, if the permutation is in use, then the engine switches 
+randomly between applying the operations to the appropriate target. Otherwise, the 
+engine applies the operations to the encryption key, and then to the key permutation,
+if the permutation is in use.
+
+The operations are chosen randomly from among the following:
+
+    ADD reg1/mem, reg2 (0x00/0x01)
+    ADD AL, imm (0x04)
+    ADD AX, imm (0x05)
+    ADD reg/mem, (s)imm (0x80/0x81/0x83 /0)
+    NEG reg/mem (0xF6/0xF7 /3)
+    NOT reg/mem (0xF6/0xF7 /2)
+    ROL reg/mem, imm (0xC0/0xC1 /0)
+    ROL reg/mem, 1 (0xD0/0xD1 /0)
+    ROL reg/mem, CL (0xD2/0xD3 /0)
+    ROR reg/mem, imm (0xC0/0xC1 /1)
+    ROR reg/mem, 1 (0xD0/0xD1 /1)
+    ROR reg/mem, CL (0xD2/0xD3 /1)
+    SUB reg1/mem, reg2 (0x28/0x29)
+    SUB AL, imm (0x2C)
+    SUB AX, imm (0x2D)
+    SUB reg/mem, (s)imm (0x80/0x81/0x83 /5)
+    XOR reg1/mem, reg2 (0x30/0x31)
+    XOR AL, imm (0x34)
+    XOR AX, imm (0x35)
+    XOR reg/mem, (s)imm (0x80/0x81/0x83 /6)
+
+The engine calls the "SMALL GARBAGE" routine (see below) after each operation is 
+emitted, and then calls the "LARGE GARBAGE" routine (see below) after the last 
+operation is emitted.
+
+Regardless of how many operations are applied to the encryption key, the actual 
+decryption action is just one of three simple operations.
+
+    ADD reg1, reg2 (0x00/0x01)
+    SUB reg1, reg2 (0x28/0x29)
+    XOR reg1, reg2 (0x30/0x31)
+
+of the data with the key. That's it.
+
+The engine follows the decryption operation with a call to the "LARGE GARBAGE" 
+routine (see below), then a call to the "WRITE MEMORY REGISTER" routine (see below),
+and allowing the "XCHG" instruction, to store the decrypted data destination memory,
+followed by another call to the "LARGE GARBAGE" routine (see below).
+
+The engine adjusts the source and destination pointers individually if they point to
+different places, and the order of the adjustments is chosen randomly. The adjustment
+is done via INC, DEC, ADD, or SUB, as appropriate. The same kind of adjustment is 
+applied to the loop counter.
+
+The engine calls the "EMPTY STACK" routine (see below), to discard any additional 
+allocation that the "LARGE GARBAGE" routine (see below) might have made if the 
+feature was enabled to make use of stack variables.
+
+With 50% chance, the engine calls the "SMALL GARBAGE" routine (see below), followed 
+by a call to the "CHECK CONDITION" routine (see below).
+
+The engine has two ways to transfer of control back to the top of the loop. A 
+feature controls if the transfer of control is in the form of a long conditional 
+branch (0x0F 0x8x) directly to the top, or a short branch (0x7x) over a near jump 
+(0xE9) to the top. If the short branch form is used then the engine calls the 
+"SMALL GARBAGE" routine (see below) but with a size override in order to produce up
+to approximately 107 bytes worth of garbage instructions. An instruction can be up 
+to 15 bytes long, because of address displacements and immediate parameters.
+
+If the file to infect is an executable, then the engine calls the "LARGE GARBAGE" 
+routine (see below) to complete the loop.
+
+After decryption is complete, the virus generates a call to the decrypted virus code.
+If the feature is enabled that forces the use of the destination register as the call
+register, then the engine calls the "SMALL GARBAGE" routine (see below), then adjusts
+the destination register using one of the following:
+
+    ADD reg, delta (0x80/0x81/0x83 /0)
+    SUB reg, -delta (0x80/0x81/0x83 /5)
+
+followed by another call to the "SMALL GARBAGE" routine (see below), and finally a
+
+    CALL reg (0xFF /2r)
+
+If the file to infect is a relocatable object, then the engine emits a:
+
+    POP reg ((0x41) 0x58-0x5F)
+
+followed by one of:
+
+    ADD reg, delta (0x80/0x81/0x83 /0)
+    SUB reg, -delta (0x80/0x81/0x83 /5)
+
+followed by another call to the "SMALL GARBAGE" routine (see below), and finally a:
+
+    CALL reg (0xFF /2r)
+
+If the file to infect is an executable, and the feature is not enabled that forces 
+the use of the destination register as the call register, then with 50% chance, the
+virus emits:
+
+    CALL virus code (0xE8)
+
+Otherwise, the engine calls the "SET REGISTER" routine (see below) using the address
+of the virus code as the value, followed by a call to the "SMALL GARBAGE" routine 
+(see below), and finally a:
+
+    CALL reg (0xFF /2r)
+
+The engine follows that with a call to the "LARGE GARBAGE" routine (see below), and 
+then calls the "EMPTY STACK" routine (see below) to discard the space on the stack 
+that was allocated if the feature was enabled to make use of stack variables.
+
+If the feature is enabled to always save all registers, or if the file to infect is
+not prelinked, then the engine restores all registers. The engine pops from the stack
+the general registers (RAX, RCX, RDX, RBX, RBP, RSI, and RDI - RSP is excluded) and 
+the extended registers (R8-R15), in the reverse order of the one chosen during the 
+initialisation phase. The engine calls the "SMALL GARBAGE" routine (see below) before
+each POP instruction.
+
+If the feature is enabled to save the CPU flags, then the engine emits a:
+
+    POPF (0x9D)
+
+afterwards.
+
+To return control to the host, the engine emits another transfer of control. If the
+feature is enabled to jump using a RIP-relative instruction, then the engine emits a:
+
+    JMP (0xE9)
+
+If the feature is not enabled to jump using a RIP-relative instruction, then with 50%
+chance, the engine emits a:
+
+    JMP [mem] (0xFF /4)
+
+Otherwise, the engine emits:
+
+    PUSH [mem] (0xFF /6)
+    calls the "SMALL GARBAGE" routine (see below)
+    RET (0xC3)
+
+Then the engine calls the "LARGE GARBAGE" routine (see below).
+
+At this point, the engine orders randomly the subroutine placeholders. Each 
+subroutine enables the use of garbage stack variables, followed by a call to the 
+"LARGE GARBAGE" routine (see below), and with 50% chance, another call to the 
+"LARGE GARBAGE" routine (see below). Once the garbage routine returns, the engine 
+uses the "EMPTY STACK" routine (see below).
+
+If the file to infect is an executable, and the feature is enabled to reserve space 
+before the decryptor, then the engine fills the space with content via the 
+"SMALL GARBAGE" routine (see below), up to approximately 20 bytes from the end. 
+The 20 bytes are a buffer against the last garbage instruction being very long and 
+overwriting the start of the decryptor code. For the bytes that are left after the 
+call, the engine emits random values until the space is filled. The intention is to 
+further obscure the entrypoint for the decryptor.
+
+So, there we have it. All of the details of the engine, from A to Z, with a long stop
+at VX.
+
+
+<b>APPENDIX</b>
+
+What follows here is a description of the supporting routines that the engine uses to
+produce the major variations in infected files.
+
+
+<b>SMALL GARBAGE</b>
+
+If the file to infect is an executable, or if the feature is enabled to emit "small"
+garbage, then the engine chooses randomly the number of garbage instructions to emit,
+based on the garbage level chosen during initialisation. The result is normally in 
+the range of 2-15 instructions, but the range can also be overridden. Garbage 
+instructions are emitted only if at least one extended register (R8-R15) is available
+for use. In that case, the engine emits garbage instructions until either the range 
+is reached.
+
+The engine supports garbage writes to the stack (if the feature is enabled to make 
+use of stack variables), and to the ".bss" section (if there are no relocation items
+pointing into it). The engine supports garbage reads from the stack, and from the 
+".bss", ".data", and ".rodata", sections. The engine can emit reads and writes with 
+optional displacements, but only a single register is ever used. The engine emits 
+prefixes as needed, allowing the use of words (via 0x66), and qwords 
+(via 0x40/0x41/0x48/0x49).
+
+The list of possible garbage instructions follows:
+
+    ADC AL, imm (0x14)
+    ADC AX, imm (0x15)
+    ADC reg/mem, (s)imm (0x80/0x81/0x83 /2)
+    ADD AL, imm (0x04)
+    ADD AX, imm (0x05)
+    ADD reg/mem, (s)imm (0x80/0x81/0x83 /0)
+    AND AL, imm (0x24)
+    AND AX, imm (0x25)
+    AND reg/mem, (s)imm (0x80/0x81/0x83 /4)
+    OR AL, imm (0x0C)
+    OR AX, imm (0x0D)
+    OR reg/mem, (s)imm (0x80/0x81/0x83 /1)
+    SBB AL, imm (0x1C)
+    SBB AX, imm (0x1D)
+    SBB reg/mem, (s)imm (0x80/0x81/0x83 /3)
+    SUB AL, imm (0x2C)
+    SUB AX, imm (0x2D)
+    SUB reg/mem, (s)imm (0x80/0x81/0x83 /5)
+    XOR AL, imm (0x34)
+    XOR AX, imm (0x35)
+    XOR reg/mem, (s)imm (0x80/0x81/0x83 /6)
+
+Note that CMP is excluded from this set.
+
+When the use of rotates and shifts is chosen, then with 50% chance, the engine emits
+one of the following:
+
+    RCL reg/mem, imm (0xC0/0xC1 /2)
+    RCR reg/mem, imm (0xC0/0xC1 /3)
+    ROL reg/mem, imm (0xC0/0xC1 /0)
+    ROR reg/mem, imm (0xC0/0xC1 /1)
+    SAR reg/mem, imm (0xC0/0xC1 /7)
+    SHL reg/mem, imm (0xC0/0xC1 /4)
+    SHR reg/mem, imm (0xC0/0xC1 /5)
+
+Or with 25% chance, or always if the target is an extended register (it is unknown 
+why extended registers are excluded from using the ",CL" form. It appears to be a 
+mistake) or if CX in use (this avoids the suspicious "CX, CL" combination), the 
+engine emits one of the following:
+
+    RCL reg/mem, 1 (0xD0/0xD1 /2)
+    RCR reg/mem, 1 (0xD0/0xD1 /3)
+    ROL reg/mem, 1 (0xD0/0xD1 /0)
+    ROR reg/mem, 1 (0xD0/0xD1 /1)
+    SAR reg/mem, 1 (0xD0/0xD1 /7)
+    SHL reg/mem, 1 (0xD0/0xD1 /4)
+    SHR reg/mem, 1 (0xD0/0xD1 /5)
+
+Otherwise, the engine emits one of the following:
+
+    RCL reg/mem, CL (0xD2/0xD3 /2)
+    RCR reg/mem, CL (0xD2/0xD3 /3)
+    ROL reg/mem, CL (0xD2/0xD3 /0)
+    ROR reg/mem, CL (0xD2/0xD3 /1)
+    SAR reg/mem, CL (0xD2/0xD3 /7)
+    SHL reg/mem, CL (0xD2/0xD3 /4)
+    SHR reg/mem, CL (0xD2/0xD3 /5)
+
+Note that SAL is excluded from these sets. The engine will not emit any instruction
+if the value is zero.
+
+Other possibilities include:
+
+    ADC reg1/mem, reg2 (0x10/0x11)
+    ADD reg1/mem, reg2 (0x00/0x01)
+    AND reg1/mem, reg2 (0x20/0x21)
+    DEC reg/mem (0xFE/0xFF /1)
+    INC reg/mem (0xFE/0xFF /0)
+    MOV reg1/mem, reg2 (0x8A/0x8B)
+    MOV reg, imm (0xB0-0xBF)
+    NOT reg/mem (0xF6/0xF7 /2)
+    NEG reg/mem (0xF6/0xF7 /3)
+    OR reg1/mem, reg2 (0x08/0x09)
+    SBB reg1/mem, reg2 (0x18/0x19)
+    SUB reg1/mem, reg2 (0x28/0x29)
+    XOR reg1/mem, reg2 (0x30/0x31)
+
+Note that CMP is excluded from this set, too.
+
+    IMUL reg/mem (0xF6/0xF7 /5)
+    MUL reg/mem (0xF6/0xF7 /4)
+    BT reg1/mem, reg2 (0x0F 0xA3)
+    BT reg/mem, imm (0x0F 0xBA /4)
+    BTC reg/mem, imm (0x0F 0xBA /7)
+    BTC reg1/mem, reg2 (0x0F 0xBB)
+    BTR reg1/mem, reg2 (0x0F 0xB3)
+    BTR reg/mem, imm (0x0F 0xBA /6)
+    BTS reg1/mem, reg2 (0x0F 0xAB)
+    BTS reg/mem, imm (0x0F 0xBA /5)
+
+Sign-extension has several possibilities. The engine chooses randomly between the use
+of AX and DX registers.
+
+If the AX register is free, then with 50% chance, the engine emits:
+
+    CBW (0x98)
+
+Or with 25% chance, the engine emits:
+
+    CDQE (0x48 0x98)
+
+Otherwise, the engine emits:
+
+    CWDE (0x66 0x98)
+
+If the DX register is free, then with 50% chance, the engine emits:
+
+    CWD (0x99)
+
+Or with 25% chance, the engine emits:
+
+    CQO (0x48 0x99)
+
+Otherwise, the engine emits:
+
+    CDQ (0x66 0x99)
+
+Other possibilities include:
+
+    IMUL reg1, reg2/mem, imm (0x69/0x6B)
+    LEA reg1, [reg2] (0x8D)
+    MOVSXD reg1, reg2/mem (0x63)
+    XCHG reg1/mem, reg2 (0x86/0x87)
+    XCHG reg, AX (0x91-0x97)
+    BSF reg1, reg2/mem (0x0F 0xBC)
+    BSR reg1, reg2/mem (0x0F 0xBD)
+    BSWAP reg (0x0F 0xC8-0xCF)
+    CMOVB reg, reg/mem (0x0F 0x42)
+    CMOVBE reg, reg/mem (0x0F 0x46)
+    CMOVE reg, reg/mem (0x0F 0x44)
+    CMOVL reg, reg/mem (0x0F 0x4C)
+    CMOVLE reg, reg/mem (0x0F 0x4E)
+    CMOVNB reg, reg/mem (0x0F 0x43)
+    CMOVNBE reg, reg/mem (0x0F 0x47)
+    CMOVNE reg, reg/mem (0x0F 0x45)
+    CMOVNL reg, reg/mem (0x0F 0x4D)
+    CMOVNLE reg, reg/mem (0x0F 0x4F)
+    CMOVNO reg, reg/mem (0x0F 0x41)
+    CMOVNS reg, reg/mem (0x0F 0x49)
+    CMOVO reg, reg/mem (0x0F 0x40)
+    CMOVPE reg, reg/mem (0x0F 0x4A)
+    CMOVPO reg, reg/mem (0x0F 0x4B)
+    CMOVS reg, reg/mem (0x0F 0x48)
+    CMPXCHG reg1/mem, reg2 (0x0F 0xB0/0xB1)
+    IMUL reg1, reg2/mem (0x0F 0xAF)
+    MOVSX reg1, reg2/mem (0x0F 0xBE/0xBF)
+    MOVZX reg1, reg2/mem (0x0F 0xB6/0xB7)
+    SETB reg/mem (0x0F 0x92)
+    SETBE reg/mem (0x0F 0x96)
+    SETE reg/mem (0x0F 0x94)
+    SETL reg/mem (0x0F 0x9C)
+    SETLE reg/mem (0x0F 0x9E)
+    SETNB reg/mem (0x0F 0x93)
+    SETNBE reg/mem (0x0F 0x97)
+    SETNE reg/mem (0x0F 0x95)
+    SETNL reg/mem (0x0F 0x9D)
+    SETNLE reg/mem (0x0F 0x9F)
+    SETNO reg/mem (0x0F 0x91)
+    SETNS reg/mem (0x0F 0x99)
+    SETO reg/mem (0x0F 0x90)
+    SETPE reg/mem (0x0F 0x9A)
+    SETPO reg/mem (0x0F 0x9B)
+    SETS reg/mem (0x0F 0x98)
+    SHLD reg1/mem, reg2, imm (0x0F 0xA4)
+    SHLD reg1/mem, reg2, cl (0x0F 0xAC)
+    SHRD reg1/mem, reg2, imm (0x0F 0xA5)
+    SHRD reg1/mem, reg2, cl (0x0F 0xAD)
+    XADD reg1/mem, reg2 (0x0F 0xC0/0xC1)
+
+If the feature is enabled to make use of stack variables, and there are spare stack
+slots, then with 50% chance, the engine emits one of the following:
+
+    PUSH reg ((0x41) 0x50-0x57)
+    PUSH reg/mem (0xFF /7)
+
+Or with 25% chance, the engine emits:
+
+    PUSH imm (0x68/0x6A)
+
+Otherwise, the engine emits:
+
+    PUSHF (0x9C)
+
+If the feature is enabled to make use of stack variables, and stack slots were in use
+by PUSHed values, then the engine emits one of the following:
+
+    POP [reg] (0x8F /0)
+    POP reg ((0x41) 0x58-0x5F)
+
+Finally, the engine can emit:
+
+    LEA reg, [mem] (0x8D)
+
+as a garbage instruction, but also as an alternative method to assign real constants,
+as opposed to the other LEA which is truly garbage.
+
+
+<b>LARGE GARBAGE</b>
+
+If the file to infect is a relocatable object, or if the feature is not enabled to 
+emit "large" garbage, then the engine uses the small garbage generation instead. 
+However, if the feature is enabled to emit "large" garbage, then if the call depth 
+is less than three, then the engine can choose randomly to emit one of: garbage 
+subroutine calls, garbage if/else, or garbage loops. Each of these routines increases
+the call depth by one until the routine completes, limiting the number of times that 
+they can be used recursively.
+
+<b>SUBROUTINES</b>
+
+The garbage subroutine calls begin with a small garbage block, followed by a near 
+call (0xE8) with a placeholder value that is replaced as one of the last steps in the
+infection process. Interestingly, it looks like something more was intended in this 
+routine, because the call depth is adjusted up and then down, but with no intervening
+calls. The routine ends with another small garbage block.
+
+<b>IF/ELSE</b>
+
+The garbage if/else blocks begin with a small garbage block. Then, for registers or 
+memory with known values, the engine chooses one of:
+
+    ADD AL, 0 (0x04)
+    ADD AX, 0 (0x05)
+    ADD reg/mem, 0 (0x80/0x81/0x83 /0)
+    AND AL, -1 (0x24)
+    AND AX, -1 (0x25)
+    AND reg1/mem, -1 or reg2 (0x80/0x81/0x83 /4)
+    CMP AL, 0 or other imm (0x3C)
+    CMP AX, 0 or other imm (0x3D)
+    CMP reg1/mem, 0 or imm or reg2 (0x80/0x81/0x83 /7)
+    OR AL, 0 (0x0C)
+    OR AX, 0 (0x0D)
+    OR reg/mem, 0 (0x80/0x81/0x83 /1)
+    SUB AL, 0 (0x2C)
+    SUB AX, 0 (0x2D)
+    SUB reg/mem, 0 (0x80/0x81/0x83 /5)
+    TEST reg, reg (0x84/0x85)
+    TEST reg/mem, -1 or other imm (0xF6/0xF7 /0 /1)
+    XOR AL, 0 (0x34)
+    XOR AX, 0 (0x35)
+    XOR reg/mem, 0 (0x80/0x81/0x83 /6)
+    BT reg/mem, imm (0x0F 0xBA /4)
+    BT reg1/mem, reg2 (0x0F 0xA3)
+    BTC reg/mem, imm (0x0F 0xBA /7)
+    BTC reg1/mem, reg2 (0x0F 0xBB)
+    BTR reg1/mem, reg2 (0x0F 0xB3)
+    BTR reg/mem, imm (0x0F 0xBA /6)
+    BTS reg1/mem, reg2 (0x0F 0xAB)
+    BTS reg/mem, imm (0x0F 0xBA /5)
+
+The engine chooses randomly from possible set of condition flags that match what was
+tested, followed by a long conditional branch (0x0F 0x8x) instruction, to produce 
+what looks like an "if" construct. That block is followed by a call to the 
+"LARGE GARBAGE" (see above) routine (potentially entering a subroutine recursively), 
+and with 50% chance, another call to the "LARGE GARBAGE" routine (see above). The 
+branch instruction is set to point after all of the garbage instructions, allowing 
+them to be skipped.
+
+With 50% chance, the condition is reversed so that the branch is never taken and the
+garbage is always executed instead. This means that the branch instruction should be
+followed in all cases if emulating the code for the purposes of detection, to reduce
+the number of garbage instructions to execute. However, with 50% chance, the engine 
+appends a near jump (0xE9) instruction to the first garbage block, to produce what 
+looks like an "else" construct. In that case, the engine emits a call to the 
+"LARGE GARBAGE" routine (see above), and with 50% chance, another call to the 
+"LARGE GARBAGE" routine (see above).
+
+<b>LOOPS</b>
+
+The garbage loop blocks begin with a small garbage block. The engine chooses randomly
+the branch type for the loop control. JNZ, JNS, JS, JNC, JC, JG, JGE are all 
+considered. The engine then chooses randomly the counter value. The actual loop 
+begins with a call to the "LARGE GARBAGE" routine (see above), and with 50% chance, 
+another call to the "LARGE GARBAGE" routine (see above). The loop ends with an 
+adjustment to the counter, via INC, DEC, ADD, or SUB, as appropriate. Then, with 50% 
+chance, the engine calls the "SMALL GARBAGE" routine (see above), before including 
+the check for the exit condition, via the "CHECK CONDITION" routine (see below). If 
+the top of the loop is less than 126 bytes away, then the engine uses a short 
+conditional branch (0x7x) instruction to reach the top. Otherwise, it uses a long 
+conditional branch (0x0F 0x8x) instruction to reach the top.
+
+<b>LARGE FALLBACK</b>
+
+If the call depth is greater or equal to three, or if none of the other three 
+routines were chosen, then the engine emits either one or three blocks of small 
+garbage. If the caller is in a garbage loop, or if the feature is not enabled to 
+emit garbage syscalls, then the engine emits another block of small garbage. 
+Otherwise, the engine emits a random garbage syscall.
+
+<b>SYSCALL</b>
+
+Before emitting the garbage syscall, the engine uses RDA to decode the garbage 
+syscall table, and then chooses one entry randomly. The table describes which of 
+the parameters is defined for the syscall, and the engine initialiases only those 
+registers, in random order, using the "SET REGISTER" routine (see below), followed 
+by a block of small garbage in each case.
+
+The possible syscalls and their intentionally invalid parameters are:
+
+<b>INVALID FILE DESCRIPTOR</b>
+
+    READ (0)
+    WRITE (1)
+    CLOSE (3)
+    FSTAT (5)
+    POLL (7)
+    LSEEK (8)
+    IOCTL (16)
+    PREAD64 (17)
+    PWRITE64 (18)
+    READV (19)
+    WRITEV (20)
+    DUP (32)
+    DUP2 (33)
+    GETITIMER (36)
+    SETITIMER (38)
+    SENDFILE (40)
+    FLOCK (73)
+    FSYNC (74)
+    FDATASYNC (75)
+    FTRUNCATE (77)
+    GETDENTS (78)
+    FCHDIR (81)
+    FCHMOD (91)
+    FCHOWN (93)
+
+<b>OUT-OF-BOUNDS MEMORY POINTER</b>
+
+    OPEN (2)
+    STAT (4)
+    LSTAT (6)
+    POLL (7)
+    MPROTECT (10)
+    MUNMAP (11)
+    BRK (12)
+    ACCESS (21)
+    PIPE (22)
+    MREMAP (25)
+    MSYNC (26)
+    MINCORE (27)
+    MADVISE (28)
+    NANOSLEEP (35)
+    GETITIMER (36)
+    SETITIMER (38)
+    SENDFILE (40)
+    TRUNCATE (76)
+    GETCWD (79)
+    CHDIR (80)
+    RENAME (82)
+    MKDIR (83)
+    RMDIR (84)
+    CREAT (85)
+    LINK (86)
+    UNLINK (87)
+    SYMLINK (88)
+    READLINK (89)
+    CHMOD (90)
+    CHOWN (92)
+    LCHOWN (94)
+    GETTIMEOFDAY (96)
+    SYSINFO (99)
+    TIMES (100)
+
+<b>OUT-OF-BOUNDS STRUCTURE POINTER</b>
+
+    STAT (4)
+    LSTAT (6)
+    GETTIMEOFDAY (96)
+    GETRLIMIT (97)
+    GETRUSAGE (98)
+
+<b>UNALIGNED MEMORY POINTER</b>
+
+    MPROTECT (10)
+    MUNMAP (11)
+    MREMAP (25)
+    MSYNC (26)
+    MINCORE (27)
+    MADVISE (28)
+
+<b>BAD FILE OFFSET</b>
+
+    PREAD64 (17)
+    PWRITE64 (18)
+
+<b>BAD MODE</b>
+
+    ACCESS (21)
+
+<b>BAD LENGTH</b>
+
+    MINCORE (27)
+    TRUNCATE (76)
+    GETCWD (79)
+
+<b>NON-EXISTENT PATH</b>
+
+    CHDIR (80)
+    RENAME (82)
+    READLINK (89)
+
+<b>BAD RESOURCE</b>
+
+    GETRLIMIT (97)
+    GETRUSAGE (98)
+
+In addition, there are garbage syscalls which don't return errors:
+
+    ALARM (37) with zero delay
+    GETPID (39)
+    TIMES (100) with a NULL pointer
+    GETUID (102)
+    GETGID (104)
+    GETEUID (107)
+    GETEGID (108)
+    GETPPID (110)
+    GETPGRP (111)
+
+Interestingly, both OPEN and BRK are treated as though they return no error, despite
+being called with invalid parameters. This appears to be an oversight.
+
+Finally, there is a syscall with an invalid request. The virus chooses a random 
+number in the range of 350-413, expecting it to return a "bad syscall" error. The 
+lower range of these bad syscall requests is only slightly higher than the current 
+highest defined request (STATX (332)). It seems likely that future versions of Linux
+will eventually break this technique entirely.
+
+In response to the syscall return value, the virus chooses one of four different 
+actions. It can ignore the error; it can branch over random data only if the error 
+code matches, which would otherwise result in undefined behaviour; it can loop 
+infinitely while retrying the syscall; or it can construct a pointer using the error 
+code as part of the calculation. In this last case, an incorrect error code would 
+result in an invalid pointer, leading to undefined behaviour when attempting to 
+execute what is found at that address.
+
+
+<b>READ MEMORY</b>
+
+To read memory into a register, the engine does one of the following:
+
+    emits MOV reg1, [reg2] (0x8A/0x8B)
+
+    calls the "SET REGISTER" routine (see below) with a value of 0
+    calls the "SMALL GARBAGE" routine (see above)
+
+    emits ADD reg1, [reg2] (0x80/0x81/0x83 /0)
+    calls the "SMALL GARBAGE" routine (see above)
+
+    emits SUB reg1, [reg2] (0x80/0x81/0x83 /5)
+    calls the "SMALL GARBAGE" routine (see above)
+    emits NEG reg1 (0xF6/0xF7 /3)
+
+    calls the "SET REGISTER" routine (see below) with a value of -1
+    calls the "SMALL GARBAGE" routine (see above)
+    emits AND reg1, [reg2]
+
+    emits AND reg1, [reg2] (0x80/0x81/0x83 /4)
+    calls the "SMALL GARBAGE" routine (see above)
+    emits OR reg1, [reg2] (0x80/0x81/0x83 /1)
+
+    emits OR reg1, [reg2] (0x80/0x81/0x83 /1)
+    calls the "SMALL GARBAGE" routine (see above)
+    emits AND reg1, [reg2] (0x80/0x81/0x83 /4)
+
+or if the XCHG instruction is allowed by the caller, then the engine emits:
+
+XCHG reg1, [reg2] (0x86/0x87)
+
+Then the engine calls the "SMALL GARBAGE" routine (see above).
+
+
+<b>SET REGISTER</b>
+
+To set a register to zero, the engine emits a call to the "ZERO REGISTER" routine
+(see below). Otherwise, the engine does one of the following:
+
+    emits PUSH imm (0x68/0x6A)
+    emits POP reg ((0x41) 0x58-0x5F)
+    calls the "SMALL GARBAGE" routine (see above)
+
+    call the "ZERO REGISTER" routine (see below), followed by one of the following:
+
+    ADD reg, val (0x80/0x81/0x83 /r0)
+    SUB reg, -val (0x80/0x81/0x83 /r5)
+
+    calls the "SMALL GARBAGE" routine (see above)
+
+    emits MOV reg, val ((0x48) 0xB8-0xBF)
+    calls the "SMALL GARBAGE" routine (see above)
+
+    emits MOV reg.l, val.l (0xB0-0xB3)
+    calls the "SMALL GARBAGE" routine (see above)
+    emits MOV reg.h, val.h (0xB4-0xB7)
+    calls the "SMALL GARBAGE" routine (see above)
+
+    emits MOV reg.h, val.h (0xB4-0xB7)
+    calls the "SMALL GARBAGE" routine (see above)
+    emits MOV reg.l, val.l (0xB0-0xB3)
+    calls the "SMALL GARBAGE" routine (see above)
+
+
+<b>ZERO REGISTER</b>
+
+To zero a register, the engine emits one of the following:
+
+    SUB reg, reg (0x80/0x81/0x83 /5r)
+    XOR reg, reg (0x80/0x81/0x83 /6r)
+    AND reg, 0 (0x80/0x81/0x83 /4)
+
+    PUSH 0 (0x68/0x6A)
+    POP reg ((0x41) 0x58-0x5F)
+    followed by 2-6 garbage instructions
+
+    SHL/SHR reg, {bitwidth..(bitwidth*2)-1}
+    e.g., SHL reg16, 16..31
+    e.g., SHR reg32, 32..63
+
+Then the engine calls the "SMALL GARBAGE" routine (see above).
+
+
+<b>CHECK CONDITION</b>
+
+To check a condition, the engine emits one of the following:
+
+	ADD reg, 0 (0x80/0x81/0x83 /0)
+	OR reg1, 0 or reg2 (0x80/0x81/0x83 /1)
+	XOR reg, 0 (0x80/0x81/0x83 /6)
+	SUB reg, 0 (0x80/0x81/0x83 /5)
+	CMP reg, 0 (0x80/0x81/0x83 /7)
+	AND reg1, -1 or reg2 (0x80/0x81/0x83 /4)
+	TEST reg1, reg2 (0x84/0x85)
+	TEST reg1, -1 (0xF6/0xF7 /0 /1)
+
+
+<b>WRITE MEMORY VALUE</b>
+
+If the value to write is zero, then the engine emits one of the following:
+
+    AND [reg], 0 (0x80/0x81/0x83 /4)
+    MOV [reg], 0 (0xC6/0xC7)
+
+If the value to write is one, or with 25% chance, the engine emits the following:
+
+    MOV [reg], val (0xC6/0xC7)
+
+Or with 25% chance, the engine emits one of the following:
+
+    AND [reg], 0 (0x80/0x81/0x83 /4)
+    MOV [reg], 0 (0xC6/0xC7)
+
+Then the engine calls the "SMALL GARBAGE" routine (see above), followed by one of
+the following:
+
+    ADD [reg], val (0x80/0x81/0x83 /0)
+    OR [reg], val (0x80/0x81/0x83 /1)
+    SUB [reg], -val (0x80/0x81/0x83 /5)
+    XOR [reg], val (0x80/0x81/0x83 /6)
+
+Or with 25% chance, the engine emits one of the following:
+
+    MOV [reg], -1 (0xC6/0xC7)
+    OR [reg], -1 (0x80/0x81/0x83 /1)
+
+    calls the "SMALL GARBAGE" routine (see above)
+    AND [reg], val (0x80/0x81/0x83 /4)
+
+Otherwise, the engine emits one of the following:
+
+    AND [reg], val (0x80/0x81/0x83 /4)
+    calls the "SMALL GARBAGE" routine (see above)
+    OR [reg], val (0x80/0x81/0x83 /1)
+
+    OR [reg], val (0x80/0x81/0x83 /1)
+    calls the "SMALL GARBAGE" routine (see above)
+    AND [reg], val (0x80/0x81/0x83 /4)
+
+Then the engine calls the "SMALL GARBAGE" routine (see above).
+
+
+<b>WRITE MEMORY REGISTER</b>
+
+To write memory from a register, the engine emits one of the following:
+
+    MOV [reg1], reg2 (0x88/0x89)
+
+    AND [reg], 0 (0x80/0x81/0x83 /4)
+    MOV [reg], 0 (0xC6/0xC7)
+
+followed by one of the following:
+
+    ADD [reg1], reg2 (0x80/0x81/0x83 /0r)
+    OR [reg1], reg2 (0x80/0x81/0x83 /1r)
+    XOR [reg1], reg2 (0x80/0x81/0x83 /6r)
+
+    SUB [reg1], reg2 (0x80/0x81/0x83 /5r)
+    calls the "SMALL GARBAGE" routine (see above)
+    NEG [neg1] (0xF6/0xF7 /3)
+
+    MOV [reg], -1 (0xC6/0xC7)
+    OR [reg], -1 (0x80/0x81/0x83 /1)
+    calls the "SMALL GARBAGE" routine (see above)
+    AND [reg1], reg2 (0x80/0x81/0x83 /4r)
+
+    AND [reg1], reg2 (0x80/0x81/0x83 /4r)
+    calls the "SMALL GARBAGE" routine (see above)
+    OR [reg1], reg2 (0x80/0x81/0x83 /1r)
+
+    OR [reg1], reg2 (0x80/0x81/0x83 /1r)
+    calls the "SMALL GARBAGE" routine (see above)
+    AND [reg1], reg2 (0x80/0x81/0x83 /4r)
+
+or if the XCHG instruction is allowed by the caller, then the engine emits:
+
+    XCHG reg1, [reg2] (0x86/0x87)
+
+Then the engine calls the "SMALL GARBAGE" routine (see above).
+
+
+<b>COPY REGISTER</b>
+
+To copy a register, the engine does one of the following:
+
+    emits MOV reg1, reg2 (0xC6/0xC7)
+
+    calls the "SET REGISTER" routine (see above) with a value of 0
+    calls the "SMALL GARBAGE" routine (see above), followed by one of:
+
+    ADD reg1, reg2 (0x80/0x81/0x83 /0r)
+    OR reg1, reg2 (0x80/0x81/0x83 /1r)
+    XOR reg1, reg2 (0x80/0x81/0x83 /6r)
+
+    SUB reg1, reg2 (0x80/0x81/0x83 /5r)
+    calls the "SMALL GARBAGE" routine (see above)
+    NEG reg1 (0xF6/0xF7 /3)
+
+    PUSH reg2 ((0x41) 0x50-0x57)
+    POP reg1 ((0x41) 0x58-0x5F)
+
+Then the engine calls the "SMALL GARBAGE" routine (see above).
+
+
+<b>EMPTY STACK</b>
+
+If there are stack slots in use, then with 50% chance, the engine emits one of:
+
+    ADD RSP, count*8 (0x80/0x81/0x83 /0)
+    SUB RSP, -count*8 (0x80/0x81/0x83 /5)
+
+Otherwise, the engine emits garbage POP (0x41 0x58-0x5F) instructions until the
+stack is empty.
+
+
+<b>BREAK ME, BREAK IT AND BREAK IT AGAIN</b>
+
+The major weakness in the engine (and, in fact, polymorphic engines in general) is
+the fact that registers are used without explicit initialisation. This allows 
+techniques such as Frédéric Perriot's "Defeating Polymorphism Through Code 
+Optimization" [1] to discard the majority of the garbage instructions, leaving the
+important instructions bare and visible. However, the technique is utterly defeated
+by "arithmetic initialisation", whereby the individual bits are set or cleared 
+implicitly, such as was used by the Bounds virus for Windows [2]. In that case, 
+almost all of the instructions are discarded, leaving no meaningful virus code 
+behind.
+
+
+<b>REFERENCES</b>
+
+[1] https://www.virusbulletin.com/conference/vb2003
+      /abstracts/defeating-polymorphism-through-code-optimization
+[2] http://pferrie.epizy.com/papers/bounds.pdf
+
+
+</pre></div></center></body></html>

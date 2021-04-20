@@ -1,0 +1,343 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+ 
+ _ .-') _     ('-.   ('-.     _ .-') _        .-. .-')               .-') _     ('-.    .-')
+( (  OO) )  _(  OO) ( OO ).-.( (  OO) )       \  ( OO )             (  OO) )  _(  OO)  ( OO ).
+ \     .'_ (,------./ . --. / \     .'_        ;-----.\  ,--.   ,--./     '._(,------.(_)---\_)
+ ,`'--..._) |  .---'| \-.  \  ,`'--..._)       | .-.  |   \  `.'  / |'--...__)|  .---'/    _ |
+ |  |  \  ' |  |  .-'-'  |  | |  |  \  '       | '-' /_).-')     /  '--.  .--'|  |    \  :` `.
+ |  |   ' |(|  '--.\| |_.'  | |  |   ' |       | .-. `.(OO  \   /      |  |  (|  '--.  '..`''.)
+ |  |   / : |  .--' |  .-.  | |  |   / :       | |  \  ||   /  /\_     |  |   |  .--' .-._)   \
+ |  '--'  / |  `---.|  | |  | |  '--'  /       | '--'  /`-./  /.__)    |  |   |  `---.\       /
+ `-------'  `------'`--' `--' `-------'        `------'   `--'         `--'   `------' `-----'
+                                                                                  ~ xcellerator
+
+Ahoy, fellow ELF devotees! In this article, I want to introduce a small library I've been working
+on called LibGolf. It started out as simply a vehicle for better understanding the ELF and program
+headers, but has since spun into something reasonably practical. It makes is very easy to generate
+a binary consisting of an ELF header, followed by a single program header, followed by a single
+loadable segment. By default, all the fields in the headers are set to sane values, but there's a
+simple way to play with these defaults - and that's what this article is all about! I'm going to
+demonstrate how I used LibGolf to enumerate precisely which bytes are necessary and which are
+ignored by the Linux loader. Fortunately, it turns out that the loader is one of the least picky
+parsers among the standard Linux toolkit. Before we're through, we'll see several popular static
+analysis tools crumble before our corrupted ELF, while the loader continues to merrily load and
+jump to our chosen bytes.
+
++---------------------------+
+|--[ Introducing LibGolf ]--|
++---------------------------+
+
+A while back, I'd been playing with writing ELFs by hand in NASM. While this was fun for a while
+(and certainly has it's benefits), I realised that I was missing out on all the fun that C structs
+have to offer. In particular, as I'm sure many readers will no doubt be aware, &lt;linux/elf.h&gt;, is
+packed full of fun things like `Elf64_Ehdr` and `Elf32_Phdr` ripe for declaring.
+
+Not wanting such helpful headers to go to waste, I elected to take them, and put them to good use.
+From these efforts, came libgolf.h, a libary that makes it easy to throw shellcode into a
+functioning executable. I know what you're thinking - "this just sounds like a terrible linker!",
+and you might be right. However, what's nice here is that you can easily modify the headers *before*
+the binary is built.
+
+Let's take a look at how this works. If you want to play along at home, you can find the source code
+for all of this at [0]. You can find the code in this article under 'examples/01_dead_bytes'. The
+basic setup needs two files; a C source file and a shellcode.h. As far as shellcode goes, I like to
+go with the old faithful 'b0 3c 48 31 ff 0f 05', which disassembles to:
+
+        mov al, 0x3c    @ b0 3c
+        xor rdi, rdi    @ 48 31 ff
+        syscall         @ 0f 05
+
+(Yes - calling this "shellcode" is pushing things a bit!)
+
+Essentially, it just calls exit(0). This is nice because we can easily check that these bytes
+successfully executed with the shell expansion $?.
+
+Throw this or some other shellcode (but make sure it's PIC - there's no support for relocatable
+symbols yet!) into a buffer called buf[] in shellcode.h and jump back to the C file. If you just
+wanted to get a binary that executes your shellcode, then this is all you need:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            GEN_ELF();
+            return 0;
+        }
+
+Compiling this and running the resulting executable will provide you with a .bin file - this is
+your shiny new ELF! Pretty simple, right? Simplicity is often accompanied by the dull, as is the
+case here, so let's do something more interesting!
+
+Before going on, it's worth explaining what these two macros are doing behind the scenes. First off,
+INIT_ELF() takes two arguments, the ISA and the architecture. Currently, LibGolf supports X86_64,
+ARM32, and AARCH64 as valid ISAs and either 32 or 64 for the architecture. It first sets up some
+internal bookkeeping structs, and decides whether to use the Elf32_* or Elf64_* objects for the
+headers. It also automatically assigns pointers to the ELF and program headers, called ehdr and
+phdr respectively. It is these that we will use to easily modify the fields. Aside from that, it
+also copies the shellcode buffer over, and populates the ELF and program headers before calculating
+a sane entry point. Now comes GEN_ELF(), which just prints some nice stats to stdout and then writes
+the appropriate structs to the .bin file. The name of the .bin is determined by argv[0].
+
+So, after we've used the INIT_ELF() macro, we have ehdr and phdr available to dereference. Suppose
+we wanted to modify the e_version field of the ELF header. All we need to do is add a single line:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64);
+
+            // Set e_version to 12345678
+            ehdr-&gt;e_version = 0x78563412;
+
+            GEN_ELF();
+            return 0;
+        }
+
+Another quick compile and execute, and you'll have another .bin file waiting for you. Taking a look
+at this file in xxd, hexyl, or your favourite bin-manipulator of choice, you'll see a pretty little
+'12 34 56 78' peeking back at you starting at offset 0x14. Wasn't that easy?
+
+To make things move a little faster, I like to use the following Makefile:
+
+        .PHONY golf clean
+
+        CC=gcc
+        CFLAGS=-I.
+        PROG=golf
+
+        golf:
+        	@$(CC) -o $(PROG) $(PROG).c
+        	@./$(PROG)
+        	@chmod +x $(PROG).bin
+
+        	@rm $(PROG) $(PROG).bin
+
+(This is the Makefile you'll find in the repo [0])
+
++-----------------------------------+
+|--[ Falling At The First Hurdle ]--|
++-----------------------------------+
+
+As many will already know, file parsers are awful things. While specifications usually have earnest
+goals, they are rarely respected by those who should supposedly know better. Chief among such
+blasphemers is the Linux ELF loader itself. LibGolf makes it easy to investigate the extent of these
+crimes against elf.h.
+
+A good place to begin is the beginning, which means the ELF header. At the start of any ELF file is
+ofcourse, the familar 0x7f followed by ELF, known to its friends as EI_MAG0 through EI_MAG3.
+Unsurprisingly, modifying any of these four bytes results in the Linux loader rejecting the file.
+Thank goodness for that!
+
+What about byte 0x5? Our trusty specification tells us that this is the EI_CLASS byte and denotes
+the target architecture. Acceptable values are 0x01 and 0x02, for 32- and 64-bit respectively. I'll
+say again: acceptable values are 0x01 and 0x02. What if we set it to 0x58 (or "X" for ASCII-
+adherents)? We can do that by adding:
+
+        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;
+
+to our generating C file. (Why 0x58? It shows up clearly in xxd/hexyl output!)
+
+Once we've got our .bin to play with, before trying to execute it, let's try a couple of other
+familar ELF parsing tools in the search for further culprits. First on the list is gdb. Go on,
+I'll wait. See what happens?
+
+        "not in executable format: file format not recognized"
+
+Likewise, objdump will give you a similar answer. It seems these parsers are doing their job
+properly. Now, let's try to run the binary normally.
+
+        &lt;spoiler&gt;It works perfectly.&lt;/spoiler&gt;
+
+If you're using my example shellcode, then a consultation with $? will regretably inform you that
+the binary exited successfully. The same crimes are commited when setting EI_DATA and EI_VERSION to
+illegal values too.
+
++---------------------------------------+
+|--[ Turning The Corruption Up To 11 ]--|
++---------------------------------------+
+
+So, how far can we go? Just how much of the ELF and program headers will the Linux loader ignore?
+We've already covered EI_CLASS, EI_DATA and EI_VERSION, but it turns out that EI_OSABI is also
+safely ignored. That takes us up to offset 0x8. According to the spec, next up is EI_ABIVERSION and
+EI_PAD which, together, take us all the way to byte 0xf. No one cares about them it seems, so we
+can set all of them to 0x58 without fear.
+
+Marching ever further, we come across a field that appears to be resistant to being messed with:
+e_type. Understandably, the Linux loader doesn't like it if we don't tell it what kind of ELF file
+we're providing it with (it's nice to know that it does have *some* standards! - pun intended). We
+need these two bytes to remain 0x0002 (or ET_EXEC to elf.h acolytes). Next up is another picky byte,
+at the all-too-familiar 0x12 offset: e_machine, which designates the target ISA. As far as we're
+concerned, by specifying X86_64 as the first argument to INIT_ELF(), this byte has already been
+populated with 0x3e for us by LibGolf.
+
+Suddenly, a wild e_version appeared! We're faced with another dissident, which supposedly should
+always be the bytes 0x00000001. However, in practice, no one seems to be interested, so let's fill
+it with 0x58585858 instead.
+
+Following this string of heretics, we have a couple of important fields that appear to be resistant
+to abuse; e_entry and e_phoff. I'm sure I needn't go into too much detail about e_entry; it's the
+entry point of the binary, where execution is ultimately handed off to once the loadable sections
+are in memory. While one might expect that the loader could manage without knowing what the offset
+to the program header is, it appears that it isn't smart enough to figure it out without being
+spoon-fed. Better leave these two alone.
+
+LibGolf is yet to support section headers (and given its focus on producing *small* binaries, it is
+probably unlikely to support them in the future). This means that, faced with any headers relating
+to them, we can fiddle to our heart's content. That includes e_shoff, e_shentsize, eh_shnum and even
+e_shstrndx. If we don't have any section headers, we can't be held accountable for corrupting them!
+
+The remaining fields that are seemingly of some import to the Linux loader are e_ehsize, e_phentsize,
+and e_phnum. Again, this isn't too surprising, seeing as they are concerned with loading the only
+loadabale segment into memory before handing over control. If you need a refresher, e_ehsize is the
+size of the ELF header (which is either 0x34 or 0x40 for 32- and 64-bit respectively), eh_phentsize
+is the size of the upcoming program header (again, hardcoded to either 0x20 or 0x38 for 32- and
+64-bit architectures). If the loader had been a little more picky about EI_CLASS, it wouldn't need
+these two fields. Lastly, e_phnum is just the number of entries in the program header - for us it is
+always 0x1. No doubt, this is used for some loop in the memory loading routines, but I haven't
+investigated any further yet.
+
+There is still one field left in the ELF header I haven't touched on, which is e_flags. The reason
+is fairly simple, in that it's architecture dependent. For x86_64, it doesn't matter at all because
+it's undefined (although it *is* important for some ARM platforms! Take a look at the arm32 example
+at [0]).
+
+That brings us to the end of the ELF header. For those not keeping count, just over 50% of the ELF
+header is ignored by the loader. But what about the program header? It turns out that program headers
+have a lot less wiggle room in them, but not for the reason one might expect. Indeed, *any* corruption
+of the program header will not actually affect the Linux loader. We could fill the whole thing with
+our trusty 0x58, and the loader won't care a jot. But beware, bold adventurer, fiddle with the wrong
+byte and you'll be plunged into the dungeon of faulty segmentation!
+
+So, is there anything at all susceptible to coercion in the program header? It transpires that there
+are two fields that, by no fault of their own, simply aren't relevant anymore: p_paddr and p_align.
+The former was important back in the heady days before virtual memory, where 4GB of RAM was nothing
+more than a child's daydream and it was therefore important to inform the loader where in physical
+memory the segment should be loaded.
+
+Memory alignment is a funny one. Supposedly, p_vaddr is meant to equal p_offset modulo p_align.
+"Proper" ELF files (at least those compiled with GCC) appear to just set p_offset equal to p_vaddr
+and move on. This is also what LibGolf does by default and renders p_align totally superfluous!
+
+All in all, not as fun as the ELF header, but still some small gains. The binary generating C file
+now looks like this:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            /*
+             * Breaks common static analysis tools like gdb and objdump
+             */
+            (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;   // Architecture
+            (ehdr-&gt;e_ident)[EI_DATA] = 0x58;    // Endianness
+            (ehdr-&gt;e_ident)[EI_VERSION] = 0x58; // Supposedly, always 0x01
+            (ehdr-&gt;e_ident)[EI_OSABI] = 0x58;   // Target OS
+
+            // Loop over the rest of e_ident
+            int i;
+            for ( i = 0 ; i &lt; 0x10 ; i++ )
+                (ehdr-&gt;e_ident)[i] = 0x58;
+
+            ehdr-&gt;e_version = 0x58585858;       // Supposedly, always 0x00000001
+
+            // Section headers? We don't need no stinkin' section headers!
+            ehdr-&gt;e_shoff = 0x5858585858585858;
+            ehdr-&gt;e_shentsize = 0x5858;
+            ehdr-&gt;e_shnum = 0x5858;
+            ehdr-&gt;e_shstrndx = 0x5858;
+
+            ehdr-&gt;e_flags = 0x58585858;         // x86_64 has no defined flags
+
+            phdr-&gt;p_paddr = 0x5858585858585858; // Physical address is ignored
+            phdr-&gt;p_align = 0x5858585858585858; // p_vaddr = p_offset, so irrevelant
+
+            GEN_ELF();
+            return 0;
+        }
+
+If you compile and run this program, you'll get the following binary:
+
+        00000000: 7f45 4c46 5858 5858 5858 5858 5858 5858  .ELFXXXXXXXXXXXX
+        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..&gt;.XXXXx.@.....
+        00000020: 4000 0000 0000 0000 5858 5858 5858 5858  @.......XXXXXXXX
+        00000030: 5858 5858 4000 3800 0100 5858 5858 5858  XXXX@.8...XXXXXX
+        00000040: 0100 0000 0500 0000 0000 0000 0000 0000  ................
+        00000050: 0000 4000 0000 0000 5858 5858 5858 5858  ..@.....XXXXXXXX
+        00000060: 0700 0000 0000 0000 0700 0000 0000 0000  ................
+        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.&lt;H1...
+
+This file is 127 bytes in size, but we were able to replace a total of 50 bytes with 'X', meaning
+just under 40% of this binary is ignored by the Linux ELF loader! Who knows what you could do with
+50 bytes?
+
+It turns out - quite a lot. Some amazing research from a couple of years ago by netspooky
+demonstrated how you can pile up portions of the program header into the ELF header. Combined
+with storing your shellcode inside one of these regions of dead bytes, and a few other neat tricks,
+it's possible to shrink an ELF down to just 84 bytes - a 34% reduction on top of LibGolf's current
+best efforts. I point you in the direction of his incredible "ELF Mangling" series at [1].
+
+Another interesting aspect of these techniques is easily overlooked. Although the Linux loader seems
+to care very little about the structure of an ELF beyond what it needs to just get to the machine
+code, other tools are far more picky. We already looked at objdump and gdb, but a lot of AV solutions
+also crumble when faced with a malformed ELF. In my research, the only product that (sorta) gets it
+right is ClamAV, with a positive result for "Heuristics.Broken.Executable". Of course, dynamic
+analysis is still anyone's bet.
+
++----------------------+
+|--[ Going Forwards ]--|
++----------------------+
+
+x86_64 isn't the only ISA supported by LibGolf! You can also use it to build tiny executables for
+ARM32 and AARCH64 platforms too. In the repo on GitHub [0], you'll find some examples for both ARM
+platforms (including the dead bytes one from this article).
+
+But examples be damned! Hopefully most of you that have made it this far want to take a look at
+libgolf.h itself. As I mentioned at the start, this whole thing started off as a learning exercise,
+so I paid special attention to commenting things in as much detail as I could.
+
++---------------------------------+
+|--[ A Note on Reproducibility ]--|
++---------------------------------+
+
+Throughout this research, I mainly tested on Ubuntu 20.04 with kernel 5.4.0-65-generic, but also
+verified that the same results could be obtained on 5.11.11-arch1-1. I've heard that strange things
+can sometimes happen on the WSL kernels, but I've not investigated them - maybe you can!
+
++----------------+
+|--[ Callouts ]--|
++----------------+
+
+A special "ahoy" to everyone at Thugcrowd, Symbolcrash, and the Mental ELF Support Group!
+
++------------------+
+|--[ References ]--|
++------------------+
+
+[0] https://www.github.com/xcellerator/libgolf
+[1] https://n0.lol/ebm/1.html
+</pre></div></center></body></html>
