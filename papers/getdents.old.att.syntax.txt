@@ -1,0 +1,312 @@
+#!/home/sblip/article.2
+
+ 
+
+using the getdents(2) Linux syscall to read directory entries from disk.
+
+This article assumes basic knowledge of at&t syntax assembly, and basic
+
+understanding of how to make system calls in linux through int 0x80h.
+
+If you aren't familiar with either of these concepts, check out the
+
+Assembly Programming Journal Issues 1-2, which can be found at
+
+asmjournal.freeservers.com.
+
+Note also that you don't *HAVE* to use at&t style asm; the free netwide
+
+assembler (nasm) runs on many different platforms (including linux) and
+
+uses normal intel syntax. Hopefully I will produce future articles
+
+containing examples using both styles.
+
+The included implementation is PIC (position independant code. code that
+
+doesn't need to know it's exact offset in memory to execute and return
+
+to it's caller.)
+
+ 
+
+first some explanation of the getdents() function in C.
+
+directly from the man page:
+
+int getdents(unsigned int fd, struct dirent *dirp, unsigned int count);
+
+
+	'getdents' reads several 'dirent' structures from the direc-
+	tory pointed at by 'fd' into the memory area pointed  to  by
+	'dirp'. The paramater 'count' is the size of the memory area.
+	      
+
+       The dirent structure is declared as follows:
+
+	struct dirent
+	{
+		long d_ino;		   /* inode number */
+		off_t d_off;		   /* offset to next 'dirent' */
+		unsigned short d_reclen	   /* length of this dirent */
+
+char d_name [NAME_MAX+1];  /* file name (null-terminated) */
+	}
+
+
+we only focus on the last three members in this article.
+
+"What the hell does a C structure have to do with asm", you ask ?
+well, the system call in asm expects an area of memory to be filled with
+this data; It doesn't consider it a 'C struct'; it just considers it
+an area of memory and expects the arguments to it's function to be in it.
+Therefore, we must know the format of a dirent struct (which changes
+
+from system to system; don't expect it to be the same on your bsd
+or solaris box) to manipulate directory entries.
+
+Note that there is a readdir(3) C function that cannot be called in
+Position Independant asm, because it is a library function, and a
+readdir(2) call that is superseded by the getdents(2) system call.
+
+In this example, we will open the current directory (which is referenced
+by "." or "./") and read in some, maybe all, of the file entries it
+contains.
+
+The first call we must make is to open(2) to open the directory; we
+can't use opendir(3) because it isn't implemented as a system call,
+and therefore cannot be used in Position Independant Code.
+
+remember that when calling int 0x80, the arguments to the syscall
+go respectively in %ebx, %ecx, %edx, %esi, and %edi ; and the syscall
+number goes in %eax.
+
+
+i do this as such :
+
+
+        jmp getdot
+	ok:
+        popl %ebx 	# pops the address of our string "." into %ebx
+
+        movl $5,%eax	# the number of our syscall open is 5
+        xorl %ecx,%ecx	# 0 flags = O_RDONLY 
+        int $0x80	# call the linux kernel to do it's job 
+	getdot:
+        call ok		# puts the address of the 0-terminated string "."
+			# onto the stack as the return address.
+			# this is a common buffer overflow tekneeq.
+        .asciz "."
+							
+
+this opens the current directory and returns us a filehandle for it
+in %eax. Notice I did no error checking, so if the directory wasn't
+
+readable to the user, it wouldn't be handled properly. good code
+always checks for errors.
+
+The next thing I do here is make space on the stack to read directory
+entries. The only other Position Independant method of making memory
+available for directory entries I know of is to call the system call
+brk() to expand the data section of the running process, but I've had
+trouble with brk() in the past .. perhaps too complex for me. Anyway,
+using the stack has worked fine so far.
+
+the way I make memory on the stack is by doing a manual prolog/epilog;
+subtracting 2 pages (8192 bytes) from the stack pointer and adding them
+back when we're done.
+
+this probably isn't enough to list all the files in a huge directory,
+especially if they have long filenames, and it isn't recursive; but
+it will work for our example.
+
+the code is:
+
+# <prolog>
+        pushl %ebp              # first step in prolog
+        movl %esp,%ebp          # current %esp is our new %ebp 
+
+        subl $8192,%esp         # and the stack becomes 2 pages larger.
+				# remember, the stack grows down in
+				# memory.
+# </prolog>
+
+# 141, the getdents syscall, goes in %eax. the filehandle goes in %ebx,
+# the memory area to read to goes in %ecx, and the size of the memory area
+# goes into %edx.
+
+        movl $141,%ebx          # getdents syscall
+        xchgl %eax,%ebx         # shortcut to get fd into ebx
+                                # and vice versa for syscall numbr.
+
+        movl %esp,%ecx          # mem to store dirent in (stack)
+        movl $8192,%edx         # size of memory
+        int $0x80               # let the kernel do the rest.
+
+
+
+That was the easy part. Next, in order to manipulate the files we've found
+for opening, moving, removing, etc, we have to keep track of each dirent
+struct and the offset of the d_name member, which holds the null terminated
+file name string.
+
+										We can do this as:
+
+	movl %esp,%eax          # begining of our stack
+
+movl %esp,%edi          # which will be our destination memory area
+firstdir:
+	addl $10,%eax           # d_name of first dirent
+				# each dirent struct is a maximum of 266
+				# bytes; 10 for the first 3 members
+				# and a possible 255 for the filename
+				# the d_name member starts at offset 10
+				# from the begining of the struct
+	call whatever		# now we have the offset of the filename
+				# string in %eax, we can do what we will
+
+# with it.
+        movl %edi,%ebx          # We use %ebx to hold the begining of the
+				# current dirent struct each pass, and
+				# increment it by d_reclen each time.
+        xorl %esi,%esi          # esi will hold sum of d_reclen lengths
+
+# ok, can someone please explain the movzwl instruction to me ?
+# there is no documentation for it anywhere, but it is the only thing
+# that will correctly put the dirent struct length into a register ;
+# I *think* what it does is moves the word/byte sized number into
+
+# %ax , and 0's out the rest of the bytes in %eax, but i'm not sure.
+# Oh well, it works. These few lines are the only lines I didn't code
+# all in asm myself; i coded a C program that called getdents and
+# disassembled it. neet. please mail me if you have any insight on
+# this matter. sblip@usa.net
+
+mark:
+	movzwl 8(%ebx),%eax     # puts the length of the current directory
+				# entry structure into %eax; the next dirent
+				# struct starts directly after this one.
+
+addl %eax,%esi          # %esi holds the sum of the lengths of all
+				# the dirent structs we have examined so far.
+	leal (%esi,%edi),%ebx   # edi = begin of buf, so esi+edi = the offset
+				# of the begining of the next dirent struct.
+	leal 10(%ebx),%eax      # text filename string d_name of current
+				# dirent struct.
+	call whatever 
+	cmpw $0,8(%ebx)         # length to next dirent; if it's 0 then
+				# there are no more to read.
+	jle leave		# no more dirents, leave.
+
+jmp mark		# loop until we find a null dirent struct
+
+
+
+I hope I commented enough to explain most of the instructions.
+Attached at the end here is a simple, Position Independant directory
+listing program. It will only list entries found before the two page
+memory limit, which is hard coded. It could easily be changed to
+use a larger stack or too keep calling getdents until all entries had
+been read. (getdents will/Metaphase Vx return the amount of bytes read until it reaches
+
+the end of the directory, where upon it returns 0)
+
+
+have fun.
+
+#	dir.s
+
+.text				# these 3 lines should be removed
+.globl main			# if you were too add this code into
+main:				# existing code.
+
+	jmp getdot
+ok:
+	popl %ebx		# address of .	
+	movl $5,%eax		# open syscall
+	xorl %ecx,%ecx		# rd only
+	int $0x80		# unf.
+# <prolog>
+	pushl %ebp		# now we're gonna try to use the stack
+	movl %esp,%ebp		# to hold a dirent .. need 266 bytes (max)
+
+subl $8192,%esp		# each, so we make space 	
+# </prolog>
+
+	movl $141,%ebx		# getdents syscall
+	xchgl %eax,%ebx		# shortcut to get fd into ebx 
+				# and vice versa for syscall numbr.
+	movl %esp,%ecx		# mem to store dirents in
+	movl $8192,%edx		# size of memory
+	int $0x80		# wtumf.
+
+	movl %esp,%eax		# begining of space on stack
+	movl %esp,%edi		# where stuff is stored
+
+mored:
+	addl $10,%eax		# d_name of first dirent
+	call print
+
+movl %edi,%ebx		# start of buffer
+	xorl %esi,%esi		# esi will hold sum of d_reclen lengths
+
+mark:
+	movzwl 8(%ebx),%eax	# d_reclen -> %eax
+	addl %eax,%esi		# sum in %esi
+	leal (%esi,%edi),%ebx	# edi = begin of buf, so esi+edi = next 
+	leal 10(%ebx),%eax	# text string d_name
+	call print
+	cmpw $0,8(%ebx)		# length to next, if 0 exit
+	jle leave
+	jmp mark
+
+leave:
+	movl $1,%eax
+	xorl %ebx,%ebx		# no use in adding extra bytes by INCing it ..
+
+int $0x80
+getdot:
+	call ok
+	.asciz "."
+
+print:
+        pusha                   # save our registers.
+letloop:
+        xorl %ebx,%ebx
+        cmpb 0(%eax),%bl        # see if the next byte in d_name is NULL or not
+        je fin                  # if so, we reached end of file name
+        movl $4,%ecx            # write system call = 4
+        pushl %eax              # %eax gets corrupted on system call return
+                                # so we save it
+
+        xchgl %eax,%ecx         # buffer to write in %ecx, syscall num in %eax
+        movl $1,%ebx            # file descriptor 1 = STDOUT
+        movl $1,%edx            # write 1 byte at a time
+        int $0x80               # wtumf.
+        popl %eax               # restore %eax
+        incl %eax               # move to next byte in d_name
+        jmp letloop             # repeat loop
+fin:
+        jmp getnline            # get string address of "\n"
+baq:
+        popl %ecx               # into %ecx
+
+        movl $4,%eax            # write syscall
+        movl $2,%edx            # write 2 bytes
+        movl $1,%ebx            # to STDOUT
+        int $0x80               # call kernel.
+        popa                    # restore registers
+        ret                     # get next dirent
+
+getnline:
+        call baq
+.asciz "\n"
+
+
+
+===============================================================================
+sblip
+shouts to s1c, acidflux, el9
+05-03-00
+
+===============================================================================
