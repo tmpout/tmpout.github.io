@@ -1,0 +1,318 @@
+		___________                              __
+		\__    ___/____ ______      ____  __ ___/  |_
+		  |    | /     \\____ \    /  _ \|  |  \   __\
+		  |    ||  Y Y  \  |_> >  (  <_> )  |  /|  |
+		  |____||__|_|  /   __/ /\ \____/|____/ |__|
+		              \/|__|    \/
+
++---------------------------------------------------------------------------------------+
+|::::::::::| Underground worlds: graffiti, skateboarding and virus writting |::::::::::|
++---------------------------------------------------------------------------------------+
+
+With l0ve, by s01den
+02/2020
+
+---\ Introduction \---
+
+This time, no technical article strictly speaking, after all a zine is
+also made to express, discuss, digress beyond simply transmitting knowledge.
+This old medium of knowledge sharing may have fallen into disuse here, in our world,
+that of the "vx scene" and more globally in all the scenes related to hacking.
+
+Of course, some persist, like the immortal Phrack [0], while others,
+much rarer, are created often taking a very different form from the old txt file.
+that we know, like PagedOut[1].
+
+How did this format disappear? Why did it disappear? What are zines replaced by today?
+I will not answer these questions here.
+What I want to show here is the links between this world and other more "real" scenes, like graffiti or skateboarding,
+scenes that they have not lost this old tradition of zine.
+I'm going to use the word "scene" a lot here, it's simply a space where human activity takes place,
+whatever it is.
+
+There are many, for each collective practice in which there is transmission of knowledge
+(often through zines, we will come back to this).
+Of course, we can mention the vx scene (the scene which gathers people who write viruses and work on
+on the techniques involved);
+the cracking scene (the one that regroups the different groups of software crackers), but also
+scenes that evolve mainly in "real life", like the skateboard scene at home, your local graffiti scene, etc.
+or your punk scene.
+
+
+---\ The hijacking of standards \---
+
+What do these seemingly distant cultures have in common?
+It is above all a question of the misuse of social norms.
+Skateboarding and graffiti are practices of the street, they give it life,
+they transform this dead space, which everyone walks around every day without ever seeing the details (stickers, tags, architectural curiosities...),
+into a space of expression.
+
+Any skater will tell you, skating irreversibly transforms your way of seeing urban spaces.
+You end up looking for spots everywhere, every time you go for a ride in a car, on foot or by bike.
+Each set of steps, each bar, each bench and even each wall (long live the wallrides) becomes a potential place of expression.
+
+  [IMG] https://tmpout.sh/1/17/Images/shaun.jpg
+  
+  Shaun Currie performing a noseslide.
+
+For graffiti, it's even more radical: any surface will do, the more exposed it is, the more
+it will be rewarding but the more dangerous it will be to leave your blaze.
+"Make a panel and you'll never see Paris the same" as the other one said. [2]
+The street becomes a huge canvas on which to put one's name or that of one's crew.
+
+Before our eyes every day in the street, whether we walk or take the train,
+it takes place without hiding: the graffiti writers' turf war; whether one chooses to ignore it or
+that one is plagued by these "degradations", this "vandalism".
+
+What graffiti offers us is popular art! Made by the people, for the people.
+No need to go and spend money in museums, no need to have basic cultural capital for
+be able to appreciate it. It's free, you just have to leave your home!
+
+  [IMG] https://tmpout.sh/1/17/Images/graff2.jpg
+  [IMG] https://tmpout.sh/1/17/Images/graff.jpg
+
+  Soffles & Babs
+
+Hijacking is also essential to hacking in its broadest sense.
+It is often said that hacking something is simply diverting it from its original function,
+whether for example for a cracker in the study of software protections to bypass them or for a vxer
+in hijacking a program to inject code into it.
+
+It is because of the inherent misuse of standards that these practices are often frowned upon.
+from the outside.
+How many skateboarding sessions interrupted by the arrival of the capital's militia or by old jerks for whom "a bench,
+it's not made for that"? After all, "we built you a skatepark, that's what it's made for over there".
+Let's not even talk about graffiti, which is only considered as vandalism when it's not gentrified, locked up in a
+
+art gallery and sold.
+Here again, we try to contain it, to kill this spirit of detour of norms by creating new, more "adapted" ones.
+
+Scenes related to the hacking world, such as the vx scene or the cracking scene, have of course also bad press.
+How many times do we hear "programmers build and crackers destroy"?
+Finally, unfortunately for the vx scene, we rarely imagine that people can be interested in studying and designing
+of malware without spreading them in the wild...
+Moreover, cracking and computer viruses are often considered "cyber-vandalism"...
+
+But, what if in fact, it wasn't us who hijacked the standards for the simple pleasure of hijacking?
+What if in fact, it wasn't us who defined deviance?
+
+The sociologist Howard Becker has worked a lot on the subject [3], in his book "Outsiders" he develops the idea that
+Deviance does not come from individuals who are labeled as such, but rather from the people who are involved in enforcing standards.
+"Social groups create deviance by instituting norms whose transgression is not necessarily a result of their own actions.
+constitutes deviance, by applying these standards to certain individuals and labelling them as deviants".
+
+This explains a lot of things, for example why skating a curb[4] is so frowned upon.
+The established standard is simply to use this furniture (a curb can be a bench for example).
+to do something definite (sit on it); any behaviour that deviates from this rule will be perceived as deviant.
+
+Thus, skaters, graffiti writers and hackers do not divert for the sake of diverting, they exploit
+simply a medium in a creative way, in a way that was not originally intended.
+Of course there is a reaction: the cities adapt and we see "antiskates" blooming on our spots, on their benches; everything
+as specialized cop brigades for graffiti artists develop;
+just as anti-virus software companies have grown.
+
+These counter-measures do not discourage, quite the contrary.
+A form of cat-and-mouse game between the reactionary forces and those who practice graffiti is then set up:
+the presence of guards adds a more or less playful infiltration dimension to the graffiti sessions in the metro;
+just as the appearance of antiviruses logically led to the appearance of methods of concealment such as polymorphism in viruses.
+
+Movement can only exist through contradictions.
+"In all things and phenomena, the interdependence and the struggle of their contradictory aspects determine
+their lives and animate their development. There is nothing that does not contain contradictions. Without contradictions, there is no universe", said Mao [5].
+5] There is a contradiction here between practitioners and those who want to regulate or prohibit the practice; and this contradiction
+The practice evolves and adapts to the constraints imposed on it.
+Thus countermeasures also adapt themselves, and thus start the cycle all over again.
+This is the dialectical movement of things.
+
+
+---\ Organization in groups \---
+
+Obviously, the social aspect of all the practices I have mentioned since the beginning of this article is primordial in their construction.
+A "scene" is essentially a "macrogroup" composed above all of many small groups of individuals (whether formal or not).
+Without a group, there is no scene.
+These groups can take different forms depending on the practice in question. We will speak for example of "crew" of graffiti artists and
+groups" of crackers or vxers.
+Among skaters, the groups are much more informal and are based primarily on affinity,
+taking especially the appearance of bands of buddies who skate together, without giving themselves a name, unlike the crew of graffiti artists for example.
+
+  [IMG] https://tmpout.sh/1/17/Images/sts.jpg
+  [IMG] https://tmpout.sh/1/17/Images/1up.jpg
+  
+  The STS crew and the 1UP crew
+
+Why organize in groups in other practices then?
+It allows you to affirm the "official" existence of your group in the scene in front of other groups.
+One might think that the need to create such an identity stems directly from the type of practice.
+Indeed, where skateboarding is in itself an individual practice, some graffiti artists collaborate to create big pieces by mixing their styles.
+just like in the punk scene, the bands are formed around the musical practice.
+
+  [IMG] https://tmpout.sh/1/17/Images/punk.jpg
+  [IMG] https://tmpout.sh/1/17/Images/flyer-bad-brains.jpg
+  [IMG] https://tmpout.sh/1/17/Images/conflict.jpg
+  
+  Some posters of punk concerts.
+
+It is hard to see one person playing drums, guitar, bass and singing at the same time in concert.
+Here the need to assert oneself as a group is obvious.
+Groups of skaters can be formally formed when their members decide to produce something that will not be ephemeral,
+like a video for example.
+
+It seems that as soon as the production of something material or something that will last over time[6] results from practice, the organization in a group
+appears naturally.
+Of course it is not an absolute rule, in the sense that there are graffiti artists who work alone just as there are vxers who work alone.
+work and publish their research on their own; but working in groups usually produces much more important things and allows for a better
+organization of the production.
+
+For crackers, this organization is central; members have different roles in the group: some are primarily programmers,
+(they code tools such as unpackers for example), others do mostly reverse engineering (they are the ones who directly study
+software protections) and finally some are in charge of the distribution of the "releases", the cracked programs.
+
+There are even artists who, through music and graphics, allow different groups to affirm their identity in another way.
+by integrating their productions in certain releases (as in keygens [7] for example). This sub-scene has even evolved into a scene
+in its own right to form the demoscene [8].
+For more info about scene cracking, I recommend the articles "Overview of the scene" by Xylitol, published in Rafale [9].
+
+  [IMG] https://tmpout.sh/1/17/Images/red.png
+  
+  Keygens of Team RED
+
+We can see a blatant link between graffiti and the cracking scene.
+
+
+---\ The transition of knowledge \---
+
+For a culture to endure and evolve, it must of course be able to be transmitted in any way.
+This takes various forms, but there is almost never a relationship of domination between the learner and the teacher.
+To take the example of skateboarding, how do we learn to skate ? Of course there are "schools" or even official skateboard teachers;
+but generally, one is introduced into a skateboarding scene by or with friends.
+
+Thus, a certain horizontality is established, we learn by skating with others, by asking them questions, by observing them, and then
+sometimes by watching videos (here we have our first example of a knowledge transfer medium).
+We help each other, we can make "parades" to reassure ourselves about certain tricks before trying them without, we learn tricks at the same time.
+than his buddies, we confront each other during the "game of S.K.A.T.E" [10] .
+
+There is no classic teacher/student relationship, the more advanced practitioners simply advise the beginners,
+who themselves have to work hard in order to progress.
+Thus we see here that the transmission of knowledge to new practitioners is done through oral communication and demonstration,
+through videos or directly face to face with more experienced practitioners.
+
+Just like in skateboarding, the transmission of knowledge in the different hacking environments is done horizontally.
+(although there are now university courses on "cybersecurity").
+One learns primarily by oneself, by experimenting, by solving challenges, by watching conferences, by participating in CTFs,
+by talking to more experienced members of the scene; where skaters meet on the street or in skateparks,
+We hackers meet on IRC or discord (and sometimes even in "real", in conventions) to communicate, to make the scene live.
+
+We can then write articles ourselves (starting with Write-Up challenges that broke our heads) to transmit in our turn.
+When we have a sufficient level, we naturally end up orienting ourselves in a specific discipline.
+(reverse engineering, web, system operation, cryptography...) which leads us to focus on a specific scene.
+(like for example the cracking scene for reverse engineering aficionados or a console hacking scene for pwn fadas)
+or, for example, to continue actively on the global CTF scene at a higher level.
+
+
+In this way, we form groups with which we learn, create and share, which ultimately make the scene we are in live,
+and incidentally progress our discipline.
+
+Whether we are punk, skater, graffiti artist or hacker; Do-It-Yourself and self-organization take a central place in our practice,
+and it is in this, among other things, that we stand out from the mainstream culture.
+To get by, to help each other, to learn by oneself; all this leads to making efforts, whether individual or collective, and to creating.
+Not to standardize but rather to propose new things.
+
+That's how we come to the most important common point: zines.
+
+A zine (abbreviation of "magazine") is simply a publication made by hand (here again we find
+the Do-It-Yourself spirit) and non-professional by a group of people passionate about a common, often obscure subject,
+so few numbers are produced per output.
+Self-publishing allows much greater freedom of creation and tone, so zines are often very politically engaged.
+If they are paid for (and this is rarely the case), it is often at low or even free prices.
+
+Physically, they are often small in size, filled with collages, drawings and texts.
+The content varies according to the central topics addressed by the groups that (self)edit it, but often remains ecclectic,
+It is thus not surprising to find vegan recipes alongside poems, stories, philosophical essays, interviews [11],
+song lyrics or even practical guides; all surrounded by home-made illustrations (and often with love!).
+
+  [IMG] https://tmpout.sh/1/17/Images/sniff.jpg
+  [IMG] https://tmpout.sh/1/17/Images/molo.png
+  [IMG] https://tmpout.sh/1/17/Images/toys.png
+
+  In order: Sniffin' Glue; Molotov & Confettis; Toys Digest Graffiti magazine.
+
+Although they first appeared in the 1930s among SF fans, they are now found in almost every "underground" culture,
+in punk culture (where they have a very important place) as well as in virtual scenes, like obviously the vx scene[12].
+12] Thus, e-zines are not restricted to a limited geographical space: potentially all the fans of the same subject can be there.
+access.
+
+  [IMG] https://tmpout.sh/1/17/Images/29a1.png
+  [IMG] https://tmpout.sh/1/17/Images/cryptel.png
+  [IMG] https://tmpout.sh/1/17/Images/legowelt.png
+
+  29A, one of the oldest zines of the vx scene; Cryptel, an old french zine; and the shadow wolf cyberzine [13]
+  (we can see that the ezines have adapted their graphic style by proposing illustrations in ascii art).
+
+The ezines bring their scenes to life: they materialize the activity of the groups that make it up, allow them to express themselves and to transmit their
+knowledge (and their discoveries) to other enthusiasts.
+You can find them of all levels and qualities.
+They allow both the elaboration of an in-depth knowledge of the practice as well as the organization of the practitioners: it is a social binder, the cement of the scene.
+
+
+---\ Conclusion \---
+
+I sincerely hope that this article has given you something to think about and that you have learned something.
+that interest you.
+In fact, I just hope he made you react, if you want to discuss it, insult me, ask me questions or add relevant things,
+do not hesitate to contact me:
+
++----------- Contact -----------+
+| twitter: @s01den              |
+| mail: S01den@protonmail.com   |
++-------------------------------+
+
+I just wanted to convey things on different subjects that are important to me, and to write down various thoughts that I had been carrying around with me for a long time.
+I started to get interested in hacking a few years ago thanks to some old zines from the French scene in the 2000s that I had found by chance.
+
+Basically, a scene can be summed up as a group of groups, formal or not, of people sharing a common interest,
+and their social interactions (production, competitions, performances, discussions and probably other stuff in "ions").
+All the scenes formed around marginal cultures share common points in their functioning, notably the expression through zines.
+Zines are the material expression of a scene, and thus they are a very important historical trace of it.
+They make it possible to anchor in space and time the reflection of a scene at a given moment.
+
+So let's continue to get out of them!
+Let's organize ourselves to produce some.
+Let's write articles, express ourselves, create; be it plays, poems or computer viruses.
+But most of all.
+Let's not let our virtual scenes wither away!
+
+---\ Notes and References \---
+
+[0] http://phrack.org
+[1] https://pagedout.institute/
+[2] Degradation, Hugo TSR
+[3] https://fr.wikipedia.org/wiki/Outsiders_(sociology)
+[4] https://fr.wikipedia.org/wiki/Curb
+[5] https://www.marxists.org/reference/archive/mao/selected-works/volume-1/mswv1_17.htm
+[6] Like a music album or a skateboarding video.
+[7] A keygen is a program to calculate activation keys for given software, allowing free registration.
+[8] https://pouet.net
+[9] http://rafale.org/
+[10] https://en.wikipedia.org/wiki/Game_of_Skate
+11] We find interviews in almost all the scenes (we find interviews of bands in the punk scene, of important hackers in the hacker scene, etc.).
+and vxers in zines like phrack or eof-project, pro skaters in skate zines etc...)
+12] http://ivanlef0u.fr/repo/madchat/vxdevl/vdat/ezines1.htm
+[13] http://legowelt.org/golemXIV/wp-content/uploads/2020/12/SHADOW-WOLF-CYBERZINE-ISSUE-9-DECEMBER-2020.html
+
+----> Other links:
+http://www.tonerkebab.fr/wiki/lib/exe/fetch.php?media=wiki:proto-memoires:mehouas-clement:fiche_d_atc_le_fanzine_comme_liant_social.pdf // a nice essay on fanzines
+https://tel.archives-ouvertes.fr/tel-01327029/document // on graffiti culture
+http://julienlaurentjf.com/wp-content/uploads/2016/02/Le-skate-a-Montpellier-These-Julien-LAURENT.pdf // thesis of sociology on the skate scene of montpellier
+https://papyrus.bib.umontreal.ca/xmlui/bitstream/handle/1866/14987/Lussier_Martin_2003_memoire.pdf?sequence=1 // dissertation of sociology on the montreal punk scene
+Rafale19/Rafale19.02.HTML // "Overview of Scene #2-Use of Cracking and Warez graphics" by Xylitol
+Rafale19/Rafale19.08.HTML // "Overview of scene #3 - the web groups" by Xylitol
+https://vx-underground.org/zines.html // most of the zines of the vx scene
+http://n8on.free.fr/hackzines/ // full of old french zines, linked to the world of hacking
+http://madchat.fr/e-zines/ // idem
+https://en.wikipedia.org/wiki/Zine
+http://hashk.free.fr/ // full of graffiti zines
+https://digdc.dclibrary.org/islandora/object/dcplislandora // full of old punk zines
+http://www.geneticdisorder.net/ // a skateboard zine
+http://textfiles.com/directory.html
+
+Note: I could also have talked about the competitions that exist in the different scenes (CTFs, skateboarding or graffiti contests etc...).
