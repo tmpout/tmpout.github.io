@@ -328,7 +328,7 @@ From TMZ's Midrashim:
 
     Explaining this method is beyond the scope of this document - for reference:
 
-      https://n0.lol/TMPOUT_VOL1_DRAFT/11.html
+      https://tmpout.sh/1/11.html
 
    The code from kropotkin.s:
    
