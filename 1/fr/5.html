@@ -1,0 +1,195 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!-- Translation by @ZakCh3b 20210426 -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                         ┌───────────────────────┐
+                                                         ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                         │ █   █ █ █ █   █       │
+                                                         │ █   █ █ █ █▀▀▀▀       │
+                                                         │ █   █   █ █     ▄     │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄   ▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄▄▄▄▄ │
+Fuzz de radare2 pour trouver des 0Day en presque         │                   █   │
+30 lignes de code                                        │                   █   │
+~ Architect & S01den                                     └───────────────────█ ──┘
+
+--- Abstrait  ---
+
+Radare2 est un framework open-source bien connu pour la rétro-ingénierie ainsi que
+l'analyse des binaires.
+
+Ce genre d'outil est assez intéressant à analyser, à la recherche de 
+vulnérabilités, car ils sont utilisés dans des domaines tels que l'analyse des 
+logiciels malveillants.
+
+Dans cet article, nous expliquerons comment nous avons découvert deux bugs 
+(CVE-2020-16269 et CVE-2020-17487) à partir de zéro, en écrivant notre propre 
+fuzzer stupide et en faisant un peu de rétro-ingénierie.
+
+Dans une première partie, nous expliquerons comment nous avons fuzz radare2 et 
+dans la seconde partie, nous allons voir comment nous avons utilisé les crashes 
+trouvés par le fuzzing pour analyser, isoler et reproduire les bugs, en prenant 
+comme exemple le bug lié à ELF (CVE-2020-16269).
+
+--- Fuzz ---
+
+Afin de trouver les deux vulnérabilités, nous avons appliqué un fuzzing stupide à
+notre cible.
+
+Le facteur clé pour faire du fuzzing stupide  est d'avoir un corpus diversifié en
+termes de couverture de code.
+
+Nous avons choisi d'utiliser la repo testbins de Radare2 [0].
+
+Pendant le fuzzing, nous avons trouvé des crash dans les 30 minutes, dans 
+plusieurs fichiers différents formats. Parmi les formats qui nous intéressent 
+étaient PE et ELF, les deux formats executables les plus utilisés.
+
+Sans plus attendre, voici une toute petite version de notre fuzzer.
+
+----------------------------------- CUT-HERE -------------------------------------
+import glob;import random;import subprocess;import hashlib
+
+def harness(d):
+    tf = open("wdir/tmp", "wb")
+    tf.write(d)
+    tf.close()
+    try:
+        p = subprocess.run(['r2','-qq', '-AA','wdir/tmp'], stdin=None, timeout=10)
+    except:
+        return
+    try:
+        p.check_returncode()
+    except:
+        print(f"Proc exited with code {p.returncode}")
+        fh = hashlib.sha256(d).hexdigest()
+
+        dump = open(f'cdir/crash_{fh}', 'wb')
+        dump.write(d);dump.close()
+
+def mutate(data):
+    mutable_bytes = bytearray(data)
+    for a in range(10):
+        r = random.randint(0, len(mutable_bytes)-1)
+        mutable_bytes[r] = random.randint(0,254)
+
+    return mutable_bytes
+
+if __name__ == '__main__':
+    fs = glob.glob("corpus/*")
+    while True:
+        f = open(random.choice(fs), 'rb').read()
+        harness(mutate(f))
+----------------------------------------------------------------------------------
+
+--- L'Exploitation ---
+
+Ayant quelques exemples qui feront crash Radare2, voyons la raison derrière le 
+crash.
+
+Le premier est un ELF, une version mutée de dwarftest, un fichier d'exemple qui 
+contient Informations DWARF.
+
+==================================================================================
+$ file dwarftest
+---> dwarftest: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically
+linked, ...,with debug_info, not stripped
+==================================================================================
+
+Pour savoir quel octet déclenche le bug, nous analysons l'échantillon incriminé 
+chargé avec Radare2 en utilisant un débogueur.
+
+Alternativement, il est également viable de comparer l'échantillon original et 
+muté afin trouver les octets intéressants.
+
+Nous pouvons le faire facilement grâce à radiff2:
+==================================================================================
+$ radiff2 bins/src/dwarftest mutated_dwarftest
+0x000010e1 00 => 01 0x000010e1
+==================================================================================
+
+Ce offset dans le fichier fait partie de la structure DWARF. Ceci n'est vrai que 
+pour les binaires qui ont déjà des informations DWARF attachées, mais nous 
+devrions être en mesure de créez des informations DWARF malformées et de les 
+injecter dans n'importe quel ELF.
+
+Pour comprendre pourquoi nos informations DWARF dérangent Radare2, nous pouvons 
+jeter un coup d'œil avec objdump:
+==================================================================================
+$ objdump --dwarf=info mutated_dwarftest
+...
+    <4c> DW_AT_name :objdump: WARNING: the DW_FORM_strp shift is too
+    large: 164 (indirect string, shift: 0x164): &lt;shift too large&gt;
+...
+==================================================================================
+
+Eh bien, nous avons presque terminé.
+
+Maintenant, il suffit de regarder comment nous pouvons l'exploiter. Pour ce faire,
+il suffit de regarder la trace d'un crash avec gdb puis, analyser le code source 
+de la fonction (radare2 étant heureusement un projet open-source) où le bug est
+déclenché.
+
+La ligne défectueuse est dans la fonction parse_typedef:
+==================================================================================
+name = strdup (value->string.content);
+==================================================================================
+
+Cela déclenche un déréférencement de pointeur nul lorsque la chaîne dupliquée est
+NULL, et sans entrer dans les détails, nous avons compris grâce au pouvoir 
+interdit du reverse engineering que c'est le cas lorsqu'un décalage dans 
+DW_AT_name est trop important.
+
+Maintenant, il est temps d'écrire un script qui peut modifier n'importe quel ELF 
+pour déclencher le bug.
+
+En annexe, vous pouvez trouver l'exploit complet, contenant l'exploitation du bug
+PE (CVE-2020-17487, qui rend aussi simplement radare2 incapable de chargé le 
+binaire)
+
+--- Conclusion ---
+
+Nous espérons que vous avez apprécié ce document.
+
+Maintenant, vous savez qu'il n'est pas si difficile de trouver des bugs dans des
+outils largement utilisés. 
+Alors maintenant, essayez de les trouver vous-même (et surtout dans les outils de
+rétro-ingénierie)!
+
+Même si le bug n'est pas exploitable d'une autre manière qu'un DoS, planter un 
+reverse outil d'ingénierie lors du chargement d'un binaire toujours utile ...
+
+--- Notes et Références --- 
+
+[0] https://github.com/radareorg/radare2-testbins
+
+--- Appendix ---
+
+- <a href="https://tmpout.sh/1/5.1.py">Exploit POC</a>
+
+</pre></div></center></body></html>
