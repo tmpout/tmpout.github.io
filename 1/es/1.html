@@ -1,0 +1,360 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!--// Translation by @Rinxlr 20210518 -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+ _ .-') _     ('-.   ('-.     _ .-') _        .-. .-')               .-') _     ('-.    .-')
+( (  OO) )  _(  OO) ( OO ).-.( (  OO) )       \  ( OO )             (  OO) )  _(  OO)  ( OO ).
+ \     .'_ (,------./ . --. / \     .'_        ;-----.\  ,--.   ,--./     '._(,------.(_)---\_)
+ ,`'--..._) |  .---'| \-.  \  ,`'--..._)       | .-.  |   \  `.'  / |'--...__)|  .---'/    _ |
+ |  |  \  ' |  |  .-'-'  |  | |  |  \  '       | '-' /_).-')     /  '--.  .--'|  |    \  :` `.
+ |  |   ' |(|  '--.\| |_.'  | |  |   ' |       | .-. `.(OO  \   /      |  |  (|  '--.  '..`''.)
+ |  |   / : |  .--' |  .-.  | |  |   / :       | |  \  ||   /  /\_     |  |   |  .--' .-._)   \
+ |  '--'  / |  `---.|  | |  | |  '--'  /       | '--'  /`-./  /.__)    |  |   |  `---.\       /
+ `-------'  `------'`--' `--' `-------'        `------'   `--'         `--'   `------' `-----'
+                                                                                  ~ xcellerator
+
+[ Traducción por @Rinxlr ]
+
+¡Hola entusiastas de ELF! En este artículo, quiero presentarles una pequeña librería en la que 
+he estado trabajando llamada LibGolf. La cual comenzó como simplemente una manera para entender 
+mejor EFL y las cabeceras de programas, pero desde entonces se ha convertido en algo razonablemente 
+práctico. Es muy sencillo generar un binario consistiendo de una cabecera ELF, seguido de una 
+cabecera de un programa simple, seguido de un segmento cargable. Por defecto, todos los archivos 
+de cabecera contienen valores íntegros, pero existe una manera sencilla de modificar estos 
+valores por defecto - ¡y eso es de lo que trata este artículo! Voy a demostrar como uso LibGolf 
+para enumerar precisamente cuales bytes son necesarios y cuales son ignorados por el cargador de 
+Linux. Afortunadamente, resulta que el cargador es uno de los parsers menos meticulosos de las 
+herramientas estándar de linux. Antes de continuar, veamos como algunas de las herramientas de 
+análisis más populares sucumben ante nuestro ELF corrupto, mientras que el cargador continúa 
+alegremente cargando y leyendo los bytes que elegimos.
+
++------------------------------+
+|--[ Introducción a LibGolf ]--|
++------------------------------+
+
+Tiempo atrás, escribía mis ELF's a mano en NASM. Aunque fue divertido por un tiempo (y ciertamente 
+tiene sus beneficios). Me dí cuenta que me faltaba toda la diversión que las estructuras de C 
+tienen para ofrecer. En particular, como estoy seguro que muchos lectores saben, &lt;linux/elf.h&gt;, 
+es empaquetado lleno de cosas divertidas como 'Elf64_Ehdr' y 'Elf32_Phdr' listas para declararse.
+
+No deseando que esas cabeceras tan útiles se desaprovechen, elegí tomarlas y darles un buen uso.
+Producto de estos esfuerzos, nació libgolf.h, una librería que facilita incrustar shellcode a una 
+función ejecutable. Sé lo que estás pensando - "¡esto solo suena como un enlazador horrible!", y 
+puede ser que tengas razón. Sin embargo, lo que resalta aquí es que puedes modificar fácilmente 
+los encabezados *antes* de que el archivo binario sea construido.
+
+Echemos un vistazo a cómo funciona. Si quieres jugar en casa también, puedes encontrar el código 
+fuente para todo esto en [0]. Puedes encontrar el código para este artículo en 
+'examples/01_dead_bytes'. La configuración básica necesita dos archivos: un archivo C y un shellcode.h. 
+En lo que respecta al shellcode, me gusta ir por el viejo confiable 'b0 3c 48 31 ff 0f 05', el 
+cual se desensambla como:
+  
+        mov al, 0x3c    @ b0 3c
+        xor rdi, rdi    @ 48 31 ff
+        syscall         @ 0f 05
+
+(Sí - llamar esto "shellcode" es empujar las cosas)
+
+Esencialmente, esto solo invoca exit(0). Está bien porque nos permite fácilmente corroborar que 
+estos bytes se ejecutaron exitosamente con la expanción del shell $?.
+
+Arroja esto o cualquier otro shellcode (pero asegurate que es PIC - aún no se soportan símbolos 
+reubicados) en el buffer llamado buf[] en shellcode.h y vayamos de vuelta a nuestro archivo C. 
+Si tu sólo quieres obtener un binario que ejecute tu shellcode, entonces esto es todo lo que 
+necesitas:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            GEN_ELF();
+            return 0;
+        }
+
+Compilando esto y corriendo el ejecutable resultante generará un archivo .bin - este es tu 
+nuevo ELF! ¿Bastante simple cierto? Pero la simplicidad usualmente está acompañada de lo 
+aburrido, como es el caso aquí, así que hagamos algo más interesante!
+
+Antes de continuar, vale la pena explicar que hacen estos dos macros detrás de escenas. Primero 
+INIT_ELF() toma dos argumentos, el conjunto de instrucciones y la arquitectura. Actualmente, 
+LibGolf soporta X86_64, ARM32, y AARCH64 como conjuntos de intrucciones válidos y arquitectura 
+de 32 o 64. Primero configura algunas estructuras internas de control, y decide si utilizar el 
+objeto Elf32_* o Elf64_* para las cabeceras. También de manera automática asigna apuntadores al 
+ELF y las cabeceras del programa, llamada ehdr y phdr respectivamente. Son estos los que ocuparemos 
+para modificar fácilmente los campos. Aparte de eso, también copia el búfer shellcode e ingresa 
+datos al ELF y a las cabeceras del programa antes de calcular un punto de entrada íntegro. Ahora 
+llega GEN_ELF(), el cuál, simplemente imprime algunas estadísticas a stdout y luego escribe las 
+estructuras apropiadas en el archivo .bin. El nombre del .bin lo determina argv[0].
+
+Entonces, después de que se usa el macro INIT_ELF(), tenemos ehdr y phdr disponible para 
+dereferenciar. Supongamos que queremos modificar el campo e_version de la cabecera ELF. Todo lo 
+que debemos hacer es agregar una sola línea:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64);
+
+            // Set e_version to 12345678
+            ehdr-&gt;e_version = 0x78563412;
+
+            GEN_ELF();
+            return 0;
+        }
+
+Compilamos y ejecutamos, y tendremos otro archivo .bin esperandonos. Echa un vistazo a este 
+archivo en xxd, hexyl o tu manipulador de bits preferido, veras un pequeño y hermoso 
+'12 34 56 78' asomándose en el inicio de 0x14, ¿acaso no fue sencillo?
+
+Para hacer las cosas un poco más rápidas, me gusta usar el siguiente Makefile:
+
+        .PHONY golf clean
+
+        CC=gcc
+        CFLAGS=-I.
+        PROG=golf
+
+        golf:
+        	@$(CC) -o $(PROG) $(PROG).c
+        	@./$(PROG)
+        	@chmod +x $(PROG).bin
+
+        	@rm $(PROG) $(PROG).bin
+
+(Este es el Makefile que encontrarás en el repo [0])
+
++---------------------------------------+
+|--[ Cayendo con el primer obstáculo ]--|
++---------------------------------------+
+
+Como muchos sabrán, los parsers de archivos son cosas horribles. Mientras que las especificaciones 
+usualmente tienen objetivos serios, raramente son respetados por aquellos que deberían saber 
+más. Rey de esos blasfemos es el cargador ELF de linux mismo. LibGolf facilita investigar la 
+extensión de estos crímenes contra elf.h.
+
+Un buen lugar para comenzar es el comienzo, es decir la cabecera ELF misma. Al comienzo 
+de cualquier archivo ELF está, por supuesto, el conocido 0x7f seguido del ELF, conocido entre 
+sus amigos como EI_MAG0 hasta EI_MAG3. Sin sorprender, modificando cualquiera de estos cuatro 
+bytes resulta en que el cargador Linux rechace el archivo. ¡Gracias a Dios por eso!
+
+¿Qué tal el byte 0x5? Nuestra confiable especificación nos dice que este es el byte EI_CLASS 
+y denota la arquitectura objetivo. Los valores aceptables son 0x01 y 0x02, para 32-bit y 64-bit 
+respectivamente. Lo diré de nuevo: valores aceptables son 0x01 y 0x02. ¿Qué pasa si lo igualamos 
+a 0x58 (o 'X' para los amantes de ASCII)? Podemos hacerlo agregando:
+
+        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;
+
+a nuestro archivo C generado. (¿Por qué 0x58? ¡Porque es claramente identificable en la salida 
+de xxd/hexyl!)
+
+Una vez que tenemos nuestro .bin para jugar, antes de intentar ejecutarlo, vamos a intentar un 
+par de herramientas de parseo de ELF para buscar futuros culpables. El primero en la lista es gbd. 
+Adelante, yo te espero. ¿Ves que es lo que pasa?
+
+        "not in executable format: file format not recognized"
+        ("no esta en formato ejecutable: formato de archivo no reconocido")
+
+De igual manera, objdump dará un resultado similar. Parece que estos parsers están haciendo su 
+trabajo adecuadamente. Intentemos ejecutar el binario de manera normal.
+
+    &lt;revelación&gt;Funciona perfectamente&lt;/revelación&gt;
+
+Si estás usando mi shellcode de ejemplo, entonces una consulta con $? te informará lleno de 
+arrepentimiento que el binario se ejecutó exitosamente. Los mismos crímenes se cometen asignando 
+valores ilegales a EI_DATA y EI_VERSION.
+
++------------------------------------------+
+|--[ Llevando la corrupción hasta el 11 ]--|
++------------------------------------------+
+
+Entonces, ¿qué tan lejos podemos llegar? ¿Qué tanto del ELF y de las cabeceras del programa va 
+a ignorar el cargador de Linux? Ya convertimos EI_CLASS, EI_DATA y EI_VERSION, pero resulta que 
+EI_OSABI es ignorado. Eso nos lleva hasta el offset 0x8. De acuerdo con las especificaciones, 
+los siguientes serían EI_ABIVERSION y EI_PAD los cuales, juntos, nos llevarían hasta el byte 0xf. 
+Pero tal parece que a nadie le importan, así que podemos asignar todos ellos con 0x58 sin temor.
+
+Yendo más adelante, nos encontramos con un campo que parece resistirse a ser modificado: e_type. 
+Entendiblemente, el cargador de Linux no le gusta si no le decimos que tipo de archivo ELF le 
+estamos proveyendo (¡es bueno saber que sí tiene *algunos* estándares!). Nosotros necesitamos 
+que esos dos bytes se queden 0x0002 (o ET_EXEC para los acĺitos de elf.h). A continuación está 
+otro byte quisquilloso, en el muy conocido offset 0x12: e_machine, el cual designa el conjunto 
+de instrucciones objetivo. En lo que a nosotros concierne, en la especificación X86_64 corresponde 
+al primer argumento de INIT_ELF(), este byte ya ha sido llenado con 0x3e por nosotros mediante 
+LibGolf.
+
+¡Repentinamente, un e_version salvaje apareció! Nos enfrentamos a otro disidente, el cuál 
+supuestamente siempre debería de ser los bytes 0x00000001. Sin embargo, en practica, nadie parece 
+estar interesado, así que asignemosle el valor 0x58585858. 
+
+Siguiendo esta cadena de herejes, tenemos un par de campos importantes que parecen resistirse a 
+ser corrompidos; e_entry y e_phoff. Estoy seguro que no debo entrar en mucho detalle acerca de 
+e_entry; es el punto de entrada del binario, donde la ejecución arranca una vez que las secciones 
+de carga están en memoria. Mientras que uno puede esperar que el cargador pueda arreglárselas 
+sin saber cual es el offset a las cabeceras del programa, parecece que no es tan inteligente 
+como para arreglárselas sin tener que ser llevado de la mano. Mejor dejemos esos dos en paz.
+
+LibGolf aún no tiene soporte para secciones de cabecera (y dado su uso en producir *pequeños* 
+binarios, es poco probable que los soporte en el futuro). Esto significa que, enfrentados con 
+cualquier cabecera relacionada a ellos, podemos falsearlo con lo que dicte nuestro corazón. Eso 
+incluye e_shoff, e_shentsize, eh_shnum e incluso e_shstrndx. ¡Si nosotros no tenemos ninguna 
+sección de cabeceras, no podemos ser culpable de corromperlas!
+
+Los siguientes campos que parecen ser importantes para el cargador de Linux son e_ehsize, 
+e_phentsize, y e_phnum. De nuevo, esto no es una sorpresa, al ver que se relacionan con cargar 
+el único segmento cargable en memoria antes de entregar el control. Para refrescar la memoria, 
+e_ehsize es el tamaño de la cabecera ELF (la cual es 0x34 o 0x40 para 32- y 64-bit respectivamente), 
+eh_phentsize es el tamaño de la siguiente cabecera del programa (de nuevo, asignado a 0x20 o 0x38 
+para arquitecturas de 32- y 64-bit). Si el cargador hubiera sido un poco más meticuloso con EI_CLASS, 
+no hubiese necesitado estos dos campos. Finalmente, e_phnum es sólo el número de entradas en la 
+cabecera del programa - para nosotros siempre es 0x1. Sin duda, este es usado en algún ciclo en 
+la rutina cargadora de memoria, pero no he investigado a fondo aún.
+
+Aún queda un campo en la cabecera ELF que no hemos tocado, el cual es e_flags. La razón es 
+sencilla, depende de la arquitectura. Para x86_64, no importa para nada porque es indefinido 
+(¡aunque *es* importante para algunas plataformas ARM! Echa un vistazo al ejemplo arm32 en [0]).
+
+De esta manera terminamos con la cabecera ELF. Para aquellos que perdieron el conteo, poco 
+más del 50% de la cabecera ELF es ignorada por el cargador. Pero, ¿qué pasa con la cabecera del 
+programa? Resulta que las cabeceras del programa tiene menos margen de maniobra, pero no por las 
+razones que uno esperaría. De hecho, *cualquier* corrupción en las cabeceras del programa no va 
+a afectar al cargador de Linux. Nosotros pordiamos llenarla toda con nuestro confiable 0x58, y al 
+cargador no le importaría. ¡Pero ten cuidado, valiente aventurero, manipula el byte incorrecto y 
+terminarás en el calabozo de la segmentación defectuosa!
+
+Entonces, ¿existe algo susceptible a coerción en la cabecera del programa? Parece que hay dos 
+campos que, no por errores propios, simplemente porque actualmente son irrelevantes: p_paddr y 
+p_align. El primero fue importante durante los embriagadores días antes de la memoria virtual, 
+cuando 4GB de RAM no era más que un sueño y por lo tanto, era importante informar al cargador el 
+segmento de memoria físico que debía ser cargado.
+
+La alineación de memoria es un caso divertido. Supuestamente, p_vaddr esta destinado a igualar 
+p_offset modulo p_align. Archivos ELF "adecuados" (al menos los compilados con GCC) parece que 
+solo asignan p_offset igual a p_vaddr y siguen adelante. Esto también es lo que hace LibGolf por 
+defecto y asigna p_align de ¡manera totalmente superflua!
+
+Considerando todo, no tan divertido como la cabecera ELF, pero aún ofrece algunas ganancias. El 
+binario generando archivos C ahora se ve así:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            /*
+             * Rompe las herramientas de análisis estático comunes como gdb y objdump
+             */
+            (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;   // Arquitectura
+            (ehdr-&gt;e_ident)[EI_DATA] = 0x58;    // Endianness
+            (ehdr-&gt;e_ident)[EI_VERSION] = 0x58; // Supuestamente, siempre 0x01
+            (ehdr-&gt;e_ident)[EI_OSABI] = 0x58;   // Sistema Operativo objetivo
+
+            // Ciclo para el resto de e_indent
+            int i;
+            for ( i = 0 ; i &lt; 0x10 ; i++ )
+                (ehdr-&gt;e_ident)[i] = 0x58;
+
+            ehdr-&gt;e_version = 0x58585858;       // Supuestamente, siempre 0x00000001
+
+            // ¿Cabeceras de sección? ¡Nosotros no necesitamos apestosas cabeceras de sección!
+            ehdr-&gt;e_shoff = 0x5858585858585858;
+            ehdr-&gt;e_shentsize = 0x5858;
+            ehdr-&gt;e_shnum = 0x5858;
+            ehdr-&gt;e_shstrndx = 0x5858;
+
+            ehdr-&gt;e_flags = 0x58585858;         // x86_64 no tiene banderas definidas
+
+            phdr-&gt;p_paddr = 0x5858585858585858; // La dirección física es ignorada
+            phdr-&gt;p_align = 0x5858585858585858; // p_vaddr = p_offset, así que es irrelevante
+
+            GEN_ELF();
+            return 0;
+        }
+
+Si compilas y corres el programa obtienes el siguiente binario:
+
+        00000000: 7f45 4c46 5858 5858 5858 5858 5858 5858  .ELFXXXXXXXXXXXX
+        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..&gt;.XXXXx.@.....
+        00000020: 4000 0000 0000 0000 5858 5858 5858 5858  @.......XXXXXXXX
+        00000030: 5858 5858 4000 3800 0100 5858 5858 5858  XXXX@.8...XXXXXX
+        00000040: 0100 0000 0500 0000 0000 0000 0000 0000  ................
+        00000050: 0000 4000 0000 0000 5858 5858 5858 5858  ..@.....XXXXXXXX
+        00000060: 0700 0000 0000 0000 0700 0000 0000 0000  ................
+        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.&lt;H1...
+
+Este archivo tiene 127 bytes de tamaño, pero somos capaces de reemplazar un total de 50 bytes 
+con 'X', lo que significa que ¡menos del 40% de este binario es ignorado por el cargador ELF de 
+Linux¡ ¿Cuánto se puede hacer con 50 bytes?
+
+Resulta que - bastante. Hace algunos años una investigación increíble de netspooky demostró 
+como uno puede apilar porciones de una cabecera de programa dentro de una cabecera ELF. Combinado 
+con almacenar tu shellcode dentro de una de estas regiones de bytes muertos, y algunos otros 
+trucos, es posible reducir un ELF hasta solo 84 bytes - una reducción del 34% con los mejores 
+esfuerzos de LibGolf. Te encamino a esta dirección en la increíble serie "ELF Mangling" en [1].
+
+Otro aspecto interesante de estas técnicas se pasa por alto fácilmente. Aunque el cargador de 
+Linux parece importarle poco la estructura de un ELF más allá de lo que necesita para obtener 
+el código máquina, otras herramientas son más quisquillosas. Nosotros ya vimos objdump y gdb, 
+pero muchas de las soluciones AV también fallan al encarar un ELF corrupto. En mi investigación, 
+el único producto que (más o menos) lo logra es ClamAV, con un resultado positivo para 
+"Heuristics.Broken.Executable". Por supuesto, análisis dinámico es aun la apuesta de todos.
+
++--------------------------+
+|--[ Siguiendo adelante ]--|
++--------------------------+
+
+¡x86_64 no es el único conjunto de instrucciones soportado por LibGolf! También se puede usar 
+para construir pequeños ejecutables para plataformas ARM32 y AARCH64. En el repositorio 
+en GitHub [0], encontrarás algunos ejemplos para ambas plataformas ARM (incluyendo los bytes 
+muertos de este artículo).
+
+¡Pero al diablo los ejemplos! Ojalá la mayoría de los que llegaron hasta acá quieran echar un 
+vistazo a libgolf.h. Como mencioné al principio, todo esto comenzó como un ejercicio de 
+aprendizaje, así que puse especial atención en comentar el código con tanto detalle como me 
+fue posible.
+
++---------------------------------------+
+|--[ Una nota sobre la repicabilidad ]--|
++---------------------------------------+
+
+Durante esta investigación, yo testé principalmente en Ubuntu 20.04 con kernel 5.4.0-65-generic, 
+pero también verifiqué que los mismos resultados se obtuvieran en 5.11.11-arch1-1. He escuchado 
+que algunas cosas extrañas pueden suceder en los kernel WSL, pero no lo he investigado - ¡tal 
+vez tú puedas hacerlo!
+
++-----------------------+
+|--[ Agradecimientos ]--|
++-----------------------+
+
+¡Un "hurra" especial a todos en Thugcrowd, Symbolcrash, y el grupo de soporte de The Mental ELF!
+
++-------------------+
+|--[ Referencias ]--|
++-------------------+
+[0] https://www.github.com/xcellerator/libgolf
+[1] https://n0.lol/ebm/1.html
+</pre></div></center></body></html>

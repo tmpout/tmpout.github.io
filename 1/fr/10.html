@@ -1,0 +1,575 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!-- Traduction par kylma 20210518 -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                         ┌───────────────────────┐
+                                                         ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                         │ █   █ █ █ █   █       │
+                                                         │ █   █ █ █ █▀▀▀▀       │
+                                                         │ █   █   █ █     ▄     │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄   ▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄▄▄▄▄ │
+Introduction au chargement SHELF                         │                   █   │
+Le lien entre code statique et position-independent      │                   █   │
+~ @ulexec and @Anonymous_                                └───────────────────█ ──┘
+
+[ Traduction par kylma ]
+
+1. Introduction
+
+Ces dernières années plusieurs améliorations ont été appportées à l'arsenal
+offensif sous Linux, notamment en matière de sophistication et de complexité.
+Le malware Linux devient de plus en plus populaire, comme en atteste le
+nombre croissant de rapports publics documentant les menaces sous Linux. Ces
+dernières incluent des implants Linux, soutenus par des gouvernements, comme
+VPNFilter attribué à APT28, Drovorub ou encore la large gamme de malwares Linux
+du groupe Winnti.
+
+Cependant, ce gain de popularité ne semble pas encore avoir eu d'effet
+si l'on considère la sophistication dans sa globalité du paysage actuel des
+menaces sous Linux. C'est un écosystème assez jeune, où les cybercriminels
+n'ont pas encore été en mesure d'identifier des leviers fiables de monétisation,
+en dehors du minage de cryptomonnaie, des DDos et, plus récemment, des attaques
+par ransomware.
+
+Dans l'environnement des menaces sous Linux d'aujourd'hui, même la plus petite
+amélioration ou l'ajout d'un peu de complexité aboutit souvent à un contournement
+de l'antivirus. C'est pour cette raison que les auteurs de malwares sous Linux
+n'ont pas d'intérêt à s'investir inutilement pour sophistiquer leurs implants.
+Plusieurs raisons expliquent pourquoi ce phénomène se produit et c'est un sujet
+au caractère ambigu. L'écosystème Linux, au contraire d'autres plus populaires
+comme Windows et MacOS, est plus dynamique et plus varié, à la fois en raison des
+nombreuses variétés de fichiers ELF pour différentes architectures, mais aussi
+du fait que les binaires ELF peuvent être valides sous différentes formes et
+que la visibilité des menaces sous Linux reste plutôt faible.
+
+Pour ces raisons, les éditeurs d'antivirus se retrouvent face à un
+ensemble de challenges complètement différents pour détecter ces menaces.
+Souvent, l'échec disproportionné de la détection de menaces pourtant simples ou
+non sophistiquées donne implicitement l'impression que les malwares Linux ne sont
+naturellement pas complexes. Cette affirmation ne saurait être plus loin de la
+vérité, et ceux qui sont familiers avec le format de fichiers ELF savent qu'il
+s'agit d'un terrain propice à l'innovation, ce dont d'autres formats de fichiers
+ne pourraient se vanter, faute de flexibilité.
+
+Dans cet article, nous allons discuter d'une technique qui permet d'exploiter une
+fonctionnalité inhabituelle pour un format de fichier. Cette technique permet de
+convertir de manière générique un fichier exécutable complet en un shellcode et
+démontre encore une fois que les binaires ELF peuvent être manipulés à des fins
+offensives, ce qui reste difficile, voire impossible, pour d'autres formats.
+
+
+2. Une introduction au chargement réflexif d'ELF
+
+Pour comprendre cette technique, nous devons d'abord évoquer les techniques
+préexistantes relatives au format ELF, sur lesquelles cette technique s'appuie,
+avec une comparaison des bénéfices et l'évocation de certains compromis.
+
+La plupart des packers ELF, ou toute autre application implémentant n'importe
+quelle forme de chargement de binaire ELF, sont principalement basées sur ce que
+l'on appelle "Userland Exec" (exécution en espace utilisateur).
+
+"Userland Exec" est une méthode introduite par @thegrugq, dans laquelle
+un binaire ELF peut être chargé sans utiliser aucun appel système de la famille
+execve(), d'où son nom.
+
+Pour simplifier, les étapes classiques pour implémenter "Userland Exec" avec
+support des binaires ELF ET_EXEC et ET_DYN sont illustrées dans le schéma
+suivant, montrant une implémentation du packer UPX pour les binaires ELF :
+
+<a href="https://tmpout.sh/1/10/10.1.png"><img src="https://tmpout.sh/1/10/10.1.png" width="600px"></a>
+
+Comme nous pouvons l'observer, cette technique rassemble les prérequis suivants
+(par @thegrugq) :
+
+  1. Nettoyer l'espace d'adressage.
+  2. Si le binaire est chargé dynamiquement, charger le linker dynamique.
+  3. Charger le binaire
+  4. Initialiser la stack.
+  5. Déterminer le point d'entrée (le linker dynamique ou l'exécutable
+     principal).
+  6. Transférer l'exécution vers le point d'entrée.
+
+Sur un plan plus technique, nous arrivons aux prérequis suivants :
+
+  1. Mettre en place la stack de l'exécutable embarqué avec son Auxiliary
+     Vector correspondant.
+  2. Parser le PHDR et identifier s'il y a un segment PT_INTERP, indiquant si
+     le fichier est un exécutable linké dynamiquement.
+  3. Charger l'interpréteur si PT_INTERP est présent.
+  4. Charger l'exécutable embarqué cible.
+  5. Pivoter vers le e_entry de l'exécutable cible ou de l'interpréteur, en
+     fonction de si l'exécutable cible est un binaire linké dynamiquement.
+
+Pour une explication plus détaillée, nous recommendons la lecture de l'article
+de @thegrugq sur le sujet [9].
+
+Une des caractéristiques d'un "Userland Exec" conventionnel est l'absence
+d'execve() comme mentionné précédemment, contrairement à d'autres techniques
+comme memfd_create/execveat qui sont également largement utilisées pour
+charger et exécuter un ficher ELF. Comme le loader mappe et charge
+l'exécutable cible, l'exécutable embarqué a le loisir de pouvoir avoir
+une structure non conventionnelle, un avantage utile pour la furtivité et
+l'anti-forensics.
+
+D'un autre côté, de nombreux artefacts cruciaux sont impliqués dans le
+processus de chargement, qui peuvent être facilement reconnus par des reverse
+engineers. Ils rendent ainsi le processus fragile en raison du fait que cette
+technique repose énormément sur ces éléments. C'est pourquoi écrire des
+loaders basés sur "Userland Exec" est fastidieux. De plus, au fur et à mesure
+que de nouvelle fonctionnalités sont ajoutées au format de fichier ELF, cette
+technique s'est de fait complexifiée.
+
+La nouvelle technique que nous allons traiter dans ce papier s'appuie sur
+l'implémentation d'un loader "Userland Exec" générique avec un ensemble limité
+de contraintes, supportant un PIE hybride et les binaires ELF linkés
+statiquement. À notre connaissance, cette technique n'a pas encore été détaillée
+dans la littérature.
+
+Nous pensons que notre technique représente une amélioration drastique des
+versions précedentes des loaders reposant sur "Userland Exec". En raison de
+l'absence de contraintes d'implémentation techniques et par la nature même de
+cette nouvelle variante hybride ELF statique/PIE, l'éventail des possibilités
+qu'elle peut offrir est bien plus large et permet plus de furtivité que les
+variantes précédentes de "Userland Exec".
+
+
+3. Fonctionnement interne de la génération d'exécutable statique PIE
+
+3.1 Contexte
+
+En juillet 2017, H. J. Lu fournit un patch pour un bug listé dans le bugzilla
+de GCC et le nomme "Support de la création de binaires statiques PIE". Ce patch
+présent dans sa branche glibc hjl/pie/static décrit l'implémentation d'un
+exécutable PIE statique. Lu y documente que des exécutables statiques PIE ELF
+pourraient être ainsi générés en passant les flags -static et -pie au linker,
+et en utilisant les versions PIE de crt*.o comme entrée. Il est important de
+noter que, à l'époque de ce patch, la génération de binaires PIE entièrement
+linkés statiquement n'était pas possible.[1]
+
+En août, Lu soumet un second patch[2] pour le driver GCC, qui rajoute le flag
+-static pour supporter les fichiers PIE statiques qu'il a réussi à générer
+dans son patch précédent. Le patch est accepté dans trunk[3] et cette
+fonctionnalité est publiée dans GCC v8.
+
+De plus, en décembre 2017, un commit fait dans glibc[4] rajoute l'option
+-enable-static-pie. Grâce à ce patch, il est possible d'inclure les parties
+nécessaires de ld.so pour produire des exécutables statiques PIE autonomes.
+
+La modification majeure dans glibc qui permet d'utiliser des binaires statiaues
+PIE est l'addition de la fonction _dl_relocate_static_pie, qui est appelée par
+__libc_start_main. Cette fonction est utilisée pour identifier l'adresse de
+chargement au run-time, lire le segment dynamique et effectuer les relocations
+dynamiques avant l'initialisation et enfin transférer le control flow à
+l'application.
+
+Pour savoir quel flags and quelles étapes de compilation/linking sont nécessaires
+pour génerer des exécutables statiques PIE, nous avons passé le flag -static-pie -v
+à GCC. Cependant, nous avons réalisé qu'en faisant cela, le linker générait une
+pléthore de flags et d'appels à des wrappers internes. Par example, la phase
+de linking est gérée par l'outil /usr/lib/gcc/x86_64-linux-gnu/9/collect2 et
+GCC lui-même est wrappé par /usr/lib/gcc/x86_64-linux-gnu/9/cc1. Nous avons
+néanmoins réussi à enlever les flags non pertinents, ce qui nous donne les
+étapes suivantes :
+
+<a href="https://tmpout.sh/1/10/10.2.png"><img src="https://tmpout.sh/1/10/10.2.png" width="600px"></a>
+
+Ces étapes sont en fait les même que celles indiquées par Lu, à savoir donner
+en entrée au linker des fichiers compilés avec -fpie, -static, -pie, -z text
+et --no-dynamic-linker.
+En particulier, les artefacts les plus pertinents pour la création d'un binaire
+statique PIE sont rcrt1.o, libc.a et notre fichier d'entrée, test.o. L'objet
+rcrt1.o notamment contient _start qui possède le code requis pour charger
+l'application correctement avant d'exécuter son propre point d'entrée en
+appelant le code de démarrage de la libc contenu dans __libc_start_main :
+
+<a href="https://tmpout.sh/1/10/10.3.png"><img src="https://tmpout.sh/1/10/10.3.png" width="600px"></a>
+
+Comme mentionné précedemment, __libc_start_main va appeler la nouvelle fonction
+_dl_relocate_static_pie (définie dans le fichier efl/dl-reloc-static-pie.c
+des sources de la glibc). Les principales étapes réalisées par cette fonction
+sont commentées directement dans le code source :
+
+<a href="https://tmpout.sh/1/10/10.4.png"><img src="https://tmpout.sh/1/10/10.4.png" width="600px"></a>
+
+Avec l'aide de ces fonctionnalités, GCC est capable de générer des exécutables
+statiques qui peuvent être chargés à n'importe quelle addresse arbitraire.
+
+On peut remarquer que _dl_relocate_static_pie va gérer les relocations dynamiques
+nécessaires. Une différence notable entre rcrt1.o et le plus conventionnel crt1.o
+est que tout le code embarqué est position-independent. Si l'on examine à quoi
+ressemble le binaire ainsi généré, on peut voir les propriétés suivantes :
+
+<a href="https://tmpout.sh/1/10/10.5.png"><img src="https://tmpout.sh/1/10/10.5.png" width="600px"></a>
+
+Au premier coup d'oeil, on dirait un exécutable linké dynamiquement assez courant,
+basé sur le type d'exécutable ET_DYN, récupéré du header ELF. Cependant, si l'on
+examine les segments d'un peu plus près, on observe que le segment PT_INTERP,
+qui habituellement indique le chemin vers l'intepréteur dans les exécutables
+linkés dynamiquement, est absent et qu'un segment PT_TLS est présent, qui est
+lui habituellement seulement présent dans les exécutables linkés statiquement.
+
+<a href="https://tmpout.sh/1/10/10.6.png"><img src="https://tmpout.sh/1/10/10.6.png" width="600px"></a>
+
+Si l'on vérifie comment le linker dynamique identifie l'exécutable cible, on peut
+confirmer que le type de fichier est identifié correctement :
+
+<a href="https://tmpout.sh/1/10/10.7.png"><img src="https://tmpout.sh/1/10/10.7.png" width="600px"></a>
+
+Pour pouvoir charger ce fichier, tout ce qu'il faudrait faire serait de mapper
+tous les segments PT_LOAD en mémoire, mettre en place la stack du processus avec
+les entrées Auxiliary Vector correspondantes, puis pivoter vers le point
+d'entrée de l'exécutable mappé. Nous n'avons pas besoin de nous préoccuper de
+mapper le RTLD puisque nous n'avons aucune dépendances externes ou de
+restrictions sur les adresses lors du linkage.
+
+Comme on peut le voir, nous obtenons quatre segments chargeables, classiques
+des binaires SCOP ELF. Néanmoins, pour permettre un déploiement plus simple, il sera
+crucial de pouvoir fusionner ces segments en un seul, comme il est habituellement
+fait dans les injections ELF sur disque dans un exécutable étranger. Il est
+possible de faire ça en utilisant le flag -N du linker pour fusionner data et
+text en un seul segment.
+
+3.2. Incompatibilité des flags -N et -static-pie de GCC
+
+Si nous passons les flags -static-pie et -N ensemble à GCC, on voit que
+l'exécutable suivant est généré :
+
+<a href="https://tmpout.sh/1/10/10.8.png"><img src="https://tmpout.sh/1/10/10.8.png" width="600px"></a>
+
+La première chose que l'on peut remarquer sur ce type d'ELF généré en utilisant
+uniquement -static-pie est qu'il possède un type ET_DYN, et que l'ajout du flag
+-N le transforme en un type ET_EXEC.
+
+De plus, si nous observons de près les addresses virtuelles du segment, on
+peut voir que le binaire généré n'est pas un exécutable position-independent
+Cela est dû au fait que les addresses virtuelles semblent être des addresses
+absolues et non relatives. Pour comprendre pourquoi notre programme n'est pas
+linké comme attendu, nous avons inspecté le linker script qui a été utilisé.
+
+Comme nous utilisons le linker ld de binutils, nous avons regardé comment ld
+sélectionne le linker script. Ceci est réalisé dans le code de ld/ldmain.c à
+la ligne 345 :
+
+<a href="https://tmpout.sh/1/10/10.9.png"><img src="https://tmpout.sh/1/10/10.9.png" width="600px"></a>
+
+ldfile_open_default_command_file est en fait un appel indirect à une fonction
+indépendante de l'architecture et générée au moment de la compilation. Cette
+fonction contient un ensemble de linker scripts internes qui seront
+sélectionnés en fonction des flags passés à ld. Comme nous utilisons Ici
+l'architecture x86_64, le fichier de code source généré sera ld/elf_x86_64.c,
+et la fonction qui sera appelée pour sélectionner ce script sera
+gldelf_x86_64_get_script, qui est simplement un ensemble d'expressions
+if-else-if pour sélectionner un linker script interne.
+L'option -N quant à elle met la variable config.text_read_only à false, ce qui
+force la fonction de sélection à utiliser un script interne qui ne produit pas
+du code position-independent, comme illustré ci-dessous :
+
+<a href="https://tmpout.sh/1/10/10.10.png"><img src="https://tmpout.sh/1/10/10.10.png" width="600px"></a>
+
+Cette méthode pour sélectionner le script par défaut rend les flags -static-pie
+et -N incompatibles, du fait que la sélection du script basée sur l'option -N
+est parsée avant -static-pie.
+
+3.3. Contournement via un linker script personnalisé
+
+L'incompatibilité entre les flags -N, -static et -pie mène à une impasse, et
+nous a forcé à penser à plusieurs moyens pour surmonter cet obstacle. Nous
+avons donc essayé de fournir un script personnalisé pour contrôler le linker.
+Comme nous avons besoin de fusionner le comportement de deux linker scripts
+séparés, notre approche a été de choisir l'un des deux scripts et de l'adapter
+pour qu'il génère le résultat attendu avec des fonctionnalités du script restant.
+
+Nous avons choisi le script par défaut de -static-pie comme base, par rapport à 
+celui utilisé avec -N parce qu'il était plus facile à modifier dans notre cas.
+Modifier le script par défaut de -N pour supporter la génération de PIE est
+beaucoup plus difficile.
+
+Pour réaliser cet objectif, il nous faut modifier les définitions des segments,
+qui sont controlés par le champs PHRDRS [5] dans le linker script. Si la
+commande n'est pas utilisée, le linker fournit au programme des headers générés
+par défaut. Cependant, si nous ignorons cela dans le linker script, le linker
+ne va pas créer de headers additionnel au programme, et suivra strictement
+les directives définies dans le linker script cible.
+
+En prenant en compte les détails discutés ci-dessus, nous avons ajouté une
+commande PHDRS au linker script par défaut, qui commence avec la création de
+tous les segments originels créés par défaut quand -static-pie est utilisé :
+
+<a href="https://tmpout.sh/1/10/10.11.png"><img src="https://tmpout.sh/1/10/10.11.png" width="600px"></a>
+
+Après ça, nous avons besoin de savoir comment chaque section est mappée vers chaque
+segment, et pour cela nous pouvons utiliser readelf comme illustré ci-dessous :
+
+<a href="https://tmpout.sh/1/10/10.12.png"><img src="https://tmpout.sh/1/10/10.12.png" width="600px"></a>
+
+Avec la connaissance des mappings, nous avons juste besoin de changer la
+définition du segment de sortie dans le linker script, qui ajoute le nom du
+segment approprié à la fin de chaque définition de fonction, comme démontré
+par l'exemple suivant :
+
+<a href="https://tmpout.sh/1/10/10.13.png"><img src="https://tmpout.sh/1/10/10.13.png" width="600px"></a>
+
+Ici, les sections .tdata et .tbss sont assignées à des segments mappés dans le
+même ordre que celui observé dans la sortie de la commande readelf -l.
+Finalement, nous obtenons un script qui fonctionne et qui modifie exactement
+toutes les sections qui étaient mappées dans le segment data pour qu'elles soient
+mappées dans le segment text.
+
+<a href="https://tmpout.sh/1/10/10.14.png"><img src="https://tmpout.sh/1/10/10.14.png" width="600px"></a>
+
+Si nous compilons notre fichier de test avec ce linker script, on voit
+l'exécutable généré suivant :
+
+<a href="https://tmpout.sh/1/10/10.15.png"><img src="https://tmpout.sh/1/10/10.15.png" width="600px"></a>
+
+Nous avons maintenant un static-pie avec seulement un seul segment qui peut être
+chargé. On peut répéter la même démarche pour enlever les segments non
+pertinents et garder suelement les segments critiques à l'exécution du binaire.
+Par example, voici une instance d'un exécutable static-pie avec des headers 
+minimaux suffisants pour pouvoir s'exécuter :
+
+<a href="https://tmpout.sh/1/10/10.16.png"><img src="https://tmpout.sh/1/10/10.16.png" width="600px"></a>
+
+L'example suivant illustre le résultat final de la structure ELF désirée à
+avoir seulement un segment PT_LOAD généré par un linker script avec la
+command PHDRS configurée comme dans la capture d'écran ci-dessous :
+
+<a href="https://tmpout.sh/1/10/10.17.png"><img src="https://tmpout.sh/1/10/10.17.png" width="600px"></a>
+
+
+4. Chargement SHELF
+
+La variante ELF que nous avons générée nous donne des possibilités intéressantes,
+que les autres types d'ELF ne possèdent pas. À des fins de simplicité, nous avons
+qualifié ce type de binaire ELF de SHELF et nous utiliserons ce nom pour nous y
+référer dans la suite de cette article. Ci-dessous, un schéma mis à jour illustrant
+les étapes nécessaires pour un chargement SHELF.
+
+<a href="https://tmpout.sh/1/10/10.18.png"><img src="https://tmpout.sh/1/10/10.18.png" width="600px"></a>
+
+Comme nous pouvons voir dans le schéma ci-dessus, le processus pour charger
+des fichiers SHELF est bien moins complexe que le mécanisme de chargement
+d'un ELF conventionnel.
+
+L'exemple de code ci-dessous illustre l'ensemble restreint de contraintes
+nécessaires pour générer un binaire SHELF minimaliste selon la méthode
+"Userland Exec" :
+
+<a href="https://tmpout.sh/1/10/10.19.png"><img src="https://tmpout.sh/1/10/10.19.png" width="600px"></a>
+
+En utilisant cette approche, un fichier SHELF ressemblerait à cela en mémoire
+et sur disque :
+
+<a href="https://tmpout.sh/1/10/10.20.png"><img src="https://tmpout.sh/1/10/10.20.png" width="600px"></a>
+
+Comme nous pouvons l'observer, le header ELF et les Program Headers sont absents
+de l'image du processus. Nous détaillons cette fonctionnalité de notre variante ELF
+dans la section suivante.
+
+4.1 Capacités Anti-Forensics
+
+Cette nouvelle approche du "Userland Exec" présenter deux étapes intéressantes
+pour intégrer des capacités d'anti-forensics. Comme la fonction dl_relocate_static_pie
+va obtenir depuis l'Auxiliary Vector tous les champs requis pour la relocation, cela
+nous laisse une marge de manoeuvre sur ce à quoi la structure du fichier SHELF va
+ressembler en mémoire ou sur disque.
+
+La suppression du header ELF va directement avoir un effet sur les possibilités de
+reconstruction, parce que la plupart des scanners Linux analysent la mémoire
+des processus et cherchent des images ELF en tentant d'identifier les headers ELF. Le
+header ELF sera alors parsé et contiendra l'emplacement de la Program Header Table
+et par conséquent, du reste des artefacts mappés du fichier.
+
+L'élimination du header ELF est triviale puisque cet artefact n'est pas vraiment
+nécessaire au loader : toutes les informations requises du fichier cible seront
+récupérées depuis l'Auxiliary Vector, comme mentionné précédemment.
+
+Un autre artefact qui peut être caché est la Program Header Table elle-même. C'est un
+cas un peu différent par rapport au header ELF. Le Auxiliary Vector a besoin de
+localiser la Program Header Table afin que le RTLD puisse charger avec succès
+le fichier, en appliquant les relocations nécessaires lors de l'exécution. Néanmoins,
+il existe plusieurs approches pour obfusquer la PHT. L'approche la plus simple
+consiste à supprimer l'information de l'emplacement originel de la Program Header Table
+et de la transférer à un autre endroit dans le fichier qui n'est connu que par
+l'Auxiliary Vector.
+
+<a href="https://tmpout.sh/1/10/10.21.png"><img src="https://tmpout.sh/1/10/10.21.png" width="600px"></a>
+
+Nous pouvons pré-calculer l'emplacement de toutes les entrées de l'Auxiliary
+Vector et definir chaque entrée comme une macro dans un fichier include,
+ce qui nous permet d'adapter notre loader à notre fichier SHELF cible lors de
+la compilation. Ci-dessous un example de comment ces macros peuvent être générées :
+
+<a href="https://tmpout.sh/1/10/10.22.png"><img src="https://tmpout.sh/1/10/10.22.png" width="600px"></a>
+
+Comme nous pouvons l'observer, nous avons parsé le fichier SHELF cible pour
+y trouver les champs e_entry et e_phnum, et créé les macros correspondantes
+pour pouvoir stocker ces valeurs. Il nous a également fallu choisir une base
+de chargement de l'image aléatoire. Finalement, nous avons localisé la PHT et nous 
+l'avons convertie en tableau, puis enlevée de son emplacement originel. Appliquer 
+ces modifications nous permet de complétement éliminer le header ELF et de
+changer l'emplacement par défaut de la PHT du fichier SHELF à la fois sur le
+disque mais aussi en mémoire (!).
+
+Sans pouvoir localiser et récupérer la Program Header Table, les possibilités
+de reconstruction sont sévèrement limitées et des heuristiques plus avancées
+seront nécessaires pour une reconstruction réussie de l'image du process.
+
+Une approche supplémentaire pour compliquer la reconstruction de la Program
+Header Table consiste à instrumenter la manière dont glibc implémente la
+résolution des champs de l'Auxiliary Vector.
+
+4.2 Dissimuler les caractéristiques SHELF en patchant PT_TLS
+
+Même après avoir modifié l'emplacement par défaut de la Program Header Table
+en choisissant un nouvel endroit arbitraire lors de la construction de l'Auxiliary 
+Vector, la Program Header Table reste néanmoins toujours présente en mémoire et 
+pourrait être découverte en cherchant bien. Afin de la dissimuler encore plus, 
+nous pouvons altérer la manière dont le code de démarrage va lire les champs de 
+l'Auxiliary Vector.
+
+Le code responsable de ça trouve dans elf/dl_support.c, dans la fonction
+_dl_aux_init. Pour résumer, le code itère sur toutes les entrées de auxv_t et
+pour chaque entrée initialise les variables internes de la glibc :
+
+<a href="https://tmpout.sh/1/10/10.23.png"><img src="https://tmpout.sh/1/10/10.23.png" width="600px"></a>
+
+La seule raison pour laquelle l'Auxiliary Vector est requis est l'initialisation
+variables internes _dl_*. Sachant ça, nous pouvons
+contourner entièrement la création de l'Auxiliary Vector et faire le même travail
+que _dl_aux_init aurait fait avant de passer la main au fichier SHELF cible.
+
+Les seules entrées qui sont critiques sont AT_PHDR, AT_PHNUM et AT_RANDOM.
+Ainsi, nous avons seulement besoin de patcher les variables _dl_* respectives
+qui dépendent de ces champs. Pour récupérer ces valeurs, nous pouvons par
+exemple utiliser cette ligne de commande pour générer un fichier d'include
+avec des macros précalculées contenant les décalages pour chaque variable dl_* :
+
+<a href="https://tmpout.sh/1/10/10.24.png"><img src="https://tmpout.sh/1/10/10.24.png" width="600px"></a>
+
+Maintenant que nous connaissance le décalage vers ces variables, nous avons seulement
+besoin de les patcher de la même manière que le code de démarrage l'aurait fait en 
+utilisant l'Auxiliary Vector. Pour illustrer cette technique, le code suivant va 
+initialiser les adresses des Program Headers à new_address avec le bon nombre de 
+Program Headers :
+
+<a href="https://tmpout.sh/1/10/10.25.png"><img src="https://tmpout.sh/1/10/10.25.png" width="600px"></a>
+
+À partir de là, nous avons un program fonctionnel, sans fournir d'Auxiliary Vector.
+Comme le binaire cible est linké statiquement et que le code qui va charger
+le fichier SHELF est notre loader, nous pouvons ignorer tous les autres segments
+de l'Auxiliary Vector (AT_PHDR et AT_PHNUM) ou dl_phdr et dl_phnum respectivement.
+Il subsiste une exception, le segment PT_TLS, qui est l'interface par laquelle
+le Thread Local Storage est implémenté dans le format de fichier ELF.
+
+Le code suivant, se trouvant dans la fonction __libc_setup_tls du fichier
+csu/libc-tls.c, montre le type d'information qui est récupérée du segment
+PT_TLS :
+
+<a href="https://tmpout.sh/1/10/10.26.png"><img src="https://tmpout.sh/1/10/10.26.png" width="600px"></a>
+
+Dans le morceau de code ci-dessus, nous pouvons voir que l'initialisation du
+TLS repose sur la présence du segment PT_TLS. Nous avons plusieurs approches
+pour obfusquer cet artefact, comme par exemple patcher la fonction
+__libc_setup_tls pour simplement retourner et initialiser le TLS avec notre
+propre code. Pour démontrer ça, nous allons l'implémenter comme un patch rapide
+dans la glibc.
+
+Pour éviter d'avoir besoin du PT_TLS Program header, nous avons ajouté une
+variable globale qui contient toutes les valeurs du PT_TLS et définit les valeurs
+dans __libc_setup_tls, pour qu'elles soient lues depuis notre variable globale
+et non pas depuis la Program Header Table du fichier SHELF cible. Avec ce
+petit changement, nous sommes finalement en mesure d'éliminer tous les Program
+Headers :
+
+<a href="https://tmpout.sh/1/10/10.27.png"><img src="https://tmpout.sh/1/10/10.27.png" width="600px"></a>
+
+En utilisant le script suivant pour générer _phdr.h :
+
+<a href="https://tmpout.sh/1/10/10.28.png"><img src="https://tmpout.sh/1/10/10.28.png" width="600px"></a>
+
+Nous pouvons appliquer nos patchs de la manière suivante, après avoir inclus
+_phdr.h :
+
+<a href="https://tmpout.sh/1/10/10.29.png"><img src="https://tmpout.sh/1/10/10.29.png" width="600px"></a>
+
+En appliquant la métodologie susmentionnée, nous avons atteint un très haut
+niveau de furtivité, en chargeant et en exécutant notre fichier SHELF qui ne
+contient ni header ELF, ni Program Header Table, ni Auxiliary Vector - similaire
+à la manière dont un shellcode est chargé. Le schéma suivant illustre le
+processsus de chargement plutôt simple des fichiers SHELF :
+
+<a href="https://tmpout.sh/1/10/10.30.png"><img src="https://tmpout.sh/1/10/10.30.png" width="600px"></a>
+
+
+5. Conclusion
+
+Dans cet article, nous avons traité des mécanismes internes du chargement réfléxif
+des fichiers ELF, expliqué les implémentations précédentes de "Userland Exec" ainsi
+que leurs avantages et inconvénients. Nous avons ensuite expliqué les derniers 
+patchs dans le code source de GCC qui implémentent le support des binaires
+static-pie, discuté du résultat désiré et des approches que nous avons suivies
+pour atteindre notre objectif de générer des fichiers ELF static-pie avec
+un segment unique PT_LOAD. Enfin, nous avons parlé des caractéristiques
+anti-forensics que le chargement SHELF offre et que nous pensons être une
+amélioration considérable comparé aux précédentes versions de chargement
+réflexif d'ELF.
+
+Nous pensons que cela pourrait être la prochaine génération de chargement
+réfléxif d'ELF et il pourrait être intéressant pour le lecteur de comprendre
+l'étendue des capacités offensives offertes par le format de fichier ELF. Si
+vous souhaitez avoir accès au code source, contactez @sblip ou @ulexec.
+
+6. Références
+
+[1] (support static pie)
+    https://gcc.gnu.org/bugzilla/show_bug.cgi?id=81498
+[2] (first patch gcc)
+    https://gcc.gnu.org/ml/gcc-patches/2017-08/msg00638.html
+[3] (gcc patch)
+    https://gcc.gnu.org/viewcvs/gcc?view=revision&revision=252034
+[4] (glibc --enable-static-pie)
+    https://sourceware.org/git/?p=glibc.git;a=commit; \
+      h=9d7a3741c9e59eba87fb3ca6b9f979befce07826
+[5] (ldscript doc)
+    https://sourceware.org/binutils/docs/ld/PHDRS.html#PHDRS
+[6] https://sourceware.org/binutils/docs/ld/
+      Output-Section-Phdr.html#Output-Section-Phdr
+[7] https://www.akkadia.org/drepper/tls.pdf
+[8] (why ld doesn't allow -static -pie -N)
+    https://sourceware.org/git \
+      /gitweb.cgi?p=binutils-gdb.git;a=blob;f=ld/ldmain.c; \
+      h=c4af10f4e9121949b1b66df6428e95e66ce3eed4;hb=HEAD#l345
+[9] (grugq ul_exec paper)
+    https://grugq.github.io/docs/ul_exec.txt
+[10] (ELF UPX internals)
+     https://ulexec.github.io/ulexec.github.io/article \
+       /2017/11/17/UnPacking_a_Linux_Tsunami_Sample.html
+
+</pre></div></center></body></html>

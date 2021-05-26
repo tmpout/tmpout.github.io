@@ -1,0 +1,184 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+Désinfecteur de PT_NOTE en Python                                          │                   █   │
+~ manizzle                                                                 └───────────────────█ ──┘
+
+[ Traduit en français par @MorpheusH3x)from the ret2school team ]
+
+Bonjour à tous. Pour commencer, je ne suis pas un AVer. Les antivirus sont nuls, ils comportent des 
+bogues et sont généralement sujets à l'exploitation. N'hésitez pas à faire fuir l'enfer de Lief et 
+Capstone. Je suis sûr qu'ils ont des bogues.
+Maintenant sur la façon de désinfecter...
+
+La technique d'injection de PT_NOTE est assez propre et permet de remplir un emplacement mémoire 
+tout fait avec de bonnes choses. Mais avec toutes les techniques d'infection, il y a généralement 
+toujours une technique de désinfection.
+C'est la nature de la vie.
+
+J'aime à penser que la facilité avec laquelle on désinfecte est un moyen de mesurer la qualité d'une
+technique d'infection. Plus il y a de constantes dans une technique de désinfection, plus elle a de 
+chances d'être brisée plus rapidement. Le jeu du chat et de la souris est sans fin, et c'est le seul
+moyen de développer des virus de plus en plus virus de plus en plus insidieux. Continuez à jouer le
+jeu avec vous-même et votre virus sera la chose de la folie et de l'émerveillement.
+
+Dans cette désinfection, nous utilisons le fait que la plupart des virus essaieront de charger le 
+segment PT_NOTE le plus loin possible au cas où le binaire serait volumineux. Et qu'ils essaieraient
+de s'assurer que les goodies/informations ne soient pas mappés et causer des problèmes de chargement
+avec le binaire, car il faut être discret, non ?
+
+Nous utilisons Kmeans pour commencer et regrouper les segments PT_LOAD ensemble et nous utilisons 
+l'inertie des clusters par rapport à leurs centroïdes comme un moyen de mesurer l'efficacité de 
+Kmeans. Habituellement, pour les infections, il y a 1 PT_NOTE qui est infecté mais peut-être que 
+sblip vous le dira plus tard, parfois il y en a 2 :)
+
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+
+Une fois que nous avons trouvé quels segments semblent être cartographiés un peu plus loin que 
+d'habitude (bien que si vous Si vous vouliez mapper le PT_NOTE entre les PT_LOADS valides et 
+re-baser toute l'image, je veux dire qui ferait une telle chose ? une telle chose ?), nous pouvons
+commencer à fouiller dans son code.
+
+Habituellement, ces virus vont continuer à s'agiter, infecter d'autres fichiers, mais à un moment 
+donné, , vous savez, pour éviter toute suspicion. On peut supposer que le saut vers le point 
+d'entrée original se produit à la fin du segment PT_NOTE infecté, nous le recherchons donc.
+
+Parfois le jmp est direct, parfois il est dérivé. Nous suivons simplement la cible du jmp jusqu'à un
+point où il ajoute l' (original entry point, point d'entrée original) à la base qu'il a calculée 
+auparavant (si vous voulez être vraiment fantaisiste, vous pouvez toujours utiliser une chaîne 
+use-def, mais bien sûr les virii peuvent devenir encore plus fantaisistes et vous forcer à résoudre
+votre chaînes de fonctions croisées OH MY !)
+
+  add {target}, CONST
+
+Remets-le dans ton PHDR et tu es de retour dans l'action.
+
+Plus de chance la prochaine fois, mon ami !
+
+##################################################################
+
+#!/usr/bin/env python3
+
+from capstone import *
+from collections import Counter
+import lief
+import math
+import numpy as np
+from sklearn.cluster import KMeans
+import sys
+
+# ne sois pas un suceur d'anti-re, mec
+SUCKER_PUNCH = 3
+# testé sur quelques grands et petits binaires
+# la plupart des binaires normaux se situent dans la fourchette de 1.0-quelque-chose
+# même les gros binaires de plusieurs mégaoctets. Je suis sûr que nous pouvons trouver quelque chose
+# qui le casse cependant
+INERTIA_RATIO = 1.1
+
+def find_anomalous_load_segment(segment_ranges):
+  segment_array = np.array(segment_ranges)
+  cluster_2 = KMeans(n_clusters=2, random_state=0).fit(segment_array)
+  cluster_1 = KMeans(n_clusters=1, random_state=0).fit(segment_array)
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+    print("No anomaly detected")
+    return None
+  cluster_counts = {v:k for k,v in Counter(cluster_2.labels_.tolist()).items()}
+  if 1 not in cluster_counts:
+    print("No singular cluster found")
+    return None
+  return segment_array[np.where(cluster_2.labels_ == cluster_counts[1])[0]][0]
+
+
+def find_oep(segment_bytes, segment_start):
+  # nous supportons x64-64 pour l'instant mais cela peut être facilement porté vers 
+  # d'autres architectures si nécessaire. Ce serait cool d'utiliser une IR 
+  # ici pour qu'il soit multiplateforme.
+  md = Cs(CS_ARCH_X86, CS_MODE_64)
+  md.skipdata = True
+  oep = None
+  last_jump = None
+  early_bail = 0
+  for r in [instr for instr in md.disasm(segment_bytes, segment_start)][::-1]:
+    if last_jump:
+      # si nous voyons une instruction de la forme 
+      # add {target}, CONST
+      # nous sommes probablement en train d'ajouter l'OEP à l'adresse de base
+      # Nous pouvons rendre cela plus générique en construisant une 
+      # une vraie chaîne use-def ici et en résolvant la valeur réelle de 
+      # rax ici. Il faudrait trouver des fonctions comme get_rip
+      # qui sont utilisées pour faciliter les jmps vers le code relatif.
+      if last_jump + ", " in r.op_str and "add" == r.mnemonic.strip():
+        try:
+          oep = int(r.op_str.split(",")[1].strip(), 16)
+          break
+        except Exception as e:
+          # continuer, mais il est peu probable que nous le trouvions maintenant
+          # Continuez à essayer un peu plus, mais pas trop.
+          # vous ne voulez pas vous faire avoir par des anti-re
+          early_bail += 1
+          if early_bail == SUCKER_PUNCH:
+            break
+          continue
+    if not last_jump and r.mnemonic.strip() == "jmp":
+      target = r.op_str.strip()
+      # Essayez de voir si le jmp se produit directement
+      # puis prendre cette valeur comme l'OEP
+      try:
+        oep = int(target, 16)
+        break
+      except Exception as e:
+        # Si non, il s'agit probablement d'un saut de registre.
+        oep = None
+        last_jump = target
+  return oep
+
+def main():
+  l = lief.parse(sys.argv[1])
+  load_segs = [ [ll.virtual_address, ll.virtual_address + ll.virtual_size]
+        for ll in l.segments
+        if ll.type == lief.ELF.SEGMENT_TYPES.LOAD
+      ]
+  anomalous_segment_start, anomalous_segment_end = find_anomalous_load_segment(load_segs)
+  segment_bytes = l.get_content_from_virtual_address(anomalous_segment_start, anomalous_segment_end)
+  real_oep = find_oep(bytes(segment_bytes), anomalous_segment_start)
+  print("found OEP: ", hex(real_oep))
+  l.header.entrypoint = real_oep
+  l.write(sys.argv[1] + ".cleaned")
+
+if __name__ == "__main__":
+  main()
+
+</pre></div></center></body></html>
