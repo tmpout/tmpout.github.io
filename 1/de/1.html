@@ -1,0 +1,406 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+_ .-') _     ('-.   ('-.     _ .-') _        .-. .-')               .-') _     ('-.    .-')
+( (  OO) )  _(  OO) ( OO ).-.( (  OO) )       \  ( OO )             (  OO) )  _(  OO)  ( OO ).
+ \     .'_ (,------./ . --. / \     .'_        ;-----.\  ,--.   ,--./     '._(,------.(_)---\_)
+ ,`'--..._) |  .---'| \-.  \  ,`'--..._)       | .-.  |   \  `.'  / |'--...__)|  .---'/    _ |
+ |  |  \  ' |  |  .-'-'  |  | |  |  \  '       | '-' /_).-')     /  '--.  .--'|  |    \  :` `.
+ |  |   ' |(|  '--.\| |_.'  | |  |   ' |       | .-. `.(OO  \   /      |  |  (|  '--.  '..`''.)
+ |  |   / : |  .--' |  .-.  | |  |   / :       | |  \  ||   /  /\_     |  |   |  .--' .-._)   \
+ |  '--'  / |  `---.|  | |  | |  '--'  /       | '--'  /`-./  /.__)    |  |   |  `---.\       /
+ `-------'  `------'`--' `--' `-------'        `------'   `--'         `--'   `------' `-----'
+                                                                                  ~ xcellerator
+
+
+Ahoy, ihr ELF Anhänger! In diesem Artikel möchte ich euch eine kleine Software-Bibliothek, an 
+der ich arbeite, vorstellen. Die Bibliothek heißt: ‚LibGolf‘. Angefangen hatte alles damit, 
+dass ich das ELF-Format und die Programm-Header verstehen wollte. Doch seitdem hat es sich zu 
+etwas ziemlich Praktischem entwickelt. Mein Programm macht es sehr leicht eine ladbare 
+Binär-Datei mit ELF Kopfzeile, gefolgt von einer einzigen Programm-Kopfzeile sowie einem 
+einzelnen Segment. 
+
+Standardmäßig werden alle Werte in den Kopfzeilen auf sinnvolle Werte gesetzt, es gibt jedoch 
+einen einfachen Weg mit diesen Standards zu spielen – darum soll es in diesem Artikel gehen. 
+Ich werde demonstrieren wie ich ‚LibGolf‘ genutzt habe um herauszufinden welche Bytes wirklich 
+notwendig sind und welche vom Linux Programmlader (Linux Loader) ignoriert werden. Zum Glück 
+hat sich herausgestellt, dass der Linux Loader einer der Parser ist, der im Vergleich zu 
+anderen Linux Tools, nicht sonderlich oft nörgelt.
+
+Bevor wir fertig sind, werden wir feststellen, dass mehrere beliebte statische Analysetools 
+an unserer korrupten ELF-Datei zerbrechen, während der Programmlader fröhlich unseren 
+Programmcode lädt und zu den ausgewählten Bytes springt.
+
++----------------------------+
+|--[ Einführung in LibGolf]--|
++----------------------------+
+
+Vor einiger Zeit schrieb ich ELF-Dateien händisch mit NASM(Anm.d.Ü: Ein Tool um Assembler-Code
+zu kompilieren). Obgleich dies eine Zeitlang Spaß gemacht hat (und sicherlich auch seine 
+Vorteile hatte), musste ich feststellen, dass ich den ganzen Spaß verpasse den C Strukturen 
+bieten. Insbesondere und ich bin sicher vielen Lesern ist dies bekannt, dass die Datei 
+&lt;linux/elf.h&gt; voll ist mit lustigen Dingen wie den Elf64_Ehdr-Headern und dem Elf32_Phdr 
+die nur darauf warten genutzt zu werden.
+
+Im Interesse, dass diese Header nicht ungenutzt bleiben hatte ich mich entschieden sie mir zu
+schnappen und loszulegen. Aus diesen Bemühungen ist libgolf.h entstanden. Eine 
+Software-Bibliothek die es erlaubt aus Shellcode eine funktionierende ELF-Datei zu machen. 
+Ich weiß was du jetzt denkst – „Das klingt wie ein furchtbarer Linker!“ und vielleicht ist 
+dem auch so. Jedoch, der Vorteil ist, dass es möglich ist die Header der Datei *vor* der 
+Dateierstellung zu bestimmen.
+
+Lass uns ansehen wie das ganze funktioniert. Wenn du ebenfalls mit dem Programmcode zuhause 
+spielen willst, kannst du diesen hier finden [0] oder hier ‚examples/01_dead_bytes‘. Für 
+einen einfachen Test brauchen wir zwei Dateien: eine C Quelldatei und eine Shellcodedatei 
+(shellcode.h). Bezüglich des Shellcodes möchte ich mit dem guten alten ‚b0 3c 48 31 ff 0f 05‘
+beginnen. Disassembliert sieht dieser wie folgt aus:
+
+   mov al, 0x3c    @ b0 3c
+   xor rdi, rdi    @ 48 31 ff
+   syscall         @ 0f 05
+
+(Ja, ok, *dass* shellcode zu nennen ist jetzt etwas übertrieben!)
+
+Die obigen drei Zeilen rufen einfach nur den Syscall (Anm.d.Ü: Üblicher Systemaufruf unter 
+Linux vgl. asm/syscall.h) exit mit dem Rückgabewert ‚0‘ auf. Das ist hilfreich, denn wir 
+können mit der Shell-Erweiterung ‚$?‘ den Rückgabewert überprüfen des Programms überprüfen.
+
+Es ist möglich diesen oder einen anderen Shellcode, der als PIC kompiliert worden ist (es gibt
+aktuell noch keine Unterstützung für ‚relocatable‘ kompilierte Programme) in der Datei 
+shellcode.h in einen Puffer zu schreiben (buf[]). Wenn du nur eine Datei haben willst die 
+deinen Shellcode ausführt, dann ist das hier alles was du brauchst:
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            GEN_ELF();
+            return 0;
+        }
+		
+Wenn du das ganze kompilierst und die Datei ausführst erhältst du ein .bin File. Dies ist dein
+funkelnagelneues ELF! Ziemlich einfach, oder? Einfachheit geht auch mit Langeweile einher, dies
+ist auch hier der Fall. Also lass uns etwas interessanteres machen!
+
+Vorher macht es jedoch Sinn zu erklären, was diese Makros (INIT_ELF(), GEN_ELF()) eigentlich 
+machen. INIT_ELF() erwartet zwei Argumente: den ISA und die Architektur. Aktuell unterstützte 
+Instruktion-Sets von ‚LibGolf‘ sind X86_64, ARM32 und AARCH64. Und entweder 32 oder 64Bit für 
+die Architektur selber. 
+
+Zu aller Anfang werden einige interne Strukturen festgelegt, die für die spätere Verarbeitung 
+notwendig sind. Danach wird entschieden ob Elf32_* oder Elf64_* Objekt-Header genutzt werden 
+sollen. Die ELF Programm-Kopfzeilen „ehdr“ und „phdr“ und entsprechenden Verweise (Pointer) 
+werden ebenfalls automatisiert berechnet und gesetzt. Und genau diese werden wir einfach nutzen 
+um die Felder zu manipulieren. Davon abgesehen, kopiert ‚LibGolf‘ ebenfalls den Puffer vom 
+Shellcode, berechnet und befüllt die ELF Programm-Kopfdateien und erstellt einen sinnvollen 
+Einstiegspunkt (Entry Point). Danach kommt GEN_ELF() zur Ausführung. GEN_ELF() schreibt 
+lediglich ein paar schöne Statistiken nach STDOUT und danach die korrekten Strukturen für 
+die .bin Datei. Der Name für die .bin Datei wird von dem ersten Argument, argv[0], genommen.
+
+Ok. Nachdem wir das INIT_ELF() Makro benutzt haben, können wir ‚ehdr‘ und ‚phdr‘ 
+dereferenzieren. Angenommen wir wollen e_version von der ELF-Kopfzeile modifizieren, 
+müssen wir lediglich eine Zeile zu unserem Code hinzufügen:
+
+     #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64);
+
+            // Set e_version to 12345678
+            ehdr-&gt;e_version = 0x78563412;
+
+            GEN_ELF();
+            return 0;
+        }
+
+Jetzt noch schnell kompilieren, ausführen und eine neue .bin Datei wartet auf dich. Wenn man
+sich die Datei mit ‚xxd‘, ‚hexyl‘ oder deinem Lieblings-Hexeditor ansieht, wirst du ein paar
+hübsche kleine Werte, '12 34 56 78', ab Offset 0x14 sehen. Na war das nicht einfach?
+
+Damit das ganze etwas schneller geht nutze ich gerne das folgende Makefile:
+
+        .PHONY golf clean
+
+        CC=gcc
+        CFLAGS=-I.
+        PROG=golf
+
+        golf:
+        	@$(CC) -o $(PROG) $(PROG).c
+        	@./$(PROG)
+        	@chmod +x $(PROG).bin
+
+        	@rm $(PROG) $(PROG).bin
+
+(Diese Datei findest du ebenfalls im Repo [0]) 
+
++---------------------------------+
+|--[ Probleme direkt am Anfang ]--|
++---------------------------------+
+
+Wie viele bereits wissen, Fileparser sind schwierige Programme. Obgleich Spezifikationen 
+meistens die besten Absichten haben, werden sie selten respektiert, auch von denen nicht, 
+die es besser wissen sollten. Überraschenderweise ist gerade der Linux ELF Lader, derjenige 
+der sich am wenigsten an die Vorgaben hält. Unsere Bibliothek ‚LibGolf‘ macht es einfach 
+herauszufinden wie viele Verstöße gegen die Datei ‚elf.h‘ und ELF Spezifikation begangen 
+werden.
+
+Ein guter Punkt um zu starten, ist immer der Anfang, in diesem Fall der ELF Header (Kopfzeile).
+Am Anfang einer jeden ELF Datei ist, wie wir wissen ‚0x7f‘ gefolgt von der Zeichenkette ‚ELF‘. 
+Diese werden ebenfalls als EI_MAG0 bis EI_MAG3 bezeichnet. Wenig überraschend: wenn diese vier 
+Byte manipuliert werden, wird die Datei vom Ladeprogramm zurückgewiesen. Gott-Sei-Dank!
+
+Was ist mit dem fünften Byte bzw. mit Offset 0x5? Unsere Spezifikation sagt uns, dass dies die 
+EI_CLASS ist und die Zielarchitektur beschreibt. Werte die akzeptiert werden sind: 0x01 und 
+0x02, jeweils für 32 und 64 Bit. Ich wiederhole: „Nur die folgenden Werte sollen laut 
+Spezifikation akzeptiert werden: 0x01 und 0x02“. Was passiert also, wenn wir einen Wert 
+wie z.B. 0x58  (‚X‘ in der ASCII Tabelle) nutzen? 
+
+Wir machen dies in dem wir dem Programmcode das folgende hinzufügen: 
+        
+        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;
+
+Du fragst warum wir ein ‚X‘ nehmen? Nun ja, man sieht es ziemlich deutlich in der Ausgabe von 
+Tools wie z.B. xxd oder hexyl.
+
+Bevor wir jetzt anfangen mit unserer neuen Datei zu spielen, können wir ja noch ein paar 
+weitere ELF Parser testen um andere Missetäter zu finden (Anm. d. Übersetzers: die die ELF 
+Spezifikation nicht respektieren). Das erste Programm auf unserer Liste ist GDB. Los geht’s, 
+schauen wir was passiert.
+
+        "not in executable format: file format not recognized"
+
+Ebenso verhält sich auch ‚objdump’. Die Datei wird nicht akzeptiert. Es scheint also, dass 
+diese Parser ihren Job gut machen. Ok, nun versuchen wir einmal die Binärdatei ganz normal 
+zu starten.
+
+        &lt;Spoiler&gt;Es funktioniert einwandfrei! &lt;/Spoiler&gt;
+
+Falls du meinen Beispiel-Shellcode benutzt, kannst du mittels der Abfrage von $? (Anm.d.Ü: 
+Bash-Shell Return Variable) herausfinden, dass das Programm erfolgreich beendet worden ist. 
+Verstöße gegen die Spezifikation sind ebenfalls für die Felder EI_DATA und EI_VERSION möglich. 
+
++------------------------------------------+
+|--[ Drehen wir die Manipulation bis 11 ]--|
++------------------------------------------+
+
+Wie weit können wir gehen? Wie viele der ELF und der Programm-Kopfzeilen wird der Linux 
+Programmlader einfach ignorieren? Wir haben bereits EI_CLASS, EI_DATA und EI_VERSION betrachtet.
+Es stellt sich heraus, dass ebenfalls EI_OSABI vom Programmlader sicherheitshalber *komplett* 
+ignoriert wird. Und schon sind wir bei Offset 0x8. Anhand der Spezifikation sehen wir, dass das 
+nächste Feld EI_ABIVERSION und EI_PAD sind und uns bis zu Offset 0xf bringen. Auch hier scheint 
+sich niemand für die Werte zu interessieren, also setzen wir sie auch einfach auf ‚X‘.
+
+Und weiter geht es. Wir kommen zu einem Feld, dass sich jedoch wehrt manipuliert zu werden: 
+e_type. Das ergibt Sinn. Der ELF Programmlader mag es eben nicht, wenn wir ihm nicht sagen um 
+welchen Programmtyp es sich handelt. (Gut zu wissen, dass der Programmlader wenigsten ein *paar*
+Standards hat – Wortspiel gewollt). Auch ET_EXEC muss bei 0x0002 bleiben. Das nun kommende Feld 
+ist ebenfalls Wählerisch. Wir sind bei Offset 0x12 und das Feld heißt: e_machine. Dieses Feld 
+ist wichtig für das Ziel-Instruktions-Set der CPU (ISA). Soweit es uns betrifft, wurde das Feld 
+von ‚LibGolf‘ bereits mit 0x3e beschrieben, da wir X86_64 als erstes Argument an unser Makro 
+INIT_ELF() übergeben haben. Und damit hat sich das Thema erledigt.
+
+Und dann DAS! Eine unangepasste Version von e_version taucht auf der Bildfläche auf! 
+Ein weiterer Dissident. Eigentlich sollte dieser immer die Bytes 0x00000001 haben. In der 
+Realität jedoch, scheint dies niemanden zu interessieren. Also füllen wir diese ebenso mit: 
+0x58585858 auf.
+
+Nach dieser Menge an Ketzern haben wir ein paar wichtige Felder, die tatsächlich immun gegen 
+Missbrauch scheinen: e_entry und e_phoff. Ich bin sicher ich muss nicht zu sehr ins Detail gehen
+was e_entry betrifft – es ist der Programmcode-Einstiegspunkt der Binärdatei. Die dort 
+hinterlegte Adresse bestimmt was ausgeführt wird, sobald alle ladbaren Teile im Speicher 
+vorhanden sind. Obgleich man annehmen könnte, dass der Loader in der Lage ist ohne den Offset 
+zum Programmheader zu kennen(e_phoff) diesen selber zu berechnen, scheint es ganz so, als wenn 
+dieser nicht clever genug ist dies zu tun. Daher muss auch hier nachgeholfen werden. Wir fassen 
+diese beiden Felder also nicht weiter an.
+
+‚LibGolf‘ unterstützt aktuell keine ‚Section Headers‘ (und da der Fokus der Bibliothek darauf 
+liegt *kleine* Binaries zu erstellen, kommt dieses Feature wahrscheinlich nicht). Daraus ergibt 
+sich, dass jede Art von Headern, die sich auf die verschiedenen möglichen Sektionen beziehen, 
+von uns nach Herzenslust manipuliert werden können. Dazu gehören, e_shoff, e_shentsize, eh_shnum
+and sogar e_shstrndx. Wenn wir keine Sektionen haben, können wir auch nicht verantwortlich 
+gemacht werden, wenn wir die dazugehörigen Kopfzeilen einfach verändern.
+
+Die restlichen Felder, die für den Programmlader wichtig zu sein scheinen sind: e_ehsize, 
+e_phentsize und e_phnum. Auch das ist nicht sehr überraschend, da diese notwendig sind um das 
+einzige ladbare Segment in den Speicher zu bringen, bevor die Kontrolle an das Programm 
+übergeben wird. Falls du eine kleine Erinnerung brauchst: e_ehsize ist die Größe des ELF Headers
+(diese ist entweder 0x34 für 32-Bit oder 0x40 für 64-Bit). Eh_phentsize ist die Größe des 
+folgenden Headers (auch dieser ist hart-kodiert mit 0x20 oder 0x38 für 32 oder für eine 64 Bit 
+Architektur). Wenn der Programmlader etwas mehr achtgeben würde bei dem Feld EI_CLASS, würde er 
+diese beiden letztgenannten nicht brauchen. Und zum Schluss: e_phnum, hierbei handelt es sich 
+lediglich um die Anzahl der Einträge im Programmheader. In unserem Fall ist diese immer auf 0x1 
+gesetzt. Ohne Frage, dies wird für irgendeine Kontrollschleife in den Speicherladeroutinen 
+genutzt, ich habe das ganze jedoch nicht weiter untersucht.
+
+Es ist ein letzter Bereich im ELF Header übrig den ich nicht angefasst habe. Dabei handelt es 
+sich um e_flags. Der Grund hierfür ist relativ simpel: er ist abhängig von der Architektur. 
+Für ein X86_64 System spielt er gar keine Rolle, da es undefiniert ist (Auf der anderen Seite 
+ist es wichtig für einige ARM Systeme, am besten du schaust dir einmal das ARM32-Beispiel bei 
+[0] an).
+
+Und damit sind wir am Ende des ELF Headers. Für alle die nicht mitgezählt haben, knapp über 50%
+des Headers wird vom Programmlader ignoriert. Aber wie sieht es mit dem Programm Header aus? Es
+stellt sich heraus, dass dieser weitaus besser aufgestellt ist. Tatsächlich jedoch nicht aus den
+Gründen die man erwarten sollte. Denn jegliche Art von korrumpierten Programm Header wird vom 
+Programmlader ignoriert. Wir könnten den gesamten Programm-Header mit unseren X’en füllen und 
+dem Lader wäre es komplett egal. Aber Achtung mutiger Padavan, spielst du mit den falschen Bytes
+herum wirst du schnell in den Katakomben der Abstürze landen.
+
+Gibt es denn nun irgendetwas im Programm Header? Es ergibt sich, dass ohne Selbstverschulden 
+zwei Felder genutzt werden können, da sie einfach nicht mehr gebraucht werden. Dabei handelt es
+sich um: p_addr und p_align. Ersterer war notwendig, als es noch keine virtuelle 
+Speicheraddressierung gab. Zu Zeiten als 4GB Systemspeicher nichts anderes war als ein Traum von
+kleinen Kindern. Daher war es damals notwendig dem Lader mitzuteilen wo im physischen 
+Speicherbereich das Segment vom Programm geladen werden sollte. 
+
+Das Feld für die Anpassung des Speichers (p_align), ist wiederrum lustig. Normallerweise sollte
+p_vaddr gleich dem Ergebnis von p_offset modulus (%) von p_align sein. “Gute“ ELF Dateien, 
+zumindest die, die mit GCC kompiliert worden sind, setzen einfach einen gleichen Wert bei 
+p_offset und p_vaddr und kümmern sich nicht weiter darum. Das macht übrigens auch LibGolf und 
+lässt p_align überflüssig zurück.
+
+Alles in allem nicht so spaßig wie der ELF Header, aber immerhin ein paar kleine Vorteile. 
+Um die Binärdatei in C zu generieren gibt es den folgenden Code:
+
+    #include "libgolf.h"
+    #include "shellcode.h"
+
+    int main(int argc, char **argv)
+    {
+        INIT_ELF(X86_64,64);
+
+        /*
+         * Damit kommen statische Analysetools wie gdb und objdump nicht klar             
+       */
+        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;   // Architektur
+        (ehdr-&gt;e_ident)[EI_DATA] = 0x58;    // Endianness
+        (ehdr-&gt;e_ident)[EI_VERSION] = 0x58; // Sollte immer 0x1, machen wir aber nicht
+        (ehdr-&gt;e_ident)[EI_OSABI] = 0x58;   // Ziel Betriebssystem
+
+        // Kontrollschleife für den Rest von e_ident
+        int i;
+        for ( i = 0 ; i &lt; 0x10 ; i++ )
+            (ehdr-&gt;e_ident)[i] = 0x58;
+
+        ehdr-&gt;e_version = 0x58585858;       // Sollte immer 0x00000001 sein, machen wir aber nicht
+
+        // Section headers? Wir brauchen keine stinkenden Section Headers! 
+        ehdr-&gt;e_shoff = 0x5858585858585858;
+        ehdr-&gt;e_shentsize = 0x5858;
+        ehdr-&gt;e_shnum = 0x5858;
+        ehdr-&gt;e_shstrndx = 0x5858;
+
+        ehdr-&gt;e_flags = 0x58585858;         // x86_64 hat keine Flags definiert
+
+        phdr-&gt;p_paddr = 0x5858585858585858; // Physikalische Adresse wird ignoriert
+        phdr-&gt;p_align = 0x5858585858585858; // p_vaddr = p_offset, daher obsolet
+
+        GEN_ELF();
+        return 0;
+    }
+
+ Sobald du das ganze kompiliert hast, bekommst du das folgende Binary: 
+
+        00000000: 7f45 4c46 5858 5858 5858 5858 5858 5858  .ELFXXXXXXXXXXXX
+        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..&gt;.XXXXx.@.....
+        00000020: 4000 0000 0000 0000 5858 5858 5858 5858  @.......XXXXXXXX
+        00000030: 5858 5858 4000 3800 0100 5858 5858 5858  XXXX@.8...XXXXXX
+        00000040: 0100 0000 0500 0000 0000 0000 0000 0000  ................
+        00000050: 0000 4000 0000 0000 5858 5858 5858 5858  ..@.....XXXXXXXX
+        00000060: 0700 0000 0000 0000 0700 0000 0000 0000  ................
+        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.&lt;H1...
+
+Diese Datei ist 127 byte groß, außerdem waren wir in der Lage 50Byte davon mit ‚X‘ zu ersetzen. 
+Das bedeutet, dass knapp 40% der Datei vom ELF Programmlader ignoriert werden. Und wer weiß was 
+man mit diesen 50 Byte alles machen könnte?
+
+Es stellt sich heraus – eine ganze Menge!  Vor einigen Jahren hatte ‚netspooky‘ durch eigene 
+Forschung aufgezeigt, dass man einige Teile des Programmheaders in den ELF Header verlagern kann.
+Wenn man das ganze jetzt kombiniert, indem man seinen Shellcode in den Regionen der ‚‘Toten Bytes‘
+speichert, sowie einige weitere coole Tricks, ist es möglich die Datei auf 84 Byte zu begrenzen. 
+Dies ist eine weitere Verkleinerung und zwar von 34%. Hier kannst du die Ergebnisse seiner 
+unglaublich coolen ‚ELF Mangling‘ Serie nachlesen [1].
+
+Ein weiterer interessanter Aspekt dieser Techniken wird oft einfach übersehen. Während dem Linux
+Programmlader teilweise die Struktur der ELF Datei Schnuppe ist, ist dies anderen Tools bei 
+weitem nicht egal. Wir hatten uns ja schon ‚objdump‘ und ‚gdb‘ angesehen. Jede Menge AV 
+(Antivirus) Programme zerbröseln ebenfalls wenn sie mit missgebildeten ELF Dateien zu tun haben. 
+Während meiner Erforschung dessen, stellte ich fest, dass die einzige Lösung, die es halbwegs 
+hinbekommt derartige Dateien zu lesen ClamAV ist. ClamAV erkennt diese ELF Dateien als 
+‚Heuristics.Broken.Executable‘. Die besten Ergebnisse bekommt man noch immer mit dynamischer 
+Analyse.
+
++--------------------------+
+|--[ Und weiter Geht es ]--|
++--------------------------+ 
+
+X86_64 ist nicht die einzige ISA die von ‚LibGolf‘ unterstützt wird. Es ist ebenfalls möglich 
+kleine ausführbare Dateien für ARM32 and AARCH64 zu bauen. Im Github-Repository, kannst du 
+Beispiele für beide ARM-Architekturen finden. (Sowie auch die toten Bytes aus diesem Artikel)
+
+Aber verflucht sein sollen all‘ die Beispiele! Hoffentlich habt ihr es bis hier geschafft und
+wollt ebenfalls einen Blick in ‚libgolf.h‘ selber werfen. Wie ich ja bereits am Anfang gesagt
+hatte, dass ganze ging Los, weil ich etwas über ELF lernen wollte. Daher habe ich mich 
+besonders bemüht den Programmcode sauber zu kommentieren.
+
++--------------------------+
+|--[ Reproduzierbarkeit ]--|
++--------------------------+
+
+Ein Großteil der Recherche, fand unter Ubuntu 20.04 mit Kernel 5.4.0-65-generic statt. Außerdem
+habe ich verifiziert, dass die gleichen Ergebnisse unter Archlinux mit Kernel 5.11.11-arch1-1 
+erzielt werden konnten. Ich habe gehört, dass komisches Verhalten auf den WSL (Anm.d.Ü: 
+Linux-Erweiterung von Windows)  beobachtet werden kann, dies habe ich jedoch nicht weiter 
+verfolgt – vielleicht willst du das ja machen!
+
++--------------+
+|--[ Grüsse ]--|
++--------------+
+
+Ein besonderes „ahoy“ geht an jeden in Thugcrowd, Symbolcrash und die ‚‘Mental ELF Support Group‘!
+
++------------------+
+|--[ Referenzen ]--|
++------------------+
+
+[0] https://www.github.com/xcellerator/libgolf
+[1] https://n0.lol/ebm/1.html
+
+
+Glossar
+-------
+ISA – Instruction Set Architecture
+Syscall – Unter Linux ein Aufruf an den Kernel, z.B. zum öffnen von Dateien zum lesen oder schreiben
+Linker – Programm, das ausführbare Dateien und Bibliotheken miteinander verbindet
+C Structs – C Strukturen
+Linux Loader - Programmlader
+ELF – Executable and Linkable Format
+ELF-Header - ELF-Kopfzeile
+Programm-Header - Programm-Kopfzeile
+Kopfzeilen Headers, Beispiel: Programm-Kopfzeilen im Englischen program headers
+
+</pre></div></center></body></html>
