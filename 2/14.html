@@ -1,0 +1,112 @@
+<html>
+<head>
+<title>84 byte aarch64 ELF</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<style>
+ w { color: white;   }
+ k { color: #ff87ff; } /* pink   */
+ o { color: #87ffff; } /* blue   */
+ y { color: #ffff00; } /* yellow */
+ e { color: #888888; } /* grey   */
+ r { color: #fa4d57; } /* red    */
+</style>
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                    ┌───────────────────────┐
+                                                                    ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                    │ █   █ █ █ █   █       │
+                                                                    │ █   █ █ █ █▀▀▀▀       │
+                                                                    │ █   █   █ █     ▄     │
+                                                                    │                 ▄▄▄▄▄ │
+                                                                    │                 █   █ │
+                                                                    │                 █   █ │
+                                                                    │                 █▄▄▄█ │
+                                                                    │                 ▄   ▄ │
+                                                                    │                 █   █ │
+                                                                    │                 █   █ │
+                                                                    │                 █▄▄▄█ │
+                                                                    │                 ▄▄▄▄▄ │
+                                                                    │                   █   │
+84 byte aarch64 ELF                                                 │                   █   │
+~ netspooky                                                         └───────────────────█ ──┘
+
+I hadn't seen a golfed aarch64 binary so I decided to write one. It works the same as old 
+golfed ELFs in kernels < 5.8. aarch64 instructions are fixed width, which made it a bit more
+challenging. Shoutout to ixi & the fox.
+
+[: BASE64 POC :]
+
+base64 -d &lt;&lt;&lt; f0VMRuH//xAICIDSEAAAFAIAtwABAAAABAAAAAEAAAAcAAAAAAAAAAAA\
+AAAAAAAAAQAAAEAAOAABAADU8v//FwAAAADy//8XAAAAAIIAgNL6//8X > aarch64.elf;
+
+                                                     <k>┌</k> ELF Header <k>─────┐</k>
+                               <k>┌─────────┬───────────┤</k> 00: e_ident     <k>│</k>
+                       <e>┌─</e> 00:  7f 45 4c 46  .ELF <e>─┐</e>  <k>│</k>                 <k>│</k>
+                       <e>│</e>       <k>┌┬────────────────────┤</k> 04: ei_class    <k>│</k>
+                       <e>│</e>       <k>││ ┌┬─────────────────┤</k> 05: ei_data     <k>│</k>
+                       <e>│</e>       <k>││ ││ ┌┬──────────────┤</k> 06: ei_version  <k>│</k>
+<o>┌</o> aarch64 Code <o>─────┐</o>  <e>│</e>       <k>││ ││ ││ ┌┬───────────┤</k> 07: ei_osabi    <k>│</k>
+<o>│</o> 04: adr x1, #0x0  <o>├──────────┬─────────┐</o>        <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o>     <e>; 0x0 is the </e> <o>│</o>  <e>│</e>  04:  e1 ff ff 10  ....  <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o>     <e>; address of </e> <o>│</o>  <e>│</e>       <k>┌┬────────────────────┤</k> 08: ei_abivers  <k>│</k>
+<o>│</o>     <e>; the string.</e> <o>│</o>  <e>│</e>       <k>││ ┌──────┬───────────┤</k> 09: ei_pad      <k>│</k>
+<o>│</o> 08: mov x8, #0x40 <o>├──────────┬─────────┐</o>        <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o>     <e>; The write</e>   <o>│</o>  <e>│</e>  08:  08 08 80 d2  ....  <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o>     <e>; syscall. </e>   <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 0C: ei_pad      <k>│</k>
+<o>│</o> 0C: b 0x40        <o>├──────────┬─────────┐</o>        <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o>     <e>; Jump down </e>  <o>│</o>  <e>│</e>  0C:  10 00 00 14  ....  <e>│</e>  <k>│</k>     <e>; EXEC </e>     <k>│</k>
+<o>│</o>     <e>; to address</e>  <o>│</o>  <e>│</e>       <k>┌───┬─────────────────┤</k> 10: e_type      <k>│</k>
+<o>│</o>     <e>; 0x4C      </e>  <o>│</o>  <e>│</e>       <k>│   │ ┌───┬───────────┤</k> 12: e_machine   <k>│</k>
+<o>│</o>                   <o>│</o>  <e>│</e>  10:  02 00 b7 00  ....  <e>│</e>  <k>│</k>     <e>; aarch64</e>   <k>│</k>
+<o>│</o> <e>; This program   </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 14: e_version   <k>│</k>
+<o>│</o> <e>; moves address  </e> <o>│</o>  <e>│</e>  14:  01 00 00 00  ....  <e>│</e>  <k>│</k>                 <k>│</k>
+<o>│</o> <e>; 0x00, which is </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 18: e_entry     <k>│</k>
+<o>│</o> <e>; the ELF's magic</e> <o>│</o>  <e>│</e>  18:  04 00 00 00  ....  <e>│</e>  <k>│</k>     <e>;100000004</e>  <k>│</k>  <y>┌</y> Program Header <y>─┐</y>
+<o>│</o> <e>; bytes.         </e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 1C: p_type      <y>│</y>
+<o>│</o> <e>;                </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 1C: e_entry     <k>│</k>  <y>│</y>     <e>; PT_LOAD</e>   <y>│</y>
+<o>│</o> <e>; It then sets   </e> <o>│</o>  <e>│</e>  1C:  01 00 00 00  ....  <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; up a write     </e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 20: p_flags     <y>│</y>
+<o>│</o> <e>; syscall and    </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 20: e_phoff     <k>│</k>  <y>│</y>     <e>; PF_R</e>      <y>│</y>
+<o>│</o> <e>; prints using   </e> <o>│</o>  <e>│</e>  20:  1c 00 00 00  ....  <e>│</e>  <k>│</k>     <e>; 0x1C</e>      <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; file descriptor</e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 24: p_offset    <y>│</y>
+<o>│</o> <e>; 0, stdin.      </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 24: e_phoff     <k>│</k>  <y>│</y>     <e>; 0</e>         <y>│</y>
+<o>│</o> <e>;                </e> <o>│</o>  <e>│</e>  24:  00 00 00 00  ....  <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; x0 contains the</e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 28: p_offset    <y>│</y>
+<o>│</o> <e>; file descriptor</e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 28: e_shoff     <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; and is 0 when  </e> <o>│</o>  <e>│</e>  28:  00 00 00 00  ....  <e>│</e>  <k>│</k>     <e>; 0</e>         <k>│</k>  <y>│</y>     <e>; 0</e>         <y>│</y>
+<o>│</o> <e>; initialized.   </e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 2C: p_vaddr     <y>│</y>
+<o>│</o> <e>;                </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 2C: e_shoff     <k>│</k>  <y>│</y>     <e>;100000000</e>  <y>│</y>
+<o>│</o> <e>; It prints      </e> <o>│</o>  <e>│</e>  2C:  00 00 00 00  ....  <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; once and hangs,</e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 30: p_vaddr     <y>│</y>
+<o>│</o> <e>; because write  </e> <o>│</o>  <e>│</e>       <k>┌─────────┬───────────┤</k> 30: e_flags     <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; returns the    </e> <o>│</o>  <e>│</e>  30:  01 00 00 00  ....  <e>│</e>  <k>│</k>     <e>; 1</e>         <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; number of bytes</e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 34: p_paddr     <y>│</y>
+<o>│</o> <e>; written, 4 in  </e> <o>│</o>  <e>│</e>       <k>┌───┬─────────────────┤</k> 34: e_ehsize    <k>│</k>  <y>│</y>     <e>; junk</e>      <y>│</y>
+<o>│</o> <e>; this case, and </e> <o>│</o>  <e>│</e>       <k>│   │ ┌───┬───────────┤</k> 36: e_phentsize <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; tries to write </e> <o>│</o>  <e>│</e>  34:  40 00 38 00  @.8.  <e>│</e>  <k>│</k>     <e>; 0x38</e>      <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> <e>; again to 4, a  </e> <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 38: p_paddr     <y>│</y>
+<o>│</o> <e>; non-existent fd</e> <o>│</o>  <e>│</e>       <k>┌───┬─────────────────┤</k> 38: e_phnum     <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>       <k>│   │ ┌───┬───────────┤</k> 3A: e_shentsize <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> 38: svc #0x0      <o>├──────────┬─────────┐</o>        <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o>     <e>; Call the</e>    <o>│</o>  <e>│</e>  38:  01 00 00 d4  ....  <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o>     <e>; kernel  </e>    <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 3C: p_filesz    <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>       <k>┌───┬─────────────────┤</k> 3C: e_shnum     <k>│</k>  <y>│</y>     <e>; junk</e>      <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>       <k>│   │ ┌───┬───────────┤</k> 3E: e_shstrndx  <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o> 3C: b 0x4         <o>├──────────┬─────────┐</o>        <e>│</e>  <k>│</k>                 <k>│</k>  <y>│</y>                 <y>│</y>
+<o>│</o>     <e>; Jump back</e>   <o>│</o>  <e>│</e>  3C:  f2 ff ff 17  ....  <e>│</e>  <k>└─────────────────┘</k>  <y>│</y>                 <y>│</y>
+<o>│</o>     <e>; to 0x4   </e>   <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 40: p_filesz    <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>  40:  00 00 00 00  ....  <e>│</e>                       <y>│</y>                 <y>│</y>
+<o>│</o> <e>; Only works on</e>   <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 44: p_memsz     <y>│</y>
+<o>│</o> <e>; kernels < 5.8</e>   <o>│</o>  <e>│</e>  44:  f2 ff ff 17  ....  <e>│</e>                       <y>│</y>     <e>; junk</e>      <y>│</y>
+<o>│</o> <e>; See EBM4 for </e>   <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 48: p_memsz     <y>│</y>
+<o>│</o> <e>; more info.   </e>   <o>│</o>  <e>│</e>  48:  00 00 00 00  ....  <e>│</e>                       <y>│</y>                 <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 4C: p_align     <y>│</y>
+<o>│</o> 4C: mov x2, #0x4  <o>├──────────┬─────────┐</o>        <e>│</e>                       <y>│</y>     <e>; junk</e>      <y>│</y>
+<o>│</o>     <e>; *buf length</e> <o>│</o>  <e>│</e>  4C:  82 00 80 d2  ....  <e>│</e>                       <y>│</y>                 <y>│</y>
+<o>│</o>                   <o>│</o>  <e>│</e>       <y>┌─────────┬────────────────────────────────┤</y> 50: p_align     <y>│</y>
+<o>│</o> 50: b 0x38        <o>├──────────┬─────────┐</o>        <e>│</e>                       <y>│</y>                 <y>│</y>
+<o>└────</o> <e>; Go 2 0x38</e> <o>──┘</o>  <e>└─</e> 50:  fa ff ff 17  .... <e>─┘</e>                       <y>└─────────────────┘</y>
+
+</pre></body></html>
