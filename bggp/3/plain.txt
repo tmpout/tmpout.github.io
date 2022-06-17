@@ -1,0 +1,355 @@
+Screen Reader Version: https://tmpout.sh/bggp/3/screen.txt
+Plaintext Version: https://tmpout.sh/bggp/3/plain.txt
+HTML Version: https://tmpout.sh/bggp/3/
+                                                                                                    
+                                                                                                    
+                                                                                                    
+               B  I  N  A  R  Y     G  O  L  F     G  R  A  N  D     P  R  I  X     3               
+              ┌─────┐ ┌──────┐┌──────┐┌──────┐        ┌──────┐┌──────┐┌──────┐┌──────┐              
+              │─────┘┐│       │       │      │        ┌──────┘│      │┌──────┘┌──────┘              
+              │      ││──────┐│──────┐│──────┘        │       │      ││       │                     
+              └──────┘└──────┘└──────┘└               └──────┘└──────┘└──────┘└──────┘              
+                                                                                                    
+                            ││┌──────┐┌──────┐┌──────┐┌──────┐┌       ││                            
+                              │       │       ┌──────│└──────┐│──────┐                              
+                              │       │       │      ││      ││      │                              
+                              └──────┘└       └──────┘└──────┘└      ┘                              
+                                                                                                    
+                                  June 17th 2022->August 19th 2022                                  
+                                                                                                    
+Brought to you by the Binary Golf Association (@binarygolf) in collaboration with tmp.0ut (@tmpout).
+                                                                                                    
+I N T R O ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  You're having a late night, playing on your computer.
+  You try to open a file, something you've done countless times.
+  Suddenly, the program you're using stops responding.
+  Maybe your entire computer crashes.
+  Your heart skips a beat.
+  What's wrong?
+  What is it about this file that caused a crash?
+
+G O A L ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  The goal of the 3rd Annual Binary Golf Grand Prix (BGGP3) is to find the smallest file which will
+  crash a specific program.
+
+I N S P I R A T I O N ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  Inspirational Prompts:
+  
+    What's the smallest ROM that crashes your favorite emulator?
+    What's the smallest document that crashes Word?
+    What's the smallest video that crashes VLC?
+    What's the smallest plugin that crashes Ableton?
+    What's the smallest file that crashes your browser?
+    What's the smallest WAV that crashes Audacity?
+    What's the smallest ELF that crashes Linux?
+    What's the smallest EXE that crashes Windows?
+
+D E F I N I T I O N S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  Before we go any further, let's define a few things.
+
+  -- What is a file? 
+
+  For our purposes, a file is any collection of 1 or more bytes, which can be saved to disk and 
+  provided as input to a program. The philosophical concept of a "file" is something else that
+  you can reflect on at a later time.
+
+  -- What is software?
+
+  Software is a set of instructions that runs on hardware, real or virtualized, which can take
+  input, and produce output.
+
+  -- What is a crash?
+
+  When a program "crashes", it is brought to a non-recoverable state. This usually leads to the
+  program stopping. If the program cannot stop itself, the operating system tries to stop it.
+
+  There are many reasons that a program can crash. Here are some of the most common:
+
+  Infinite Loop       -- This means that the program is stuck in it's own logic and is unable to 
+                         accept any new input.
+
+  Segmentation Fault  -- This means that the program tried to access memory which does not exist or
+                         that the program does not have the proper permissions to access. A classic
+                         example is a NULL pointer exception, which means that the program tried to
+                         access memory at address 0.
+  
+  Unhandled Exception -- This means that an error occurred that the program did not know how to 
+                         handle, so it terminates instead of continuing in an unknown state.
+
+R U L E S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  For the File:
+  - The file must be 1 or more bytes.
+  - The file must be no more than 4096 bytes
+
+  For the Software:
+  - The target software must be published prior to June 17th, 2022.
+  - Any software running on a machine that does not belong to you will not be accepted.
+    - This includes web services, network infrastructure, or other random devices online.
+  - If your target is a web service or other server, it must be locally hosted.
+    - You should also provide a setup guide or install script for any self hosted software.
+  - Crashes should work on the free-ware or trial version of the software if available.
+    - If we cannot set up the software or it is cost-prohibitive to test, we may reject your entry.
+  - Software must be able to take input from a command line, as an argument in a config file, or 
+    through a mechanism to open files, such as an open prompt or drag & drop.
+
+  For the Crash:
+  - The crash must be reproducable in a test lab.
+
+S U B M I T ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  [ Scoring ]
+
+  Scores will be calculated using the following formula:
+
+    4096 - The number of bytes in your file
+  
+  Example: If your entry is 256 bytes
+
+    4096 - 256 = 3840 points
+
+  [ Bonus Points ]
+
+  Bonus points will be awarded for the following additional accomplishments:
+
+    +1024 pts, if you submit a writeup about your process and details about the crash
+    +1024 pts, if the program counter is all 3's when the program crashes
+    +2048 pts, if you hijack execution and print or return "3"
+    +4096 pts, if you author a patch for your bug which is merged before the end of the competition
+
+  All entries will be publicly disclosed at the end of the competition. If you do not wish to have
+  your entry published, do not submit it.
+
+  [ Entry Template ]
+
+  Please fill out this template for your submission.
+
+  ---BEGIN BGGP3 ENTRY---
+  Name or handle: 
+  Contact Info: 
+  Website, twitter, other online presence: 
+  Target Software and Version: 
+  Description of Target Software's Environment (Platform/OS, Setup Instructions, etc.): 
+  Target File Type: 
+  SHA256 Hash:
+  Brief Description of Crash:
+  Was this a new crash, or a known bug?
+  Link to PoC video, screenshot, or console output, if any:
+  Link to writeup, if any:
+  CVE or other acknowledgement, if any:
+  File contents (base64 encoded please):
+  ---END BGGP3 ENTRY---
+
+  Your entry's score will be associated with a specific software, and if necessary, software
+  version. Please only submit one entry per software.
+
+  We may contact you for questions on reproducibility, so please include your contact information
+  in your submission.
+
+  All entries should be sent via email to bggp [ AT ] tmpout.sh
+
+E X A M P L E S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  Here are some basic examples of files that crash programs.
+  
+  [ python3 ]
+
+  This is a pyc file that crashes Python3 
+
+    $ python3 --version
+    Python 3.8.10
+    $ python3 test.pyc
+    Segmentation fault (core dumped)
+    $ xxd test.pyc
+    00000000: 550d 0d0a 0000 0000 4d81 4f62 4200 0000  U.......M.ObB...
+    00000010: e300 0000 0000 0000 0000 0000 0000 0000  ................
+    00000020: 0002 0000 0040 0000 0073 2400 0000 6400  .....@...s$...d.
+    00000030: 5a00 6401 5aaa 6500 6501 6b02 7218 6502  Z.d.Z.e.e.k.r.e.
+    00000040: 6402 8301 0100 6502 6403 8301 0100 6404  d.....e.d.....d.
+    00000050: 5300 2905 e905 0000 00e9 0400 0000 5a04  S.)...........Z.
+    00000060: 4e6f 7065 7a0f 4f4b 4159 2059 4541 4820  Nopez.OKAY YEAH
+    00000070: 4845 4c4c 4f4e 2903 da01 61da 0162 da05  HELLON)...a..b..
+    00000080: 7072 696e 74a9 0072 0600 0000 7206 0000  print..r....r...
+    00000090: 00fa 1f2f 686f 6d65 2f75 7365 722f 7079  .../home/user/py
+    000000a0: 7468 6f6e 2f70 7963 7465 7374 2f6f 6b2e  thon/pyctest/ok.
+    000000b0: 7079 da08 3c6d 6f64 756c 653e 0100 0000  py..<module>....
+    000000c0: 7308 0000 0004 0104 0108 0108 01         s............
+
+  Let's say you've found this crash, what could you do to make this file smaller?
+  You could cut the file in half and see if it still crashes:
+
+    $ xxd test2.pyc
+    00000000: 550d 0d0a 0000 0000 4d81 4f62 4200 0000  U.......M.ObB...
+    00000010: e300 0000 0000 0000 0000 0000 0000 0000  ................
+    00000020: 0002 0000 0040 0000 0073 2400 0000 6400  .....@...s$...d.
+    00000030: 5a00 6401 5aaa 6500 6501 6b02 7218 6502  Z.d.Z.e.e.k.r.e.
+    00000040: 6402 8301 0100 6502 6403 8301 0100 6404  d.....e.d.....d.
+    00000050: 5300 2905 e905 0000 00e9 0400 0000 5a04  S.)...........Z.
+
+  Except now when you run it this error appears:
+
+    $ python3 test2.pyc
+    RuntimeError: Bad code object in .pyc file
+
+  This means that the program relies on some of the data you removed. But what data?
+
+  You can keep removing pieces of the file, or you can try to look up the file format and see if
+  there is any public documentation about it.
+
+  You should investigate how the file was created, and how it is supposed to be used by your target
+  software. In the case of pyc files, they are generated by Python when a script imports another 
+  script. Once you know a bit more about the context of the file in the grand scheme of things, the
+  format will begin to make more sense.
+
+  You can also debug the program and figure out where exactly it crashes, then work backwards to 
+  figure out what pieces lead to the crash.
+
+  Sometimes you might even have source code and the option to build your program from source. 
+  This is extremely helpful, as building with debug info available can help inform what is really
+  going on with the program. GDB is an excellent tool for debugging with source code available.
+
+  It's always good to learn how to triage and understand your own crashes, but in some cases you
+  might not always have the option. It's up to you to figure out what the best approach will be,
+  you are a bug hunter now.
+
+  [ nasm - CVE-2019-8343 ]
+
+  To enter BGGP3, you don't have to find your own crashes. You can explore bugs in software that
+  you use and see if there are any known bugs with PoCs that you can play with.
+
+  Check out this CVE for nasm: https://www.cvedetails.com/cve/CVE-2019-8343/
+  """
+  In Netwide Assembler (NASM) 2.14.02, there is a use-after-free in paste_tokens in 
+  asm/preproc.c.
+  """
+  The 15 byte Proof of Concept to reproduce is:
+
+  r%{]%%%[ %+}%+`
+
+  Putting this into test.asm results in this crash:
+
+    $ nasm test.asm
+    test.asm:1: warning: unterminated string [-w+other]
+    test.asm:1: error: unterminated %[ construct
+    test.asm:1: warning: unterminated string [-w+other]
+    free(): double free detected in tcache 2
+    Aborted (core dumped)
+
+  Is it possible to make this crash smaller? Can you remove characters, or use different ones?
+  What does each character mean? How can this throw off the parser and invoke a double free?
+  There's only one way to find out :)
+
+  PROTIP: Look at GitHub issues for your favorite open source projects. Are there any issues that
+          are related to the software crashing? Can you reproduce their crash?
+
+T I P S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+Triaging Crashes 
+
+  You may want to learn how to triage your own crashes. Here are two useful tools for both
+  Linux and Windows.
+
+  [ gdb ]
+  - Can run or attach to a program currently running on Linux
+  - If you're new to gdb, use gef! https://github.com/hugsy/gef
+  - Here are some basic commands to get you started:
+
+    $ gdb --args ./myprogram -f myfile     -- Start the program with arguments
+    gef> starti                            -- Start at the first instruction
+    gef> stepi                             -- Step 1 assembly instruction
+    gef> break *0x400000                   -- Set a breakpoint on address 0x400000
+    gef> continue                          -- Continue execution, will stop at breakpoints
+    gef> vmmap                             -- Check memory map
+    gef> hexdump byte --size 256 0x400000  -- See a hex dump of bytes at a address 0x400000
+    gef> p *object                         -- Show details of object
+    gef> search-pattern 0x41414141         -- Search for bytes \x41\x41\x41\x41 ("AAAA") in memory
+
+  More Info:
+  https://gef.readthedocs.io/en/master/
+  https://azeria-labs.com/debugging-with-gdb-introduction/
+
+  [ windbg ]
+  - Can run or attach to a program currently running on Windows
+  - Here are some basic commands to get you started:
+
+    t                           -- Step 1 assembly instruction, steps into function calls
+    bp 0x400000                 -- Set a breakpoint on address 0x400000
+    g                           -- Continue execution, will stop at breakpoints
+    !vadump                     -- Dump memory pages/info
+    db 400000                   -- See a hex dump of bytes at a address 0x400000
+    s -d 0 L?80000000 41414141  -- Search for bytes \x41\x41\x41\x41 ("AAAA") in memory
+
+  More Info:
+  https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/getting-started-with-windbg
+
+T O O L S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+  [ binwalk ]
+  
+  LINK: https://github.com/ReFirmLabs/binwalk
+
+  Binwalk is a useful tool to get information on files.
+  
+  You can probably install through your package manager, otherwise install from the git repo.
+  
+  Compare differences between multiple files:
+
+    $ binwalk -W file1.bin file2.bin file3.bin
+
+  [ honggfuzz ]
+
+  LINK: https://github.com/google/honggfuzz
+
+  This is an easy-to-use fuzzer that can do basic mutations on a file
+
+  Install On Linux:
+  
+    $ sudo apt update 
+    $ sudo apt install clang libbfd-dev libunwind-dev 
+    $ git clone https://github.com/google/honggfuzz 
+    $ cd honggfuzz
+    $ make
+  
+  In the honggfuzz directory, you can now run the honggfuzz binary.
+  
+  Basic example:
+  Let's say you have a binary called target, which reads a file like this
+  
+    $ target -f yourfile.bin
+  
+  This is the most bare bones way to set up fuzzing for it:
+  - Create a directory to put your file inputs into called "inputs/"
+  - Grab the full path of the target binary
+  - Run honggfuzz with the appropriate flags
+  
+    $ honggfuzz -i ./inputs/ -x -- /path/to/your/target -f ___FILE___
+  
+  There's a lot more you can do, read the docs or the `--help` option.
+
+  There are also a lot more fuzzing tools you can use as well. Go explore.
+
+O T H E R   R E S O U R C E S ││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││││
+
+- https://github.com/netspooky/BGGP/ - Git repo of past entries for BGGP
+
+- https://github.com/corkami/pics - Resources for various file formats
+
+- http://fileformats.archiveteam.org/wiki/Main_Page - File formats wiki
+
+- https://youtu.be/VVdmmN0su6E What is a File Format? - LiveOverflow
+
+- LiveOverflow's Sudo Vulnerability Walkthrough Playlist. Covers many relevant concepts for BGGP3.
+  https://www.youtube.com/watch?v=TLa2VqcGGEQ&list=PLhixgUqwRTjy0gMuT4C3bmjeZjuNQyqdx
+
+- https://youtu.be/hdCs6bPM4is Funky File Formats - Ange Albertini
+
+- https://youtu.be/VLmrsfSE-tA Adventures in Binary Golf - netspooky
+
+- https://h0mbre.github.io/Fuzzing-Like-A-Caveman/ - h0mbre's "Fuzzing Like A Caveman" blog series
+
+
+Promo Art by @yoffdog - Full Resolution Version: https://tmpout.sh/bggp/3/bggp3-final1.jpg
