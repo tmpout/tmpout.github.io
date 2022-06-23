@@ -269,7 +269,7 @@ Triaging Crashes
     gef> search-pattern 0x41414141         -- Search for bytes \x41\x41\x41\x41 ("AAAA") in memory
 
   More Info:
-  https://gef.readthedocs.io/en/master/
+  https://hugsy.github.io/gef/
   https://azeria-labs.com/debugging-with-gdb-introduction/
 
   [ windbg ]
@@ -340,6 +340,10 @@ O T H E R   R E S O U R C E S ││││││││││││││││�
 
 - http://fileformats.archiveteam.org/wiki/Main_Page - File formats wiki
 
+- https://wiki.multimedia.cx/index.php/Main_Page - Multimedia Wiki, Audio/Video/Container Formats
+
+- https://formats.kaitai.io/ - Kaitai File Format Diagrams
+
 - https://youtu.be/VVdmmN0su6E What is a File Format? - LiveOverflow
 
 - LiveOverflow's Sudo Vulnerability Walkthrough Playlist. Covers many relevant concepts for BGGP3.
@@ -350,6 +354,8 @@ O T H E R   R E S O U R C E S ││││││││││││││││�
 - https://youtu.be/VLmrsfSE-tA Adventures in Binary Golf - netspooky
 
 - https://h0mbre.github.io/Fuzzing-Like-A-Caveman/ - h0mbre's "Fuzzing Like A Caveman" blog series
+
+- https://ropemporium.com/ - If you've never done a Linux binary exploit, check out ROPemporium
 
 
 Promo Art by @yoffdog - Full Resolution Version: https://tmpout.sh/bggp/3/bggp3-final1.jpg
