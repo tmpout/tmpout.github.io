@@ -241,7 +241,7 @@ Begin code block.
 End code block.
 
 More Info:
-https://gef.readthedocs.io/en/master/
+https://hugsy.github.io/gef/
 https://azeria-labs.com/debugging-with-gdb-introduction/
 
 Win DBG.
@@ -321,6 +321,10 @@ https://github.com/corkami/pics - Resources for various file formats
 
 http://fileformats.archiveteam.org/wiki/Main_Page - File formats wiki
 
+https://wiki.multimedia.cx/index.php/Main_Page - Multimedia Wiki, Audio/Video/Container Formats
+
+https://formats.kaitai.io/ - Kaitai File Format Diagrams
+
 https://youtu.be/VVdmmN0su6E What is a File Format? - LiveOverflow
 
 LiveOverflow's Sudo Vulnerability Walkthrough Playlist. Covers many relevant concepts for BGGP3.
@@ -331,5 +335,7 @@ https://youtu.be/hdCs6bPM4is Funky File Formats - Ange Albertini
 https://youtu.be/VLmrsfSE-tA Adventures in Binary Golf - netspooky
 
 https://h0mbre.github.io/Fuzzing-Like-A-Caveman/ - h0mbre's "Fuzzing Like A Caveman" blog series
+
+https://ropemporium.com/ - If you've never done a Linux binary exploit, check out ROPemporium
 
 Promo Art by @yoffdog - Full Resolution Version: https://tmpout.sh/bggp/3/bggp3-final1.jpg
