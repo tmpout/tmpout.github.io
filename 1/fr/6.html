@@ -92,7 +92,7 @@ Pourquoi le désassembleur a un tel comportement ?
 En fait, \x48\x31 est censé représenter une opération xor[2], les octets suivants
 définissent les registres utilisés.
 
-Donc ses octets "d'initialisation" se collent aux octets qui suivent, qui sont eux
+Donc ces octets "d'initialisation" se collent aux octets qui suivent, qui sont eux
 aussi des octets "d'initialisation", et donnent des données incorrectes au lieu
 des instructions voulues !
 
