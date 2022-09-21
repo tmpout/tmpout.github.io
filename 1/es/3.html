@@ -9,10 +9,12 @@
       margin: 0 auto;
       padding: 1em 0 1em 0;
     }
-/*
+
+
 @font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
        pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
-*/
+
+
        pre { font-size: 14px; line-height: 1.0; }
          a { color: #93ffd7; text-decoration: none; }
 </style>
@@ -39,23 +41,37 @@ o_/_________________________________________________________________________\_o
 | https://github.com/d3npa/hacking-trix-rust/blob/main/elf/ptnote-infector
 +------------------------------------------------------------------------------
 
-En el blog SymbolCrash leí sobre una técnica para inyectar shellcode en un binario ELF mediante la conversión de una cabecera PT_NOTE a PT LOAD.
-Esto sonaba interesante y no sabía mucho acerca del formato ELF, así que lo tomé como una oportunidad para aprender muchas cosas a la vez.
+En el blog SymbolCrash leí sobre una técnica para inyectar shellcode en un
+binario ELF mediante la conversión de una cabecera PT_NOTE a PT LOAD.
+Esto sonaba interesante y no sabía mucho acerca del formato ELF, así que lo
+tomé como una oportunidad para aprender muchas cosas a la vez.
 
-Para este proyecto cree una pequeña y muy incompleta librería la cual llamé mental_elf,que permite parsear y escribir metadatos ELF fácilmente. Pienso que el código de la librería es bastante sencillo y fácil de entender, así que no voy a escribir sobre ello.
+Para este proyecto cree una pequeña y muy incompleta librería la cual llamé
+mental_elf,que permite parsear y escribir metadatos ELF fácilmente. Pienso que
+el código de la librería es bastante sencillo y fácil de entender, así que no
+voy a escribir sobre ello.
 
 ====[ visión general ]============================================================
 
-Como insinuá el título, esta técnica de infección implica convertir la cabecera de programa ‘PT_NOTE’ de un ELF a ‘PT_LOAD’ para poder correr shellcode.
+
+Como insinuá el título, esta técnica de infección implica convertir la cabecera
+de programa ‘PT_NOTE’ de un ELF a ‘PT_LOAD’ para poder correr shellcode.
 Esta infección esta compuesta por tres pasos:
 
 - Adjuntar el shellcode al final del archivo ELF.
 - Cargar el shellcode a una dirección especifica en memoria virtual.
-- Cambiar el punto de entrada del ELF a la dirección de memoria del paso anterior para que el shellcode sea ejecutado primero.
+- Cambiar el punto de entrada del ELF a la dirección de memoria del paso
+anterior para que el shellcode sea ejecutado primero.
 
-Además, el shellcode debería ser parcheado para cada ELF de modo tal que regrese mediante un salto al punto de entrada original del ELF que sirve como host, de esta manera, permitiéndole al host ejecutar normalmente luego de que el shellcode termine de correr.
+Además, el shellcode debería ser parcheado para cada ELF de modo tal que
+regrese mediante un salto al punto de entrada original del ELF que sirve como
+host, de esta manera, permitiéndole al host ejecutar normalmente luego de que
+el shellcode termine de correr.
 
-El shellcode podría ser cargado a memoria virtual mediante una cabecera PT_LOAD. Insertar una nueva cabecera de programa en un archivo ELF probablemente rompería muchos offsets a lo largo del binario, sin embargo, usualmente es posible reutilizar una cabecera PT_NOTE sin romper el binario.
+El shellcode podría ser cargado a memoria virtual mediante una cabecera
+PT_LOAD. Insertar una nueva cabecera de programa en un archivo ELF
+probablemente rompería muchos offsets a lo largo del binario, sin embargo,
+usualmente es posible reutilizar una cabecera PT_NOTE sin romper el binario.
 
 Eh aquí un apartado sobre la Sección Nota en la especificación del formato ELF:
 
@@ -69,7 +85,9 @@ Eh aquí un apartado sobre la Sección Nota en la especificación del formato EL
 Eh aquí dos salvedades de las que me di cuenta:
 
 - Esta técnica simplista no funcionara con PIE.
-- El runtime del lenguaje Go espera una sección PT_NOTE valida que contenga información de versión para que pueda correr, así que esta técnica no puede ser usada en binarios hechos en Go.
+- El runtime del lenguaje Go espera una sección PT_NOTE valida que contenga
+información de versión para que pueda correr, así que esta técnica no puede ser
+usada en binarios hechos en Go.
 
 Nota: PIE puede ser desactivado en cc con ‘-no-pie’ o en rustc con ‘-C relocation-model=static’
 
@@ -78,11 +96,20 @@ Nota: PIE puede ser desactivado en cc con ‘-no-pie’ o en rustc con ‘-C rel
 El shellcode provisto está escrito para el Netwide Assembler (NASM).
 ¡Asegurate de instalar ‘nasm’ antes de correr el Makefile!
 
-Para crear shellcode apropiado para esta inyección, hay algunas cosas que tener en cuenta. La sección 3.4.1 del AMD64 System V ABI dice que los registros rbp, rsp y rdx deben tener asignados valores correctos antes de la entrada. Esto puede ser logrado mediante el uso común de instrucciones push y pop en el shellcode.
+Para crear shellcode apropiado para esta inyección, hay algunas cosas que tener
+en cuenta. La sección 3.4.1 del AMD64 System V ABI dice que los registros rbp,
+rsp y rdx deben tener asignados valores correctos antes de la entrada. Esto
+puede ser logrado mediante el uso común de instrucciones push y pop en el
+shellcode.
 
-Mi shellcode no hace uso de rbp o rsp, y asignar rdx a cero antes de retornar también funciono.
+Mi shellcode no hace uso de rbp o rsp, y asignar rdx a cero antes de retornar
+también funciono.
 
-Ademas, el shellcode debe ser parcheado de tal manera que puede regresar mediante un salto al punto de entrada original del host luego de terminar su ejecución. Para hacer que el parcheo sea mas fácil, el shellcode puede ser diseñado para correr mas allá del final del archivo, mediante la escritura del mismo de arriba hacia abajo, o saltando a una etiqueta vaciá al final:
+Ademas, el shellcode debe ser parcheado de tal manera que puede regresar
+mediante un salto al punto de entrada original del host luego de terminar su
+ejecución. Para hacer que el parcheo sea mas fácil, el shellcode puede ser
+diseñado para correr mas allá del final del archivo, mediante la escritura del
+mismo de arriba hacia abajo, o saltando a una etiqueta vaciá al final:
 
     +--------------------------------------------------------------------------
     | main_tasks:
@@ -94,7 +121,10 @@ Ademas, el shellcode debe ser parcheado de tal manera que puede regresar mediant
     +--------------------------------------------------------------------------
 
 Con este diseño, parchear es tan fácil como adjuntar una instrucción de salto.
-Sin embargo, en x86_64, jmp no puede recibir un operando de 64 bits, en cambio, el destino es almacenado en rax y la instrucción ‘jmp rax’ es utilizada. Este fragmento de rust parchea un vector de byte del shellcode dado, para adjuntar un salto a entry_point:
+Sin embargo, en x86_64, jmp no puede recibir un operando de 64 bits, en cambio,
+el destino es almacenado en rax y la instrucción ‘jmp rax’ es utilizada. Este
+fragmento de rust parchea un vector de byte del shellcode dado, para adjuntar
+un salto a entry_point:
 
     +--------------------------------------------------------------------------
     | fn patch_jump(shellcode: &mut Vec<u8>, entry_point: u64) {
@@ -109,12 +139,17 @@ Sin embargo, en x86_64, jmp no puede recibir un operando de 64 bits, en cambio, 
 ====[ infectador ]===============================================================
 
 El infectador se encuentra en src/main.rs.
-Está escrito en un formato sencillo de seguir de arriba hacia abajo, así que si entendiste la visión general entonces debería ser entendible. También agregué comentarios para ayudar.
-El código utiliza mi librería mental_elf para abstraer los detalles de lectura y escritura de archivos, para lograr que sea mas sencillo entender la técnica utilizada.
+Está escrito en un formato sencillo de seguir de arriba hacia abajo, así que si
+entendiste la visión general entonces debería ser entendible. También agregué
+comentarios para ayudar.
+El código utiliza mi librería mental_elf para abstraer los detalles de lectura
+y escritura de archivos, para lograr que sea mas sencillo entender la técnica
+utilizada.
 
 En resumen, el código realiza las siguientes acciones:
 
-- Toma 2 parámetros desde consola. El ELF a inyectar y el archivo que contiene el shellcode.
+- Toma 2 parámetros desde consola. El ELF a inyectar y el archivo que contiene
+el shellcode.
 - Lee el ELF y las cabeceras de programa del archivo ELF.
 - Parchea el shellcode con un ‘jmp’ al punto de entrada original.
 - Adjunta el shellcode parcheado al ELF.
@@ -122,7 +157,12 @@ En resumen, el código realiza las siguientes acciones:
 - Cambia el punto de entrada del ELF para que apunte al comienzo del shellcode.
 - Guarda las estructuras de cabecera modificadas en el archivo ELF.
 
-Cuando un archivo ELF infectado es ejecutado, el cargador de programas encargado de cargar el ELF, va a mapear secciones del archivo ELF en memoria virtual – el PT_LOAD que nosotros creamos se encargara de que nuestro shellcode sea cargado y ejecutado. El punto de entrada del ELF comienza la ejecución del shellcode. Luego el shellcode termina, y saltara al punto de entrada original, permitiendo al binario ejecutar su código original.
+Cuando un archivo ELF infectado es ejecutado, el cargador de programas
+encargado de cargar el ELF, va a mapear secciones del archivo ELF en memoria
+virtual – el PT_LOAD que nosotros creamos se encargara de que nuestro shellcode
+sea cargado y ejecutado. El punto de entrada del ELF comienza la ejecución del
+shellcode. Luego el shellcode termina, y saltara al punto de entrada original,
+permitiendo al binario ejecutar su código original.
 
     +--------------------------------------------------------------------------
     | $ make
@@ -149,7 +189,10 @@ Cuando un archivo ELF infectado es ejecutado, el cargador de programas encargado
 
 ====[ conclusión ]================================================================
 
-¡Este fue un proyecto muy divertido! Aprendí muchísimo sobre Rust, ELF y los virus en general. Gracias a netspooky, sblip, TMZ y otros miembros de tmp.out por enseñarme, ayudarme a depurar y motivarme para llevar a cabo este proyecto <3.
+¡Este fue un proyecto muy divertido! Aprendí muchísimo sobre Rust, ELF y los
+virus en general. Gracias a netspooky, sblip, TMZ y otros miembros de tmp.out
+por enseñarme, ayudarme a depurar y motivarme para llevar a cabo este proyecto
+<3.
 
 Enlaces adicionales:
 
