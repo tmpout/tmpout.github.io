@@ -1,0 +1,354 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+ 
+ _ .-') _     ('-.   ('-.     _ .-') _        .-. .-')               .-') _     ('-.    .-')
+( (  OO) )  _(  OO) ( OO ).-.( (  OO) )       \  ( OO )             (  OO) )  _(  OO)  ( OO ).
+ \     .'_ (,------./ . --. / \     .'_        ;-----.\  ,--.   ,--./     '._(,------.(_)---\_)
+ ,`'--..._) |  .---'| \-.  \  ,`'--..._)       | .-.  |   \  `.'  / |'--...__)|  .---'/    _ |
+ |  |  \  ' |  |  .-'-'  |  | |  |  \  '       | '-' /_).-')     /  '--.  .--'|  |    \  :` `.
+ |  |   ' |(|  '--.\| |_.'  | |  |   ' |       | .-. `.(OO  \   /      |  |  (|  '--.  '..`''.)
+ |  |   / : |  .--' |  .-.  | |  |   / :       | |  \  ||   /  /\_     |  |   |  .--' .-._)   \
+ |  '--'  / |  `---.|  | |  | |  '--'  /       | '--'  /`-./  /.__)    |  |   |  `---.\       /
+ `-------'  `------'`--' `--' `-------'        `------'   `--'         `--'   `------' `-----'
+                                                                                  ~ xcellerator
+
+Selamlar ELF fanatikleri! Bu yazımda sizlerle bir süredir üzerinde çalıştığım libGolf'ü anlatacağım.
+ELF çalıştırabilir dosyalarını anlamak ve program başlıklarını öğrenmek için aracı olsun diye 
+başladığım bu kütüphane, bir süre sonra makul sayılacak seviyede pratik bir şeye dönüştü. 
+Bu kütüphane sadece ELF başlığı, bir tane program başlığı ve bir tane yüklenebilir segmentten oluşan
+çalıştırabilir dosya oluşturmak için kolaylık sağlıyor. Başlıkların içerdiği alanlar varsayılanda 
+makul ve meşru değerlere ayarlanıyor fakat bu varsayılanlar değerleri kurcalamanın çok basit bir yolu var
+ve bu yazı da tamamen bunun için var! Hangi byte'ların gerçekten gerekli olduğunu ve hangi byte'ların
+Linux yükleyicisi tarafından görmemezlikten gelindiğini ve LibGolf'u kullanarak bunları kesin olarak
+nasıl belirlediğimi sizlere göstereceğim. Yükleyici neyse ki Linux araç setinin içerisinde
+en az seçici parser'lardan biri olduğu ortaya çıktı. Yazı bitmeden, yükleyicinin mutlu bir şekilde ürettiğimiz
+ELF dosyalarını yürüttüğüne ve istediğimiz şekilde çalıştığına fakat bir çok popüler statik analiz aracının da
+yine aynı ELF dosyaları tarafından bozulduğuna şahit olacağız.  
+
++---------------------------+
+|--[ LibGolf - Giriş ]--|
++---------------------------+
+
+Bir süredir NASM'da elle ELF dosyalar üretmeye çalışıyordum. Baya bir süre bu bana eğlenceli geliyordu
+ve NASM ile üretmenin bir çok yararı vardı. Fakat farkettim ki C yapılarını kullanmanın vereceği eğlenceyi
+kaçırıyordum. Özellikle, ki bir çok okuyucunun da bilebileceği gibi, &lt;linux/elf.h&gt; başlığı çok güzel
+şeylerle doluydu. Örneğin `Elf64_Ehdr` ve `Elf32_Phdr` yapıları.
+
+Bir çok yardımcı olabilecek başlığın boşa gitmesini istemiyordum ve sıkı bir seçim yaptım. Ardından
+kullanımı için bu kütüphaneye yerleştirdim. Bu eforlar ile birlikte, bir çalıştırabilir dosyaya 
+kolayca shellcode yerleştirebilmeyi sağlayan libgolf.h ortaya çıktı. Ne düşündüğünüzü biliyorum. 
+'kulağa sadece kötü bir linker'mış gibi geliyor!' diyor olabilir ve belki de haklı olabilirsiniz.
+Yine de buradaki güzel olan şey, kodunuzu derlemeden önce başlıkları düzenlemenize olanak sağlamasıdır.
+
+Nasıl çalıştığına dair hadi bir örnek yapalım. Eğer siz de evinizde denemek istiyorsanız, bütün kaynak
+kodlarını şurada bulabilirsiniz [0]. Yazı boyunca verilen örnekleri de 'examples/01_dead_bytes' dizininde
+bulabilirsiniz. Kolay ve en basit kurulum iki dosya gerektirir. Bir C kaynak koduna ve bir shellcode.h 
+dosyasına ihtiyacınız olacak. Shellcode örneği olarak eski vefalı 'b0 3c 48 31 ff 0f 05' kodunu kullanmak
+istiyorum. Bu shellcode şu şekilde disassemble olur;
+
+        mov al, 0x3c    @ b0 3c
+        xor rdi, rdi    @ 48 31 ff
+        syscall         @ 0f 05
+
+(Buna shellcode demek biraz garip bir tabir olduğunu biliyorum evet.)
+
+Aslına bakarsanız bu kod sadece exit(0) çağrısını yapıyor. Bu bizim için doğru çalıştığını
+kontrol etmesi kolay bir örnek çünkü sadece terminalde `$?` yazarak yapabiliriz.
+
+Siz de başka shellcode'ları deneyebilirsiniz. Fakat shellcode'un PIC olduğundan emin olun çünkü henüz
+yeri değiştirebilir sembolleri desteklemiyor. Shellcode'ları shellcode.h içindeki buf[] adlı değişkene
+atayabilirsiniz. Eğer sadece shellcode'nuzu çalıştıran bir dosya istiyorsanız, şunlar sizin için yeterli olacaktır;
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            GEN_ELF();
+            return 0;
+        }
+
+Bu kodu derleyip çalıştırdığınızda size bir '.bin' dosyası verecek ve bu dosya sizin yeni ELF'iniz!
+Acayip basit dimi? Bu kadar sadelik çoğu zaman sıkıcı gelir aynı şu anda olduğu gibi. O yüzden başka
+ilgi çekici şeyler yapmaya devam edelim.
+
+Tabi devam etmeden önce az önce yukarıda gördüğünüz 'INIT_ELF' ve 'GEN_ELF' makrolarının
+arka planda neler yaptığına bakalım. INIT_ELF() iki argüman alır, bunlar ISA(Komut seti mimarisi)
+ve mimaridir. Şu anda LibGolf'un desteklediği komut seti mimarileri X86_64, ARM32 ve AARCH64'tür.
+32 veya 64 mimari için de geçerlidir. Öncelikle hesabı kitabı tutacak yapıları oluşturur. Başlıklar için 
+Elf_32* veya Elf64_* objelerinin kullanılacağına karar verir. Ayrıca ELF ve program başlıkları için 
+kullanılacak pointer'ları otomatik olarak atar. Bunlar ehdr ve phdr olarak adlandırılmaktadır.
+Bunları alanları kolayca modifiye etmek için kullanacağız. Bunların yanı sıra shellcode'u buffer'dan
+kopyalar ve geçerli giriş noktasını hesaplamadan önce program başlıklarını oluşturur.
+GEN_ELF() makrosuna gelecek olursak, bu makro sadece ekrana işe yarar bilgileri ekrana basar ve
+uygun yapıları '.bin' dosyasına yazar. '.bin' dosyası ismini argv[0]'dan alır.
+
+INIT_ELF() macrosunu kullandıktan sonra, ehdr ve phdr erişime açık hale geliyor. 
+Mesela ELF başlığı olan e_version alanını değiştirmek istiyorsak  sadece şu satırı yazmak yeterli olur;
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64);
+
+            // e_version'unu 12345678 değeri ile değiştiriyoruz.
+            ehdr-&gt;e_version = 0x78563412;
+
+            GEN_ELF();
+            return 0;
+        }
+
+ 
+Bu kodu derleyip çalıştırdığımızda, yeni bin dosyamız bizi bekliyor olacak. Bu dosyayı
+favori hex editörünüzde inceleyecek olursanız, '12 34 56 78' değerlerini 0x14 ofsetinde
+görüyor olacaksınız. Bayağı basit oldu dimi?
+
+Bu basamakları hızlandırmak için şu Makefile'ı oluşturdum.
+
+        .PHONY golf clean
+
+        CC=gcc
+        CFLAGS=-I.
+        PROG=golf
+
+        golf:
+        	@$(CC) -o $(PROG) $(PROG).c
+        	@./$(PROG)
+        	@chmod +x $(PROG).bin
+
+        	@rm $(PROG) $(PROG).bin
+
+(Bu Makefile dosyasını şu repo'da bulabilirsiniz. [0])
+
++-----------------------------------+
+|--[ Önümüzdeki ilk problem ]-------|
++-----------------------------------+
+
+Bir çoğumuzun bilebileceği gibi, dosya parser'ları berbattır. Tanımlamalar ne kadar ciddi hedefler
+taşısa da, bu tanımlara nadiren uyulur. Bu tanımlara önem vermeyenlerin başını Linux ELF yükleyicisi 
+çeker. LibGolf elf.h'e karşı işlenmiş suçları kolayca tespit etmenize olanak sağlar. 
+
+Bunları tespit etmeye başlamak için güzel alan ELF dosyasının başlangıcıdır, yani ELF başlığı yeri.
+Herhangi bir ELF dosyasının başlangıcı tabii ki 0x7f byte'ının arkasından gelen ELF'tir. Bu alanın
+diğer bileşenler tarafından bilinen ismi EI_MAG0'ten EI_MAG3'e sıralanan tanımlayıcılardır.
+Şükür ki şu 4 byte'ı bozduğunuzda Linux ELF yükleyicisi işlem yapmayı reddediyor! En azından bunu 
+yaptığı için teşekkürlerimizi sunuyoruz efenim.
+
+Peki 0x5'inci byte? Güvenilir kaynağımız tanımlayıcı diyor ki bu 'EI_CLASS' byte'dır ve hedef mimariyi 
+belirlemektedir. Kabul edilebilir değerler 0x1 ve 0x2'dir. Bunlar da sırasıyla 32 bit mimari ve 
+64 bit mimari olduğunu belirtmektedir. Sadece 0x1 ve 0x2 kabul edildiğini bilmemize rağmen 0x58 (ASCII olarak 'X')
+byte'ını yazsak ne olur? Bunu yapmak için sadece şu satırı eklememiz yeterli;
+
+        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;
+
+(Neden 'X' karakteri diye sorarsanız hex editöründe hemen farkedebilmemiz için.)
+
+Bu satırı ekledikten sonra derledikten sonra, hemen çalıştırıp denemeden önce bir kaç ELF parser'ı aracını deneyelim
+ki bu tanımlara uymayan suçlulara bir göz atmış olalım. Listemizin başında gdb var, deneyelim görelim.
+
+        "not in executable format: file format not recognized"
+
+Aşağı yukarı objdump'da aynı hatayı veriyor. Bu parser'lar işlerini doğru yapıyor gibi gözüküyor.
+Şimdi oluşturduğumuz dosyayı normal bir şekilde çalıştıralım.
+
+        &lt;spoiler&gt;It works perfectly.&lt;/spoiler&gt;
+
+Eğer siz de denerken örnek olarak verdiğim shellcode'u kullandıysanız dosyayı çalıştırdıktan sonra 
+$? yazarsanız ne yazık ki dosyanın doğru çalıştırıldığının bilgisini verecek. EI_DATA ve EI_VERSION 
+değerlerine de garip şeyler atarsanız yine aynı sonuca ulaşacaksınız.
+
+
++---------------------------------------+
+|--[ Bozulmayı 11'e kadar çıkarmak ]--|
++---------------------------------------+
+
+Ne kadar ileri gidebiliriz? Ne kadar çok değeri bozuk verirsek Linux yükleyicisi bu 
+bozulmaları yoksayacak? EI_CLASS, EI_DATA ve EI_VERSION'ları yoksaydığını deneyimledik. 
+Bunun yanı sıra, EI_OSABI değerinin de dosyanın doğru çalışmasına zarar vermediğini farkettim.  
+Bu 0x8'inci ofset'e tekabül ediyor. Tanımlayıcıya göre, bundan sonraki değerler EI_ABIVERSION ve
+EI_PAD. Bu da 0xf'inci ofset'e kadar olan alan demek. Görünüşe göre bunları kimsenin umursadığı yok 
+ve bunları korkusuzca 'X' olarak değiştirebiliriz.
+
+Paldır küldür yolumuza devam ederken, kurcalamaya pek de yanaşmayan bir alana denk geliyoruz, e_type. 
+Anlaşılabilir olarak Linux yükleyicisi nasıl bir ELF dosyası verdiğimizi söylemezsek kızıyor! Bu 2 byte'ın 
+0x0002 kalmasına ihtiyacımız var. (diğer bir deyiş ile ET_EXEC) 
+
+(En azından kendince standartları olduğunu öğrenmek güzel(!))
+
+Sıradaki seçici alanımız herkesin aşina olduğu 0x12 ofset'i, e_machine. Bu alan hangi komut seti 
+mimarisini hedeflediğini belirtiyor. Zaten bu değeri INIT_ELF makrosunda X86_64 değerini ilk argüman 
+olarak verip ayarlamıştık. LibGolf de bizim için bu alanı '0x3e' olarak atamış oluyor.
+
+Ve bundan sonra bi' anda karşımıza e_version çıkıyor! Bu alanın da çok spesifik bir şekilde 
+0x00000001 olması gerektiği yazıyor fakat pratikte kimsenin ilgilenmediğini görüyoruz. O yüzden 
+burayı da 0x58585858 ile doldurabiliriz.
+
+Bu terbiyesizliği de yaptıktan sonra kurcalamaya pek müsait olmayan bi' kaç alan karşılıyor bizleri,
+e_entry ve e_phoff. e_entry için pek konuşmaya gerek duymayacağımı düşünüyorum, e_entry dosyanın 
+çalıştırıldıktan sonra, hafıza yüklenmesi bittiğinde ilk gelinen yer. Birileri yükleyicinin tam 
+olarak yerini belirtmesen de bulabileceğini düşünüyor ama tam tersi. Görünüşe göre 'ahanda tam burası'
+demeden yerini bulamıyor. En iyisi bu alanları kurcalamadan geçelim.
+
+LibGolf bölüm başlıklarını desteklemiyor ve küçük çalıştırabilir dosyalar oluşturmaya odaklandığı
+için ileride de destekleyeceğini pek düşünmüyorum. Bu demektir ki ne zaman bölümlerle ilgili başlıklar 
+görürsek istediğimiz telden çalabiliriz! Bu e_shoff, e_shentsize, eh_shnum ve e_shstrndx başlıklarını 
+kapsıyor. Eğer hiç bölüm başlığımız yoksa onları bozduğumuz için sorumlu tutulamayız!
+
+Kalan alanlarımız ise e_ehsize, e_phentsize, e_phnum. Linux yükleyicisi kontrolü tamamen 
+dosyaya vermeden önce hafızaya yüklenebilir segment ile ilgili olduklarını düşünürsek 
+şaşırtıcı gelmeyecektir. Eğer hatırlatıcı gerekiyosa, e_ehsize ELF başlığının boyutudur.
+(ancak 0x34 veya 0x40 olabilir sırasıyla 32-bit veya 64-bit mimariler için) eh_phentsize 
+yüklenmek üzere olan programın başlığının boyutudur. (0x20 veya 0x38 olabilir 32 ve 64 bit mimariler için)
+Eğer yükleyici EI_CLASS alanı için birazcık seçici davransaydı bu alanlara gerek duymazdı. 
+Son olarak e_phnum programın başlığındaki girdilerin sayısıdır.(bizim için sadece 0x1)
+Hiç şüphesizdir ki hafıza yükleyicinin rutininde bir kaç döngü için kullanılıyor olmalı fakat 
+derinlemesine incelemedim.
+
+Henüz elleşmediğim bir alan daha kaldı, e_flags. Buna dokunmamamın açıklanması kolay bir sebebi var,
+mimari bağımsız bir alan burası. x86_64 için aslında önemi bile yok çünkü tanımsız bir alan.
+(ARM platformları için önemli tabii ki. Bakmak isterseniz arm32 örneğine inceleyin [0])
+
+Sonunda ELF başlığının sonuna geliyoruz. Sayamayanlar için söyleyeyim yükleyici şu ana kadar
+ELF başlığındaki alanların %50'sini görmezden geldi. Peki ama program başlığı için bu kurcalamaları
+yapabilecek miyiz? Araştırmalarıma göre program başlıkları ELF başlığının içerisinde yaptığımız cambazlıkları
+kaldırabilecek kadar yere sahip değil fakat beklenebilecek sebeplerden ötürü değil. Yani tabii ki de 
+program başlığındaki kurcalamalar Linux yükleyicisini etkileyecek değil. Bütün alanları 0x58 ile 
+doldurabiliriz ve bu yükleyicinin ummmmmmmmmmmmmrunda bile olmaz. Fakat dünyalı dostum, yanlış 
+byte'lar ile oynaşırsan segmentasyon hatalarıyla dolu zindana düşersin!
+
+
+Pekii, program başlığında zorlamalık bi' şey yok mu? Artık önemi pekte olmayan iki alanımız var tabii.
+p_paddr ve p_align. İlki, 4GB RAM'in hayalden öte bir şey olmadığı, sanal bellekten önceki günlerde 
+önemliydi ve bu nedenle yükleyiciye, fiziksel bellekte segmentin nereye yüklenmesi gerektiğini 
+bildirmek önemliydi.
+
+Hafıza hizalama eğlenceli olan işlemlerden biri. Sözde p_vaddr, p_offset % p_align işleminin 
+sonucu olmalı. Eli yüzü düzgün ELF dosyaları (en azından GCC ile derlenmiş olanlar) görünüşe göre 
+p_offset'i p_vaddr'a eşitleyip geçiyor. LibGolf de varsayılanda aynısını yapıyor ve p_align'ı 
+tamamen gereksiz kılıyor!
+
+
+Ehh... sonuç olarak ELF başlığı kadar eğlenceli değil ama yine de kazanabileceğimiz çok ufak 
+şeyler var. Dosya oluşturan C kodumuz artık şuna benziyor; 
+
+        #include "libgolf.h"
+        #include "shellcode.h"
+
+        int main(int argc, char **argv)
+        {
+            INIT_ELF(X86_64,64);
+
+            /*
+             * Bazı gdb ve objdump gibi statik analiz araçlarını bozuyor 
+             * 
+             */
+            (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;   // Mimari 
+            (ehdr-&gt;e_ident)[EI_DATA] = 0x58;    // Endianness (Bitimlilik)
+            (ehdr-&gt;e_ident)[EI_VERSION] = 0x58; // Lafta her zaman 0x1 olmalı
+            (ehdr-&gt;e_ident)[EI_OSABI] = 0x58;   // Hedef işletim sistemi
+
+            // Loop over the rest of e_ident
+            int i;
+            for ( i = 0 ; i &lt; 0x10 ; i++ )
+                (ehdr-&gt;e_ident)[i] = 0x58;
+
+            ehdr-&gt;e_version = 0x58585858;       // Lafta her zaman 0x00000001 olmalı 
+
+            // Ne bölüm başlığı ya ne alaka? Gerek yok.
+            ehdr-&gt;e_shoff = 0x5858585858585858;
+            ehdr-&gt;e_shentsize = 0x5858;
+            ehdr-&gt;e_shnum = 0x5858;
+            ehdr-&gt;e_shstrndx = 0x5858;
+
+            ehdr-&gt;e_flags = 0x58585858;         // x86_64 mimarisi tanımlı flag'ler barındırmıyor.
+
+            phdr-&gt;p_paddr = 0x5858585858585858; // Fiziksel adres görmezden geliniyor. 
+            phdr-&gt;p_align = 0x5858585858585858; // p_vaddr = p_offset, yani gerek yok
+
+            GEN_ELF();
+            return 0;
+        }
+
+Eğer bu programı derleyip çalıştırırsanız şu dosyayı elde edersiniz:
+
+        00000000: 7f45 4c46 5858 5858 5858 5858 5858 5858  .ELFXXXXXXXXXXXX
+        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..&gt;.XXXXx.@.....
+        00000020: 4000 0000 0000 0000 5858 5858 5858 5858  @.......XXXXXXXX
+        00000030: 5858 5858 4000 3800 0100 5858 5858 5858  XXXX@.8...XXXXXX
+        00000040: 0100 0000 0500 0000 0000 0000 0000 0000  ................
+        00000050: 0000 4000 0000 0000 5858 5858 5858 5858  ..@.....XXXXXXXX
+        00000060: 0700 0000 0000 0000 0700 0000 0000 0000  ................
+        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.&lt;H1...
+
+Bu dosya boyutu 127 byte fakat bunun 50 byte'ını 'X' ile değiştirebildik. Bu da bir çalıştırabilir 
+dosyanın Linux ELF yükleyicisi tarafından neredeyse %40'ını umursamadığını anlatıyor! Kim bilebilirdi ki 
+50 byte ile neler yapılabileceğini?
+
+Görünüşe göre bayağı şey yapılabiliniyor. Yıllar önce netspooky tarafından yapılan muazzam araştırmalar 
+program başlığının bölümlerini ELF başlığına nasıl yerleştirebileceğimizi anlatıyor. Shellcode'unuzu
+bu ELF başlığındaki ölü byte'ların arasına sıkıştırmak ve diğer ufak hileler ile bir ELF dosyasını 84 byte'a kadar 
+düşürme şansınız bulunuyor. Bu da LibGolf'un gösterdiği eforun üstüne %34 daha fazla indirgeme demek. 
+Bu güzel 'ELF Mangling' serisine sizi yönlendiriyorum [1]. 
+
+
+Bu tekniklerin bir başka ilginç yönü de çok gözden kaçırılıyor olması. Tamam, Linux yükleyicisi 
+sadece makine koduna ulaşmak için ihtiyaç duyduğunun ötesinde ELF yapılarıyla çok az ilgileniyor olabilir
+fakat diğer araçlar çok daha fazla seçici davranıyor. Zaten objdump ve gdb'ye bakmıştık ama mesela AV 
+çözümleri kurcalanmış ELF görünce de dağılıyor. Benim araştırmalarıma göre düzgün yapabilen bir tek 
+ClamAV var. ClamAV bu tür ELF gördüğünde "Heuristics.Broken.Executable" etiketleyip 
+pozitif bir sonuç veriyor. Fakat dinamik analizde herkes sınıfta kalıyor.
+
++--------------------+
+|--[ İlerisi için ]--|
++--------------------+
+
+x86_64 mimarisi LibGolf tarafından desteklenen tek komut seti mimarisi değil. Dilerseniz 
+ARM32 ve AARCH64 platformları için de küçük çalıştırabilinir dosya üretmek için de kullanabilirsiniz.
+Github repo'sunda [0] ARM platformları için örneklerini bulabilirsiniz.
+
+
+Örnekleri eşşekler kovalasın! Umarım buraya kadar okuyabilenleriniz libgolf.h'ı kendisine de direkt 
+göz atmak istersiniz. Başta dediğim gibi bütün hepsini öğrenmek için ufak tefek alıştırmalar diye düşünüyordum,
+o yüzden olabildiğince ayrıntılı bir şekilde yorum yapmaya özellikle dikkat ettim.
+
++------------------------------------+
+|--[ Yeniden üretebilinirlik notu ]--|
++------------------------------------+
+
+Bu araştırmayı Ubuntu 20.04 işletim sisteminde, 5.4.0-65-generic kernel versiyonunda gerçekleştirdim.
+5.11.11-arch1-1'de de aynı cevapların alınabileceğini doğruladım. Bir yandan WSL kernel'lerinde
+farklı tuhaf sonuçlar alındığındığını duydum ama araştırmadım. Belki siz yapabilirsiniz!
+
++----------------+
+|--[ Callouts ]--|
++----------------+
+
+Thugcrowd, Symbolcrash, ve Mental ELF Support grubuna selamlarımı iletiyorum!
+
++------------------+
+|--[ Referanslar ]--|
++------------------+
+
+[0] https://www.github.com/xcellerator/libgolf
+[1] https://n0.lol/ebm/1.html
+</pre></div></center></body></html>
