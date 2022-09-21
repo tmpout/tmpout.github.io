@@ -19,39 +19,40 @@
 </head>
 <body>
 <!-- Translation by evilcel3ri 20210426 -->
-<center><div style="display: inline-block; text-align: left;"><pre>                                                                                  
-             ('-.    .-')    
-           _(  OO)  ( OO ).  
- ,--.     (,------.(_)---\_) 
- |  |.-')  |  .---'/    _ |  
- |  | OO ) |  |    \  :` `.  
- |  |`-' |(|  '--.  '..`''.) 
-(|  '---.' |  .--' .-._)   \ 
- |      |  |  `---.\       / 
- `------'  `------' `-----'  
-                         .-') _     ('-.   .-') _     .-')   
-                        (  OO) )  _(  OO) (  OO) )   ( OO ). 
+<center><div style="display: inline-block; text-align: left;"><pre>
+             ('-.    .-')
+           _(  OO)  ( OO ).
+ ,--.     (,------.(_)---\_)
+ |  |.-')  |  .---'/    _ |
+ |  | OO ) |  |    \  :` `.
+ |  |`-' |(|  '--.  '..`''.)
+(|  '---.' |  .--' .-._)   \
+ |      |  |  `---.\       /
+ `------'  `------' `-----'
+                         .-') _     ('-.   .-') _     .-')
+                        (  OO) )  _(  OO) (  OO) )   ( OO ).
   .-'),-----.    .-----./     '._(,------./     '._ (_)---\_)
- ( OO'  .-.  '  '  .--./|'--...__)|  .---'|'--...__)/    _ | 
- /   |  | |  |  |  |('-.'--.  .--'|  |    '--.  .--'\  :` `. 
+ ( OO'  .-.  '  '  .--./|'--...__)|  .---'|'--...__)/    _ |
+ /   |  | |  |  |  |('-.'--.  .--'|  |    '--.  .--'\  :` `.
  \_) |  |\|  | /_) |OO  )  |  |  (|  '--.    |  |    '..`''.)
    \ |  | |  | ||  |`-'|   |  |   |  .--'    |  |   .-._)   \
     `'  '-'  '(_'  '--'\   |  |   |  `---.   |  |   \       /
-      `-----'    `-----'   `--'   `------'   `--'    `-----' 
-  _   .-')                _  .-')   .-') _     .-')    
-( '.( OO )_             ( \( -O ) (  OO) )   ( OO ).  
- ,--.   ,--.).-'),-----. ,------. /     '._ (_)---\_) 
- |   `.'   |( OO'  .-.  '|   /`. '|'--...__)/    _ |  
- |         |/   |  | |  ||  /  | |'--.  .--'\  :` `.  
- |  |'.'|  |\_) |  |\|  ||  |_.' |   |  |    '..`''.) 
- |  |   |  |  \ |  | |  ||  .  '.'   |  |   .-._)   \ 
- |  |   |  |   `'  '-'  '|  |\  \    |  |   \       / 
+      `-----'    `-----'   `--'   `------'   `--'    `-----'
+  _   .-')                _  .-')   .-') _     .-')
+( '.( OO )_             ( \( -O ) (  OO) )   ( OO ).
+ ,--.   ,--.).-'),-----. ,------. /     '._ (_)---\_)
+ |   `.'   |( OO'  .-.  '|   /`. '|'--...__)/    _ |
+ |         |/   |  | |  ||  /  | |'--.  .--'\  :` `.
+ |  |'.'|  |\_) |  |\|  ||  |_.' |   |  |    '..`''.)
+ |  |   |  |  \ |  | |  ||  .  '.'   |  |   .-._)   \
+ |  |   |  |   `'  '-'  '|  |\  \    |  |   \       /
  `--'   `--'     `-----' `--' '--'   `--'    `-----'  ~ xcellerator
 
 [ Traduction par evilcel3ri ]
 
+
 Ahoy, chers camarades des ELF ! Dans cet article, nous aimerions présenter une petite
-librairie sur laquelle intitulée LibGolf. Elle a débuté comme méthode
+librairie intitulée LibGolf. Elle a débuté comme méthode
 afin de mieux comprendre les ELF et les en-têtes de programmes, mais a évolué
 depuis vers quelque chose de vaguement utile. Cette librairie permet de
 facilement générer un binaire contenant un en-tête ELF suivi d'un unique en-tête
@@ -74,7 +75,7 @@ Il y a quelque temps, nous explorions l'écriture des ELFs à la main dans NASM.
 Cela était amusant pour le temps que ça a duré (et a certainement des
 avantages), nous réalisâmes que nous manquions complètement le plaisir que les
 structures C ont à offrir. En particulier, et certainement que beaucoup de
-personnes me rejoindront là-dessus, &lt;linux/elf.h&gt; qui est rempli de choses
+personnes me rejoindront là-dessus, <linux/elf.h> qui est rempli de choses
 amusantes comme `Elf64_Ehdr` et `Elf32_Phdr` prêtes à être déclarées.
 
 Ne voulant pas gaspiller des en-têtes aussi utiles, nous les avons recueillis et mis
@@ -152,7 +153,7 @@ e_version de l'en-tête ELF. Nous avons juste besoin d'ajouter une seule ligne:
             INIT_ELF(X86_64);
 
             // Définit e_version à 12345678
-            ehdr-&gt;e_version = 0x78563412;
+            ehdr->e_version = 0x78563412;
 
             GEN_ELF();
             return 0;
@@ -206,7 +207,7 @@ répète : les valeurs acceptables sont 0x01 et 0x02. Et si nous lui donnions la
 valeur 0x58 (ou "X" pour les adeptes de l'ASCII) ? Nous pouvons le faire en
 ajoutant :
 
-        (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;
+        (ehdr->e_ident)[EI_CLASS] = 0x58;
 
 à notre fichier C générateur. (Pourquoi 0x58 ? Il apparaît clairement dans la
 sortie de xxd/hexyl !)
@@ -225,7 +226,7 @@ De même, objdump vous donnera une réponse similaire. Il semble que ces
 analyseurs font leur travail correctement. Maintenant, essayons d'exécuter
 le binaire normalement.
 
-        &lt;spoiler&gt;Ça marche sans soucis.&lt;/spoiler&gt;
+        <spoiler>Ça marche sans soucis.</spoiler>
 
 Si vous utilisez mon exemple de shellcode, une consultation avec $? vous
 informera à regret que le binaire s'est terminé avec succès. Les mêmes crimes
@@ -280,7 +281,7 @@ Les champs restants qui semblent avoir une certaine importance pour le chargeur
 Linux sont e_ehsize, e_phentsize, et e_phnum. Encore une fois, ce n'est pas
 trop surprenant, vu qu'ils sont concernés par le chargement du seul segment
 chargé en mémoire avant de céder le contrôle. Si vous avez besoin d'un rappel :
-e_ehsize est la taille du taille de l'en-tête ELF (qui est soit 0x34 soit 0x40
+e_ehsize est la taille de l'en-tête ELF (qui est soit 0x34 soit 0x40
 pour les 32 et 64 bits respectivement), eh_phentsize est la taille de l'en-tête
 du programme à venir (encore une fois, codée en dur à 0x20 ou 0x38 pour les
 architectures 32 et 64 bits). Si le chargeur avait été un peu plus pointilleux
@@ -331,28 +332,28 @@ ressemble maintenant à ceci :
             /*
              * Casse les outils d'analyse statique comme gdb et objdump
              */
-            (ehdr-&gt;e_ident)[EI_CLASS] = 0x58;   // Architecture
-            (ehdr-&gt;e_ident)[EI_DATA] = 0x58;    // Endianness
-            (ehdr-&gt;e_ident)[EI_VERSION] = 0x58; // Supposément, toujours 0x01
-            (ehdr-&gt;e_ident)[EI_OSABI] = 0x58;   // OS cible
+            (ehdr->e_ident)[EI_CLASS] = 0x58;   // Architecture
+            (ehdr->e_ident)[EI_DATA] = 0x58;    // Endianness
+            (ehdr->e_ident)[EI_VERSION] = 0x58; // Supposément, toujours 0x01
+            (ehdr->e_ident)[EI_OSABI] = 0x58;   // OS cible
 
             // Boucle autour du reste de e_ident
             int i;
-            for ( i = 0 ; i &lt; 0x10 ; i++ )
-                (ehdr-&gt;e_ident)[i] = 0x58;
+            for ( i = 0 ; i < 0x10 ; i++ )
+                (ehdr->e_ident)[i] = 0x58;
 
-            ehdr-&gt;e_version = 0x58585858;       // Supposément, toujours 0x00000001
+            ehdr->e_version = 0x58585858;       // Supposément, toujours 0x00000001
 
             // En-tête de section ? Nous n'avons pas besoin d'en-tête de section !
-            ehdr-&gt;e_shoff = 0x5858585858585858;
-            ehdr-&gt;e_shentsize = 0x5858;
-            ehdr-&gt;e_shnum = 0x5858;
-            ehdr-&gt;e_shstrndx = 0x5858;
+            ehdr->e_shoff = 0x5858585858585858;
+            ehdr->e_shentsize = 0x5858;
+            ehdr->e_shnum = 0x5858;
+            ehdr->e_shstrndx = 0x5858;
 
-            ehdr-&gt;e_flags = 0x58585858;         // x86_64 n'a pas de flags définis
+            ehdr->e_flags = 0x58585858;         // x86_64 n'a pas de flags définis
 
-            phdr-&gt;p_paddr = 0x5858585858585858; // L'adresse physique est ignorée
-            phdr-&gt;p_align = 0x5858585858585858; // p_vaddr = p_offset, tellement hors-sujet
+            phdr->p_paddr = 0x5858585858585858; // L'adresse physique est ignorée
+            phdr->p_align = 0x5858585858585858; // p_vaddr = p_offset, tellement hors-sujet
 
             GEN_ELF();
             return 0;
@@ -362,13 +363,13 @@ ressemble maintenant à ceci :
 Si vous compilez et exécutez ce programme, vous aurez le binaire suivant :
 
         00000000: 7f45 4c46 5858 5858 5858 5858 5858 5858  .ELFXXXXXXXXXXXX
-        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..&gt;.XXXXx.@.....
+        00000010: 0200 3e00 5858 5858 7800 4000 0000 0000  ..>.XXXXx.@.....
         00000020: 4000 0000 0000 0000 5858 5858 5858 5858  @.......XXXXXXXX
         00000030: 5858 5858 4000 3800 0100 5858 5858 5858  XXXX@.8...XXXXXX
         00000040: 0100 0000 0500 0000 0000 0000 0000 0000  ................
         00000050: 0000 4000 0000 0000 5858 5858 5858 5858  ..@.....XXXXXXXX
         00000060: 0700 0000 0000 0000 0700 0000 0000 0000  ................
-        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.&lt;H1...
+        00000070: 5858 5858 5858 5858 b03c 4831 ff0f 05    XXXXXXXX.<H1...
 
 
 Ce fichier fait 127 octets, mais nous avons pu remplacer un total de 50 octets
@@ -429,5 +430,4 @@ Un "ahoy" tout spécial à Thugcrowd, Symbolcrash et le Mental ELF Support Group
 
 [0] https://www.github.com/xcellerator/libgolf
 [1] https://n0.lol/ebm/1.html
-
 </pre></div></center></body></html>

