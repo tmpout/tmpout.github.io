@@ -1,0 +1,171 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                         ┌───────────────────────┐
+                                                         ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                         │ █   █ █ █ █   █       │
+                                                         │ █   █ █ █ █▀▀▀▀       │
+                                                         │ █   █   █ █     ▄     │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄   ▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                   █   │
+Fuzzing Radare2 For 0days In About 30 Lines Of Code      │                   █   │
+~ Architect & S01den                                     └───────────────────█ ──┘
+
+--- Özet ---
+
+Radare2 çoğu kişinin de bildiği üzere, açık kaynak bir tersine mühendislik ve analiz aracıdır. 
+Böyle araçlar, aslında diğer yazılımları araçları incelemek için kullandıldığından, kendisinde
+güvenlik açığı bulmak için analiz etmek oldukça ilginçtir.
+
+Bu yazıda CVE-2020-16269 ve CVE-2020-17487 kodlu zafiyetleri kendi aptal fuzzer'ımız ve 
+ufak tefek tersine mühendislik ile nasıl keşfettiğimizi anlatacağız.
+
+İlk parçasında, radare2'yi nasıl fuzz'ladığımızı ve ikinci parçasında fuzzer tarafından 
+bulunan zafiyetleri, ELF ile ilişkili hatayı örnek alarak, analiz etmek ve yeniden üretebilmek
+için nasıl kullandığımızı açıklayacağız.
+
+--- Fuzzing ---
+
+Bahsi geçen iki güvenlik açığını bulmak için hedefimize aptal fuzzing uyguladık.
+Buradaki anahtar faktör, kod kapsamı yüzdesi yüksek olmasıdır.
+
+Bunu yaparken de, radare2'nin testbins adlı repo'sundaki örnekleri kullanmayı seçtik[0]. 
+
+İlk çökmeleri, farklı dosya formatlarında ve ilk 30 dakikada bulduk.
+Bu dosya formatlarının içerisinde bizim ilgimizi çeken ve
+ayrıca en çok kullanılan PE ve ELF formatları oldu.
+
+Daha fazla gevelememek adına, aşağıda fuzzer'ımızın küçük versiyonunu inceleyebilirsiniz.
+
+----------------------------------- CUT-HERE -------------------------------------
+import glob;import random;import subprocess;import hashlib
+
+def harness(d):
+    tf = open("wdir/tmp", "wb")
+    tf.write(d)
+    tf.close()
+    try:
+        p = subprocess.run(['r2','-qq', '-AA','wdir/tmp'], stdin=None, timeout=10)
+    except:
+        return
+    try:
+        p.check_returncode()
+    except:
+        print(f"Proc exited with code {p.returncode}")
+        fh = hashlib.sha256(d).hexdigest()
+
+        dump = open(f'cdir/crash_{fh}', 'wb')
+        dump.write(d);dump.close()
+
+def mutate(data):
+    mutable_bytes = bytearray(data)
+    for a in range(10):
+        r = random.randint(0, len(mutable_bytes)-1)
+        mutable_bytes[r] = random.randint(0,254)
+
+    return mutable_bytes
+
+if __name__ == '__main__':
+    fs = glob.glob("corpus/*")
+    while True:
+        f = open(random.choice(fs), 'rb').read()
+        harness(mutate(f))
+----------------------------------------------------------------------------------
+
+--- Zafiyeti Sömürme ---
+
+radare2'yi çökerten örneklerle birlikte, bu çökmelerin nedenlerine bakalım.
+
+İlk çökme ELF formatı olan bir dosyadan kaynaklanıyor. Bu örnek DWARF bilgilerini tutan,
+dwarftest adlı dosyanın mutasyona uğramış hali.
+
+==================================================================================
+$ file dwarftest
+---&gt; dwarftest: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically
+linked, ...,with debug_info, not stripped
+==================================================================================
+
+Hatayı hangi bayt tetiklediğini keşfetmek için radare2'ye çökmeye neden olan örneği
+yükleyip ayıklayıcıyı çalıştırabiliriz.
+
+Alternatif olarak orijinal dwarftest dosyasıyla mutasyona uğramış versiyonunu 
+karşılaştırarak radiff2 ile bunu keşfedebiliriz:
+
+==================================================================================
+$ radiff2 bins/src/dwarftest mutated_dwarftest
+0x000010e1 00 =&gt; 01 0x000010e1
+==================================================================================
+
+Bu konum DWARF yapısının bir parçası. Bu sadece DWARF bilgisi eklenmiş çalıştırılabilinir
+dosyalar için geçerli ama yine de bozulmuş DWARF bilgisini hazırlayıp herhangi bir ELF
+dosyasına enjekte edebiliriz.
+
+Bu bozuk DWARF bilgisi neden radare2'yi kızdırıyor sorusunun cevabını objdump ile 
+almak mümkün:
+==================================================================================
+$ objdump --dwarf=info mutated_dwarftest
+...
+		&lt;4c&gt; DW_AT_name :objdump: WARNING: the DW_FORM_strp shift is too
+		large: 164 (indirect string, shift: 0x164): &lt;shift too large&gt;
+...
+==================================================================================
+
+Ha gayret, az kaldı. 
+
+Şimdi tek yapmamız gereken şey bunu nasıl sömürebileceğimizi bulmak. Bunu yapabilmenin yolu,
+bu çökmeyi gdb'de inceleyip, çökmeye neden olan fonksiyonunu kaynak kodunda bulmak.
+(neyse ki radare2 açık kaynak)
+
+parse_typedef fonksiyonunda hatalı satır şu şekilde:
+==================================================================================
+name = strdup (value-&gt;string.content);
+==================================================================================
+
+Bu satır, kopyalanmış string NULL olduğunda, null pointer dereference zafiyetine neden oluyor.
+Çok da ayrıntıya girmeden, tersine mühendisliğin yasaklanmış gücüyle keşfettiğimiz 
+bu durum DW_AT_name'teki kaydırmanın çok büyük olduğunda gerçekleştiğini tespit ettik.
+
+Şimdi herhangi bir ELF dosyasını bu hatayı tetikleyecek hale getirecek kodu yazma 
+zamanı. Ekler bölümünde, PE hatasını da kapsayan kodun tam halini bulabilirsiniz.
+(CVE-2020-17487 kodlu zafiyet de, radare2'nin dosyayı yükleyememesine yol açıyor)
+
+--- Sonuç ---
+
+Umuyoruz ki bu yazıyı okumaktan keyif almışsınızdır.
+
+Artık biliyorsunuz ki kullanımı çok yüksek olan araçlarda bile zafiyet bulmak çok zor değil!
+
+Bulunan hataların DoS'tan başka bir zafiyete yol açmasa da, tersine mühendislik aracını
+bir dosyayı yüklerken çökmesine neden olmak yine de yararlı...
+
+--- Referanslar ---
+
+[0] https://github.com/radareorg/radare2-testbins
+
+--- Ekler ---
+
+- <a href="5.1.py">Exploit POC</a>
+</pre></div></center></body></html>
