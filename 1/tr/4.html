@@ -1,0 +1,194 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+PT_NOTE Disinfector                                                        │                   █   │
+~ manizzle                                                                 └───────────────────█ ──┘
+
+Selam herkese. Başlangıç olarak şunu belirtmek isterim, ben bir "AVer"
+(AV ile uğraşan kişiler için kullanılıyor, "VXer" gibi düşünebilirsiniz.) değilim. 
+Anti-virüsler saçmalık, hala çözülememiş bir sürü hataları var ve bu hatalardan
+dolayı sömürülmeye açıklar. AVler tarafından sıkça kullanılan lief ve capstone
+bileşenlerini fuzzlamaktan çekinmeyin. Eminim birçok çözülmemiş sıkıntıları
+çıkacaktır. Şimdi, zararlının etkilerini nasıl tersine çevireceğimize gelecek olursak...
+
+PT_NOTE injection tekniği epey temiz, derli toplu bir teknik; hazırlanmış
+hafıza alanının zararsız bir içerikle doldurulmasını sağlıyor. Ancak bilindiği üzere,
+neredeyse her infection tekniğinin bir de infection engelleyicisi karşılığı vardır 
+ve bu durum yaşamın doğasının bir tezahürüdür. 
+
+Bir infection tekniğinin ne kadar iyi olduğunu ölçmek için disinfection 
+işleminin kolaylığını göz önünde bulunduruyorum. Çünkü, kullandığınız 
+disinfection işleminde ne kadar sabit değer olursa o kadar kolay alt edilecektir. 
+Kedi fare oyunu devam ettiği sürece yapılması gereken, her seferinde daha sinsi 
+bir çözümle ortaya çıkmaktır. Şayet bu kedi fare oyununu kendinizle oynarsanız 
+yazacağınız zararlı, dehşet verici ve harika bir şeye evrilebilir. 
+
+Bu enfekte olan dosyayı geri çevirme tekniği için -birçok zararlının da yaptığı gibi-
+büyük çalıştırılabilir dosyaları yüklerken programın hafıza alanında normalde 
+çalışan kodlarla kesişmediğinden ve üzerine yazılmadığından emin olmak için 
+PT_NOTE segmentini olabildiğince uzak bir hafıza alanına konumlandırmak 
+gerekiyor, sonuçta infection esnasında ayak altında dolanmak istemeyiz.
+
+PT_LOAD segmentlerini toparlayıp çalıştırılabilir olacak şekilde kullanabilmek için
+gruplandırılmış çalıştırılabilir segmentlerin merkezini belirlemede Kmeans algoritmasından
+ve Kmeans ortalamasından yararlanacağız. Genellikle infection operasyonlarında bir tane PT_NOTE
+segmenti zararlı kod çalıştırma için kullanılır ancak belki de daha sonra sblip 
+komutunun size bildireceği üzere enfekte segment sayısı iki olabilir :)
+
+    if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) &lt; INERTIA_RATIO:
+
+Hangi segentlerin normalden biraz daha uzak bir çalıştırılabilir dosya 
+alanına konumlandırıldığını tespit ettikten sonra (her ne kadar PT_NOTE
+segmentini geçerli bir PT_LOADS adresine konumlandırıp bütün imajın 
+yeniden konumlandırılmış adreslerini güncellesek de, yani kim bunu yapar ki? :)) 
+enfekte olmuş alanın kodunun detaylı incelemesini gerçekleştirebiliriz.
+
+Normalde bu tarz zararlılar biraz solucan gibi takılır, birkaç dosyayı 
+daha enfekte eder; ancak eninde sonunda asıl programın çalışma düzenine
+devam etmesi -bilirsiniz şüphe çekmemek için- gerekir. Yani asıl programın
+başlangıç noktasına atlamak için kullanılacak olan jmp komutu enfekte edilen
+zararlı kodun sonlarında olmalıdır. Dolayısıyla biz bu atlama komutunu aramalıyız. 
+
+Bazen bu atlama işlemi direkt gerçekleşir, bazen ise atlanacak adres 
+enfekte edilmiş kodun içerisinde bir yerlerde göreli olarak türetilir. 
+Bu süreçte atlanacak adres daha önce işleme hafızada ayrılan temel 
+adresin üzerine OEP eklenmesiyle bulunur. (eğer biraz daha havalı olmak
+isterseniz bu tarz bir operasyon için use-def chain kullanabilirsiniz, 
+tabii sonunda zararlı da biraz daha havalı olmaya karar verirse sizi 
+zincerleme şekilde birbirini çağıran fonksiyonları**  çözmeye zorlayabilir)
+
+**(çeviri notu: orijinal terim chain cross function )
+
+    add {target}, CONST
+
+PHDR (Program başlık bilgileri) kısmına bu satırı "pop" komutuyla ekleyin 
+vee orijinal programın çalışması temiz bir şekilde devam etsin
+
+Zararlıya bir sonraki infection işleminde iyi şanslar diliyoruz ve üç hayırla uğurluyoruz!
+
+##################################################################
+
+#!/usr/bin/env python3
+
+from capstone import *
+from collections import Counter
+import lief
+import math
+import numpy as np
+from sklearn.cluster import KMeans
+import sys
+
+# o anti-re'ci şerefsiz arkadaşlardan olma
+SUCKER_PUNCH = 3
+# hem büyük hem küçük birkaç tane çalıştırılabilir dosyada test edildi
+# çoğu normal çalıştırılabilir dosya "1.0bir şeyler" civarında çıkıyor
+# inanmayacaksınız ama birkaç megabayt boyutundaki büyük dosyalar dahi
+# ama eminim bozulan istisna durumlar bulunuyordur
+INERTIA_RATIO = 1.1
+
+def find_anomalous_load_segment(segment_ranges):
+  segment_array = np.array(segment_ranges)
+  cluster_2 = KMeans(n_clusters=2, random_state=0).fit(segment_array)
+  cluster_1 = KMeans(n_clusters=1, random_state=0).fit(segment_array)
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) &lt; INERTIA_RATIO:
+    print("No anomaly detected")
+    return None
+  cluster_counts = {v:k for k,v in Counter(cluster_2.labels_.tolist()).items()}
+  if 1 not in cluster_counts:
+    print("No singular cluster found")
+    return None
+  return segment_array[np.where(cluster_2.labels_ == cluster_counts[1])[0]][0]
+
+
+def find_oep(segment_bytes, segment_start):
+  # şimdilik sadece x64-64 destekliyoruz ama ihtiyaç durumunda
+  # kolayca başka mimarilere de dönüştürülebilir. 
+  # Burada başka mimarilerde de çalışsın diye
+  # IR(Intermediate representation)  kullansak epey havalı olur
+  md = Cs(CS_ARCH_X86, CS_MODE_64)
+  md.skipdata = True
+  oep = None
+  last_jump = None
+  early_bail = 0
+  for r in [instr for instr in md.disasm(segment_bytes, segment_start)][::-1]:
+    if last_jump:
+      # eğer aşağıdaki formdaki bir komut görüyorsak
+      # add {target}, CONST
+      # muhtemelen OEP adresini temel adrese ekliyordur
+      # bu durumu genelleştirip rax kaydedicisindeki değeri 
+      # okumak için use-def chain kullanabiliriz
+      # bu durumda fonksiyonları bulmak ve göreli adrese göre 
+      # kod atlamaları için get_rip tarzı bir fonksiyon lazım olur
+
+      if last_jump + ", " in r.op_str and "add" == r.mnemonic.strip():
+        try:
+          oep = int(r.op_str.split(",")[1].strip(), 16)
+          break
+        except Exception as e:
+          # hobi olarak devam et ama buraya düştüysek muhtemelen bulamayız
+          # az daha dene, ama çok da deneme yani, gerek yok
+          # anti-re yüzünden keyifler kaçmasın şimdi
+          early_bail += 1
+          if early_bail == SUCKER_PUNCH:
+            break
+          continue
+    if not last_jump and r.mnemonic.strip() == "jmp":
+      target = r.op_str.strip()
+      # bir bak jmp direkt gerçekleşiyor mu 
+      # durum böyleyse oradaki değeri OEP olarak kaydet
+      try:
+        oep = int(target, 16)
+        break
+      except Exception as e:
+        # değilse muhtemelen kaydedicilerden(register) 
+        # aldığı değerle atlıyordur
+        oep = None
+        last_jump = target
+  return oep
+
+def main():
+  l = lief.parse(sys.argv[1])
+  load_segs = [ [ll.virtual_address, ll.virtual_address + ll.virtual_size]
+        for ll in l.segments
+        if ll.type == lief.ELF.SEGMENT_TYPES.LOAD
+      ]
+  anomalous_segment_start, anomalous_segment_end = find_anomalous_load_segment(load_segs)
+  segment_bytes = l.get_content_from_virtual_address(anomalous_segment_start, anomalous_segment_end)
+  real_oep = find_oep(bytes(segment_bytes), anomalous_segment_start)
+  print("found OEP: ", hex(real_oep))
+  l.header.entrypoint = real_oep
+  l.write(sys.argv[1] + ".cleaned")
+
+if __name__ == "__main__":
+  main()
+</pre></div></center></body></html>
