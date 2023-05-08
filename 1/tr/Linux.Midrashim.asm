@@ -1,6 +1,6 @@
 ; Linux.Midrashim
 ; TMZ tarafından yazıldı
-;
+; [ Çeviri @batcain tarafından yapılmıştır ]
 ; Bitirilme zamanı: 30.05.2020
 ; Yayınlanma zamanı: 07.11.2020
 ; Yayınlamamı geciktirdim çünkü 90'lar tarzında bir payload üzerinde çalışıyordum zaman darlığından dolayı bunu başka bir projeye bırakıyorum.
