@@ -1,0 +1,245 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+The Polymorphic False-Disassembly Technique                 │                   █   │
+~ S01den                                                    └───────────────────█ ──┘
+
+[ @akilgundogan / M. Akil Gündoğan tarafından çevrilmiştir.] 
+tmp.out tayfadan s01den tarafından sevgiyle yazıldı !
+mail: S01den@protonmail.com
+
+--- Giriş ---
+
+Lin32.Bakunin[0]'i yazmaya başladığımda bunu MIPS assembly ile yazılmış aptal bir 
+virüsten nasıl daha iyi bir hale getirebilirim diye düşündüm. Biraz da tersine mühendisleri
+sinirlendirmek istedim. Bu yüzden daha önceleri bazı crackme'lerde kullandığım
+false-disassembly tekniği aklıma geldi. 
+
+Nedenine gelecek olursanız, polimorfik özellikler çok havalı, ben de false-disassembly tekniği 
+ile başka bazı yöntemleri karıştırarak ilginç şeyler yapılıp yapılamayacağını merak ettim.
+
+Tabii ki böyle ilginç şeyler yapmak mümkün oldu, (yeni bir teknik mi yoksa önceden de var mıydı
+tam emin değilim) ben bu trick'e "Polymorphic false-disassembly" veya basitçe "Fake polymorphism"
+diyorum.
+
+--- false-diassembly nasıl çalışır ? ---
+
+Bu tekniğin gerçekten hem anlanaması hem de uygulaması oldukça kolaydır.
+Bunu Silvio Cesare[1]'ın Linux anti-debugging hakkındaki ünlü bir yazısında keşfettim.
+Sadece assembly kodunuzu yazmadan önce birkaç byte eklemeniz gerekiyor:
+
+
+-------------------- kes-burayı --------------------
+hey:                      hey:
+   xor %rbx, %rbx             .ascii "\x48\x31"
+   jmp yo            ====>     xor %rbx, %rbx
+                               jmp yo
+---------------------------------------------------
+
+
+Şimdi, bu kodun disassembly edilmiş haline baktığımızda (radare2 iyidir) şöyle bir şeyler görürüz:
+
+-------------------- kes-burayı --------------------
+;-- hey:
+0x00401002      4831db         xor rbx, rbx
+0x00401005      eb02           jmp 0x401009
+
+                     ||
+                     \/
+;-- hey:
+0x00401002      48314831       xor qword [rax + 0x31], rcx
+0x00401006      dbeb           fucomi st(3)
+0x00401008      026631         add ah, byte [rsi + 0x31]
+
+---------------------------------------------------
+
+Peki disassembler neden böyle davranıyor ?
+
+Bildiğiniz gibi, \x48\x31 normalde bir xor komutunu başlatır[2] ve takip eden byte'lar
+genellikle üzerinde işlemler yaptığımız register'ları yönetebilmemize imkan tanır.
+
+Bu nedenle "initialisation" byte'ları bu byte'ları takip eder, kendileri de bir "initialisation"
+byte'ı olan diğer byte'lara yapışırlar. Bu nedenle disassemblerlar onları birer "register"
+byte'ı sandığından, istenen talimatlar yerine birtakım saçmalıklar görüntülenmiş olur.
+
+Bu nedenle böyle bir kodu yürütebilmek için az önce koyduğumuz bu byte'ların üzerinden 
+atlamamız gerekir.
+Şöyle bir şey:
+
+-------------------- kes-burayı --------------------
+_start:
+jmp hey+2
+
+hey:
+   .ascii "\x48\x31"
+   xor %rbx, %rbx
+   jmp yo
+---------------------------------------------------
+
+--- c0de'un tamamı ---
+
+Şimdi her yürütme ve bulaşma esnasında false-disassembly'e neden olan byte'ları değiştirebildiğnizi
+hayal edin. Tersine mühendisler kodu incelerken polimorfik olduğunu ve yalnızca birkaç byte'ın gerçekten
+değişiklik gösterdiğini zannedecektir.
+
+Ve şimdi daha fazla arkasını uzatmadan tam kodu size sunuyorum:
+
+----------- kes-burayı -----------
+# komutları derle: as Linux.FakePolymorphism.asm -o fakePoly.o ; ld fakePoly.o -o fakePoly
+
+# bu kod sahte bir polimorfik örneğidir, kullanmakta/denemekte/artık her ne yapacaksanız özgürsünüz.
+# Kendi kodunu alır, false-disassembly byte'larını değiştirir ve sonucu stack'e koyar.
+
+.text
+  .global _start
+
+_start:
+jmp true_start+2 # fake-disassembly byte'larına atlar
+
+true_start:
+.ascii "\x48\x31"  # fake-disassembly byte'ları
+xor %rbx, %rbx
+jmp get_code+2 # fake-disassembly byte'larına atlar
+
+get_code:
+  .ascii "\x66\x31"  # fake-disassembly byte'ları
+  call get_rip
+  sub $0x10 ,%rax # 0x10 _start ile bu komut arasındaki byte sayısını ifade eder
+  movb (%rax,%rbx), %al
+  movb %al, (%rsp,%rbx)
+  inc %rbx
+  cmp $0x54, %rbx  # 0x54 kodun toplam genişliğidir
+  jne get_code+2
+
+  # Zamana bağlı olarak sahte sayı üreticisi
+  rdtsc
+  xor $0xdead, %rax
+  mov %ax, 2(%rsp)
+  xor $0xbeef, %rdx
+  mov %ax, 9(%rsp)
+
+  mov $60, %rax
+  mov $0, %rdi
+  syscall # sys_exit
+
+get_rip:
+  mov (%rsp), %rax
+  ret
+----------------------------
+
+-- Sonuç --
+
+Bu yazıyı okurken oldukça keyif aldığınızı ve öğrendiğiniz teknikleri
+crackme'ler ile virüslerinizde kullanmaya çalışacağınızı umuyorum!
+
+sblip ile bir polimorfik virüs yazdık (Lin64.Eng3ls, makaleyi ve kodu inceleyin !) ve
+bu tekniği kullanarak decyrptor'u obfuscate etmeye çalıştık. 
+
+Decryptor kodu:
+
+------- KES-BURAYI -------
+  pop rcx
+  jmp jmp_over+2
+  jmp_over:
+    db `\x48\x31` ; false disassembly
+    mov al,0x00
+    xor rdx, rdx
+
+  decoder:
+    jmp jmp_over2+2
+
+    jmp_over2:
+      db `\xb8\xd9` ; false disassembly
+      mov dl, byte [r12+rdi]
+      cmp rdi, STUB_SIZE-1
+      jna no_decrypt
+
+      jmp jmp_over3+2
+      jmp_over3:
+        db `\x48\x81` ; false disassembly
+        xor dl, al
+
+  no_decrypt:
+    mov byte [rbx+rdi], dl
+    inc rdi
+  loop decoder
+-------------------------
+
+İşte virüs bulaşmış ikili dosyalar disassembly edilerek elde edilmiş decryptor'lar[3]. Hadi
+tekniğimizi iş başında görelim.
+
+1. 
+  0x0c003f46      59             pop rcx                 
+  0x0c003f47      eb02           jmp 0xc003f4b           
+  0x0c003f49      00d6           add dh, dl              
+  0x0c003f4b      b06d           mov al, 0x6d            
+  0x0c003f4d      4831d2         xor rdx, rdx            
+  0x0c003f50      eb02           jmp 0xc003f54           
+  0x0c003f52      1aca           sbb cl, dl              
+  0x0c003f54      418a143c       mov dl, byte [r12 + rdi]
+  0x0c003f58      4881ff870000.  cmp rdi, 0x87           
+  0x0c003f5f      7606           jbe 0xc003f67           
+  0x0c003f61      eb02           jmp 0xc003f65           
+  0x0c003f63      c0d630         rcl dh, 0x30            
+  0x0c003f66      c28814         ret 0x1488              
+  0x0c003f69      3b48ff         cmp ecx, dword [rax - 1]
+  0x0c003f6c      c7             invalid                 
+  0x0c003f6d      e2e1           loop 0xc003f50          
+
+2.
+  0x0c003fe6      59             pop rcx
+  0x0c003fe7      eb02           jmp 0xc003feb
+  0x0c003fe9      ce             invalid
+  0x0c003fea      0ab0a34831d2   or dh, byte [rax - 0x2dceb75d]
+  0x0c003ff0      eb02           jmp 0xc003ff4
+  0x0c003ff2      39cb           cmp ebx, ecx
+  0x0c003ff4      418a143c       mov dl, byte [r12 + rdi]
+  0x0c003ff8      4881ff870000.  cmp rdi, 0x87
+  0x0c003fff      7606           jbe 0xc004007
+  0x0c004003      0e             invalid
+  0x0c004004      0a30           or dh, byte [rax]
+  0x0c004006      c28814         ret 0x1488
+  0x0c004009      3b48ff         cmp ecx, dword [rax - 1]
+  0x0c00400c      c7             invalid
+  0x0c00400d      e2e1           loop 0xc003ff0
+
+
+Sonuçlar gerçekten orijinal koddan oldukça farklı.
+
+--- Notlar ve Kaynakça: ---
+[0] https://vx-underground.org/papers/VXUG
+      /Exclusive/Bakounin/Writing_virus_in_MIPS_assembly_for_fun.txt
+[1] http://www.ouah.org/linux-anti-debugging.txt // silvio'nun yazısı
+[2] https://www.felixcloutier.com/x86/xor
+[3] radare2 ile
+</pre></div></center></body></html>
