@@ -62,10 +62,9 @@ Sadece assembly kodunuzu yazmadan önce birkaç byte eklemeniz gerekiyor:
 -------------------- kes-burayı --------------------
 hey:                      hey:
    xor %rbx, %rbx             .ascii "\x48\x31"
-   jmp yo            ====>     xor %rbx, %rbx
+   jmp yo            ====&gt;     xor %rbx, %rbx
                                jmp yo
 ---------------------------------------------------
-
 
 Şimdi, bu kodun disassembly edilmiş haline baktığımızda (radare2 iyidir) şöyle bir şeyler görürüz:
 
