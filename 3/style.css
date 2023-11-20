@@ -1,0 +1,27 @@
+body {
+  color: #FEFEFE;
+  background-color: #0A0B11;
+  margin: 0 auto;
+  padding: 1em 0 1em 0;
+}
+a { 
+  color: #93ffd7; 
+  text-decoration: none; 
+}
+@font-face { 
+  font-family: "unifont"; 
+  src: url("./unifont.woff") format('woff'); 
+}
+pre { 
+  font-family: "unifont", "Lucida Console", monospace, Monaco; 
+  font-size:16px; 
+  line-height: 1.0;
+  padding-left: 20px;
+}
+.txtdiv {
+  display: block;
+  text-align: left;
+}
+x { color: #93f1ff; } /* blue - complimentary to <a> tag for highlighting */
+hl { color: white; background-color: #4f4b54;  } /* for block quotes */
+

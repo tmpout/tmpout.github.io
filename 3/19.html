@@ -1,0 +1,798 @@
+<html>
+<head>
+<title>LKM Golf</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+LKM Golf                                                                   │                   █   │
+~ rqu & netspooky                                                          └───────────────────█ ──┘
+
+||| What is a kernel module? |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+A Linux Kernel Module (LKM) is a program that can extend the functionality of the kernel without 
+having to rebuild the kernel or reboot[1]. They are often used in device drivers, which allow for 
+hardware to connect and communicate with the system. LKMs use the ELF file format.
+
+Although LKMs are ELFs, they are processed differently from userland ELFs. When you run a program, 
+the kernel will do some basic checks and then map the ELF into memory. If there is linking required, 
+the linker is set up first, to allow it to craft it's own process image.
+
+For an LKM, the process of resolving symbols has to be done by the Linux Kernel itself, as there is
+no external linker for it to call.
+
+Since kernels are delicate machines, there are a number of checks needed to confirm that a given 
+module will not mess up the currently running kernel, and can be safely and sanely added. Different
+kernels will require different checks. Some structures and functions aren't available in various
+kernel versions, while others may require a slightly different set up.
+
+For these reasons, creating a small LKM can be very tricky. Early attempts at golfing showed that 
+messing with the header was not an option, as many of the ELF header components which are normally
+ignored in user mode, are actually checked and enforced in kernel mode.
+
+To understand this, let's take a look at the module loading process!
+
+[1] https://sysprog21.github.io/lkmpg/
+
+||| The Module Loading Process |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+To load a kernel module, you need to use the init_module[2] or finit_module[3] syscalls. These are
+defined in kernel/module.c.
+
+In both cases, the contents of the module are read into kernel space and the load_module[4] function 
+is called. load_module runs a number of pre-initialization steps. Most of the interesting functions 
+called by load_module are: 
+
+- module_sig_check: signature check, if module signing is enabled. Sets info->sig_ok if valid.
+- elf_validity_check: basic ELF sanity checks
+- setup_load_info: identify some useful addresses/values (section headers, module name)
+- blacklisted: check if this module name is blacklisted
+- rewrite_section_headers: replace section header offsets with the address in memory that they are 
+  loaded
+- check_modstruct_version: check that the module struct embedded in the module has the same layout 
+  as the version the kernel was compiled for
+- layout_and_allocate: validate some .modinfo fields then allocate, load, and setup permissions for 
+  loadable sections. 
+- add_unformed_module: check if the module is already loaded, and add module to the kernel module 
+  tree
+- find_module_sections: search for special segments by name. Some of these segments may be a good 
+  place to dive in for follow-up research.
+- check_module_license_and_version: Checks for bad modules and checks symbol crcs.
+- simplify_symbols: rewrite relative symbols from offsets to addresses
+- apply_relocations: as the name says, apply relocations
+- post_relocation: do a bit of cleanup, and then call module_finalize for arch-specific 
+  functionality. On x86, take a look at module_finalize in arch/x86/kernel/module.c. 
+- complete_formation: perform some final validation of symbols, and setup final memory permissions
+- parse_args: parse arguments. This also applies dynamic debug configuration.
+- mod_sysfs_setup: create /sys/module/&lt;modname&gt; and its contents
+- do_init_module: finally, call the ctors (if present) and init() (if present)
+
+To reduce the size of an LKM, a different approach needs to be taken in order to account for all of 
+the checks that a kernel ELF goes through. There are far more checks on the unused or "don't care" 
+fields of the ELF header which have previously proved useful for golfing. There are also checks on 
+kernel specific metadata that can prevent even valid LKMs from loading in the wrong context. 
+
+While it may seem like the kernel is extremely strict, some of the more crucial aspects are a bit 
+more lax than one might think.
+
+[2] https://elixir.bootlin.com/linux/v5.15/source/kernel/module.c#L4144 init_module
+[3] https://elixir.bootlin.com/linux/v5.15/source/kernel/module.c#L4164 finit_module
+[4] https://elixir.bootlin.com/linux/v5.15/source/kernel/module.c#L3915 load_module
+
+||| Minimum Viable LKM |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+From a combination of trial and error, looking at source code, and stripping down a larger module, 
+the minimum requirements for a kernel module seem to be:
+
+╭─ 1. ELF Header ───────────────────────────────────────────────────────────────────────────╮
+│                                                                                           │
+│ While some parts of it can be tampered with, elf_validity_check validates a lot of fields │
+│ and doesn't leave a whole lot of room to overlay data.                                    │
+│                                                                                           │
+│ See kernel/module.c:elf_validity_check for the validation logic.                          │
+│                                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ 2. Section Headers ──────────────────────────────────────────────────────────────────────╮
+│                                                                                           │
+│ ╭─ sh_null ─────────────────────────────────────────────────────────────────────────────╮ │
+│ │                                                                                       │ │
+│ │ elf_validity_check validates that the first section header has sh_type==SHT_NULL (0), │ │
+│ │ sh_size==0, and sh_addr==0. All other fields are ignored.                             │ │
+│ │                                                                                       │ │
+│ ├─ symtab ──────────────────────────────────────────────────────────────────────────────┤ │
+│ │                                                                                       │ │
+│ │ setup_load_info expects exactly one SHT_SYMTAB section, and will error out if no      │ │
+│ │ symtab is found. The sh_name is ignored, and the type must be SHT_SYMTAB              │ │
+│ │                                                                                       │ │
+│ ├─ .gnu.linkonce.this_module ───────────────────────────────────────────────────────────┤ │
+│ │                                                                                       │ │
+│ │ setup_load_info searches for this section by name, and errors out if not found.       │ │
+│ │ This is used to find the offset of this_module, which is a struct module.             │ │
+│ │                                                                                       │ │
+│ ├─ shstrtab ────────────────────────────────────────────────────────────────────────────┤ │
+│ │                                                                                       │ │
+│ │ Because .gnu.linkonce.this_module is searched for by name, we need a shstrtab. This   │ │
+│ │ is resolved by looking at the e_shstrndx field of the ELF header, and the sh_name     │ │
+│ │ is ignored.                                                                           │ │
+│ │                                                                                       │ │
+│ ├─ .modinfo ────────────────────────────────────────────────────────────────────────────┤ │
+│ │                                                                                       │ │
+│ │ Technically not needed if CONFIG_MODULE_FORCE_LOAD is used, but you will taint the    │ │
+│ │ kernel without this.                                                                  │ │
+│ │                                                                                       │ │
+│ ├─ .text *  ────────────────────────────────────────────────────────────────────────────┤ │
+│ │                                                                                       │ │
+│ │ Although not strictly necessary to load/unload the module, a .text section and a      │ │
+│ │ relocation section are required to run code                                           │ │
+│ │                                                                                       │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────────────╯ │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ 3. this_module (module struct) ──────────────────────────────────────────────────────────╮
+│                                                                                           │
+│ A module struct (this_module). As you'll see later, this isn't validated very strictly.   │
+│ This is a very large (almost 1kb!) struct depending on the configuration, but only a      │
+│ handful of fields need to be valid.                                                       │
+│                                                                                           │
+│ This is the this_module struct that .gnu.linkonce.this_module points to.                  │
+│                                                                                           │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+||| The module Struct ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+The format of a module struct is defined in include/linux/module.h [5]. The struct is huge and the 
+presence of some fields depends on kernel configuration. If you don't want to think about which 
+flags your kernel has set, you can dump the struct from the compiled kernel with gdb:
+
+  $ gdb -q -batch -ex 'ptype struct module' vmlinux
+  type = struct module {        
+      enum module_state state;                   
+      struct list_head list;
+      char name[56]; 
+      struct module_kobject mkobj; 
+      struct module_attribute *modinfo_attrs;
+      const char *version;         
+      const char *srcversion;
+      struct kobject *holders_dir;
+      const struct kernel_symbol *syms;      
+      const s32 *crcs;          
+      unsigned int num_syms;
+      struct mutex param_lock;      
+      struct kernel_param *kp;
+      unsigned int num_kp;    
+      unsigned int num_gpl_syms;
+      const struct kernel_symbol *gpl_syms;
+      const s32 *gpl_crcs;
+      bool using_gplonly_symbols;
+      bool async_probe_requested;
+      unsigned int num_exentries;
+      struct exception_table_entry *extable;
+      int (*init)(void);
+      struct module_layout core_layout;
+      struct module_layout init_layout;
+  -----snip-----
+
+Rather than trying to understand every field, lets look at a typical this_module:
+
+  $ readelf -x .gnu.linkonce.this_module hello.ko
+  Hex dump of section '.gnu.linkonce.this_module':
+   NOTE: This section has relocations against it, but these have NOT been applied to this dump.
+    0x00000000 00000000 00000000 00000000 00000000 ................
+    0x00000010 00000000 00000000 68655c6c 6f000000 ........hello...
+    0x00000020 00000000 00000000 00000000 00000000 ................
+    0x00000030 00000000 00000000 00000000 00000000 ................
+    0x00000040 00000000 00000000 00000000 00000000 ................
+    0x00000050 00000000 00000000 00000000 00000000 ................
+    0x00000060 00000000 00000000 00000000 00000000 ................
+  -----snip-----
+
+This is almost entirely empty except for the module name, although readelf helpfully points out that
+there are relocations for this section. Lets look at those:
+
+  $ readelf -r hello.ko
+  -----snip-----
+  Relocation section '.rela.gnu.linkonce.this_module' at offset 0x1ac20 contains 2 entries:
+    Offset          Info           Type           Sym. Value    Sym. Name + Addend
+  000000000138  002500000001 R_X86_64_64       0000000000000000 init_module + 0
+  000000000328  002300000001 R_X86_64_64       0000000000000000 cleanup_module + 0
+  -----snip-----
+
+The only relocations are for the init_module and cleanup_module functions, which correspond to 
+the module->init and module->exit fields. 
+
+[5] https://elixir.bootlin.com/linux/v5.15/source/include/linux/module.h#L364
+
+||| .modinfo |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+In order to avoid tainting the kernel and putting our module at risk of not loading, we need to pass
+a few parameter checks in the check_modinfo function. 
+
+The modinfo section has to have the following parameters: 
+  - vermagic=&lt;correct vermagic string&gt;: depending on CONFIG_MODULE_FORCE_LOAD, not including this 
+    will either result in tainting the kernel with TAINT_FORCED_MODULE, or failing to load the 
+    module with ENOEXEC.
+  - intree=: not including this results in taint (TAINT_OOT_MODULE)
+  - retpoline=: required on x86, but not needed on other architectures. see check_modinfo_retpoline 
+    and retpoline_module_ok. Not including this doesn't taint the kernel, but it does print some 
+    messages in the kernel log.
+  - license=GPL (or any other license from license_is_gpl_compatible in include/linux/license.h). 
+    Checked within set_license, called by check_modinfo. If the license isn't GPL compatible,
+    set_license sets TAINT_PROPRIETARY_MODULE.
+
+        ┌─ Neither True Nor False But A Secret Third Thing ─────────────────────────────┐
+        │ The checks for intree and retpoline don't actually do anything with the value │
+          that the variables are set to. As a result, as long as the variable name is    
+        │ present and followed by an '=' character, the checks pass.                    │
+        └───────────────────────────────────────────────────────────────────────────────┘
+
+||| Symbol Table |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+There must be exactly one section header with type SHT_SYMTAB, even if there are no symbols. Parsing
+the symbol table is done by simplify_symbols[6]. For common symbols, only the st_shndx and st_value 
+are used, and other fields are ignored. For other symbol types, st_name and st_info may need to be 
+valid. The first entry in the symbol table is also ignored, and can be overlayed with any arbitrary
+data.
+
+[6] https://elixir.bootlin.com/linux/v5.15/source/kernel/module.c#L2284
+
+||| Relocations ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+Kernel modules are position independent, and require relocations to be applied. On x86_64 systems, 
+modules can use RELA or RELA_LIVEPATCH relocation sections. 
+  - RELA supports absolute or PC-relative 64- or 32-bit relocations with an addend. The value where 
+    the reolocation is applied must be 0 before relocating, otherwise the relocation is considered 
+    invalid and the module will fail to load.
+  - RELA_LIVEPATCH is, as the name suggests, used for kernel livepatch. Symbol names use the format 
+    .klp.rela.vmlinux.* (for symbols within vmlinux) or .klp.rela.{module}.* (for symbols within a 
+    kernel module). RELA_LIVEPATCH can be used to access certain unexported symbols. Once symbols 
+    are resolved, they are relocated the same way as RELA symbols. 
+
+||| A Tiny & Useless Kernel Module |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+To start, lets make a trivial kernel module that can be loaded or unloaded. Because different 
+section headers are resolved in different ways, we can save space by overlaying:
+  - shstrtab is resolved by the e_shstrndx field in elf64_ehdr. As a result, we can overlay shstrtab
+    with any other section header
+  - strtab is resolved by looking for the SH_LINK field of the SHT_SYMTAB section. Just like with 
+    shstrtab, we can overlay with another section
+  - symtab is resolved by looking for the only SHT_SYMTAB section. I have yet to find a clean and 
+    useful way to overlay this with another section
+
+Since we don't care about running code, we don't need relocations or symbols. We can use an empty 
+symbol table section, and we don't need to include a RELA section header at all.
+
+The outline of this module looks something like:
+
+elf64_ehdr
+ - struct module
+  - overlay data for strtab/shstrtab/symtab
+ - SHT_NULL section header
+ - a single section header for strtab, shstrtab, and modinfo 
+ - .gnu.linkonce.this_module section header, pointing to the struct module
+ - SHT_SYMTAB section header
+
+NASM source code for this module is provided in appendix A. This module is 672 bytes, which is still 
+pretty big for an ELF file but not bad considering the size of this_module.
+
+    # lsmod
+    Module                  Size  Used by    Not tainted
+    # ls -l useless
+    -rw-r--r--    1 root     root           672 Apr 20 04:20 useless
+    # insmod useless
+    # lsmod
+    Module                  Size  Used by    Not tainted
+    hi                      4096  0 
+    # rmmod hi
+    # lsmod
+    Module                  Size  Used by    Not tainted
+
+||| init and exit ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+When a module is loaded, do_init_module will check if mod->init is NULL. If not, mod->init is called.
+If init returns a non-zero value, a warning is printed. In the example above, init was set to NULL 
+so no initialization function was executed. 
+
+When a module is unloaded by the delete_module syscall, linux will check if the module has an init 
+function and an exit function. Modules which have an init function must have an exit function to be 
+able to unload. As a result, you can create a module which can't be unloaded (unless 
+CONFIG_MODULE_FORCE_UNLOAD [7] is enabled and appropriate flags are set) by simply defining an init 
+function and setting the mod->exit field to NULL. This is the same effect as adding a reference to 
+the module during initialization, but requires 0 lines of code!
+
+That said, for now we're going to make a module that loads and unloads cleanly. mod->exit must 
+return, but the return code is not checked. For a simple proof-of-concept, we can make the exit() 
+function a single ret instruction. 
+
+[7] https://tmpout.sh/1/9.html
+
+||| A Less Tiny, But More Useful Kernel Module |||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+Compared to the previous example, executing code requires a few modifications. We have to add a 
+relocation section to point to the entrypoint. We also have to add an executable section for the 
+code to run. Additionally, we need to create a symbol for the entrypoint in order to relocate it. 
+
+To make things simple, we can reuse the same symbol for init and exit, and use different addends in 
+RELA entries to point the exit function to the ret instruction. The first RELA will be at offset 
+0x138, which is the offset of this_module->init on my system, and have an addend of 0. The second 
+RELA will be offset 0x328, and have an addend of 22 to point to the end of my code. 
+
+In order to resolve the address of printk (or, more specificall, _printk), I am reading the return 
+address and adding a constant offset to get the address of printk. The proper way to resolve this 
+address would be to create a symbol for printk and add a relocation, however I didn't have room for 
+the extra RELA.
+
+The python script in Appendix B will generate an 800-byte module which logs a kernel message when 
+loaded or unloaded. You will need to provide it a path to your vmlinux image so it can calculate 
+the printk offset and grab the correct vermagic string. 
+
+    $ python3 modgen.py 
+    vermagic: '5.19.17 SMP preempt mod_unload '
+    return address: ffffffff811404a2
+    _printk address: ffffffff81bbf140
+    offset: 0xa7ec9e
+    0: 23 used out of 24 (1 free)
+    2: 48 used out of 56 (8 free)
+    1: 24 used out of 28 (4 free)
+    3: 108 used out of 128 (20 free)
+    filesize: 800
+
+    / # ls -l hi.ko 
+    -rw-r--r--    1 root     root           800 Apr 20 04:20 hi.ko
+    / # lsmod
+    Module                  Size  Used by    Not tainted
+    / # insmod hi.ko
+    [767.012345][  T296] :)
+    / # lsmod
+    Module                  Size  Used by    Not tainted
+    hi                     16384  0 
+    / # rmmod hi
+    / # lsmod
+    Module                  Size  Used by    Not tainted
+
+||| Appendix A: useless.s ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+bits 64
+
+; ehdr helpers
+%macro elf64_ehdr 6
+    db 0x7f,'ELF'    ; magic
+    db 0x02          ; 64-bit
+    db 0x01          ; litlte endian
+    db 0x01          ; current ELF version
+    db 0x00          ; systemv abi
+    db 0x00          ; system V ABI
+    db 0,0,0,0,0,0,0 ; padding
+    dw 0x01          ; relocatable
+    dw 0x3e          ; x86_64
+    dd 0x01          ; version 1
+    dq %1            ; e_entry
+    dq %2            ; e_phoff
+    dq %3            ; e_shoff
+    dd 0             ; flags, ignored
+    dw 0x40          ; sizeof(elf64_ehdr)
+    dw 0x38          ; phentsize
+    dw %4            ; phnum
+    dw 0x40          ; shentsize
+    dw %5            ; shnum
+    dw %6            ; shstrndx
+%endmacro 
+
+; kmod ignores e_entry and doesn't use program headers
+; only pass e_shoff, e_shnum, and e_shstrndx
+%macro mod_elf64_ehdr 3
+    elf64_ehdr 0, 0, %1, 0, %2, %3 
+%endmacro
+
+; shdr helpers
+%macro elf64_shdr 10
+    dd %1 ; sh_name
+    dd %2 ; sh_type
+    dq %3 ; sh_flags
+    dq %4 ; sh_addr
+    dq %5 ; sh_offset
+    dq %6 ; sh_size
+    dd %7 ; sh_link
+    dd %8 ; sh_info
+    dq %9 ; sh_addralign
+    dq %10; sh_entsize
+%endmacro
+%define shsz 0x40
+
+; sh_addr isnt used. sh_addralign can always be 1.
+%macro mod_elf64_shdr 8
+    elf64_shdr %1, %2, %3, 0, %4, %5, %6, %7, 1, %8 
+%endmacro
+
+
+; constants 
+%define modname `hi\x00`
+; you will need to modify depending on your kernel
+%define vermagic "5.19.17 SMP preempt mod_unload "
+
+; start of the actual module definition
+mod_elf64_ehdr sh_start, ((sh_end-sh_start)/shsz), strtab_idx
+
+this_module:
+; padding
+times 0x18 db 0
+    db modname; name @ 0x18
+times (0xb0-$+this_module) db 0 ; pad to start of free space
+
+; overlay strtab, shstrtab, and modinfo on this_module
+
+
+strtab_start:
+    db "license=GPL",0
+    db "intree=",0
+    db "retpoline=",0
+    db "vermagic=", vermagic, 0
+    db 0
+gltm_stridx equ $-strtab_start
+    db ".gnu.linkonce.this_module", 0
+modinfo_stridx equ $-strtab_start
+    db ".modinfo", 0
+strtab_end:
+    
+
+symtab_start:
+; symtab[0] is ignored
+;    mod_symtab 0,0
+symtab_end:
+
+
+times (0xb0-$+strtab_start) db 0 ; padding to safe spot for headers
+
+sh_start:
+; we require unique sh_name for every section header, so just use a different name index for different sections
+
+
+; sh_name, sh_type, sh_flags, sh_offset, sh_size, sh_link, sh_info, sh_entsize
+; sh_null: everything is empty
+    mod_elf64_shdr 0,0,0,0,0,0,0,0 ; SH_NULL
+; strtab, shstrtab, .modinfo
+strtab_hdr:
+; name -> .modinfo
+; type -> strtab
+; flags -> alloc
+; offset -> start of strtab/modinfo data
+; size -> size of strtab/modinfo
+    mod_elf64_shdr modinfo_stridx, 3, 2, strtab_start, strtab_end-strtab_start, 0, 0, 0
+strtab_idx equ ((strtab_hdr-sh_start)/shsz)
+
+gltm_hdr:
+; struct module THIS_MODULE
+; name -> .gnu.linkonce.this_module
+; type -> progbits
+; flags -> alloc|write
+; offset -> start of THIS_MODULE
+; size -> sizeof(struct module)
+    mod_elf64_shdr gltm_stridx, 1, 0x03, this_module, 0x200, 0, 0, 0
+
+symtab_hdr: 
+; type -> symtab
+; flags -> alloc
+; offset - start of symtab
+; size -> size of symtab
+; sh_link -> index of strtab
+; sh_entsize -> sizeof(sym)
+    mod_elf64_shdr 2, 2, 2, symtab_start, symtab_end-symtab_start, strtab_idx, 0, 0x18
+sh_end:
+
+||| Appendix B: modgen.py ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+import struct
+import os
+
+# Change this to the path to vmlinux. 
+# The kernel image is parsed to calculate offsets in order to avoid adding an extra RELA
+#VMLINUX_PATH="../../linux-5.19.17/vmlinux"
+VMLINUX_PATH=None
+
+
+# padding helpers
+def padn(x,n):
+    assert len(x)<=n
+    if type(x)==str: x=x.encode()
+    return x+(b'\0'*(n-len(x)))
+def padw(x): return padn(x,2) 
+def padd(x): return padn(x,4) 
+def padq(x): return padn(x,8) 
+half=padw
+word=padd
+addr=padq
+off=padq
+
+# struct helpers
+class Elf64_Ehdr():
+    def __init__(self):
+        self.ei_class=b'\x02' # 1 -> 32 bit, 2->64 bit 
+        self.ei_data=b'\x01' # 1 ->LE, 2->BE
+        self.ei_version=b'\x01' 
+        self.elf_abi=b'\0'
+        self.e_type=b'\x01' # 1->relocatable, 2->executable, 3->shared, 4->core 
+        self.e_machine=b'\x3e' # 3->x86, 0x3e->x86_64
+        self.e_version=b'\x01'
+        self.e_entry=b''
+        self.e_phoff=b''
+        self.e_shoff=b''
+        self.e_flags=b'' # ignored for x86
+        self.e_ehsize=b'\x40'  # size of this header
+        self.e_phentsize=b'\x38' 
+        self.e_phnum=b''
+        self.e_shentsize=b'\x40' # might be wrong? 
+        self.e_shnum=b''
+        self.e_shstrndx=b''
+    def __len__(self): return 0x40
+    def create(self):
+        d=b''
+        e_ident=b'\x7fELF'+self.ei_class+self.ei_data+self.ei_version+self.elf_abi
+        d+=padn(e_ident, 16)
+        d+=half(self.e_type)
+        d+=half(self.e_machine)
+        d+=word(self.e_version)
+        d+=addr(self.e_entry)
+        d+=off(self.e_phoff)
+        d+=off(self.e_shoff)
+        d+=word(self.e_flags)
+        d+=half(self.e_ehsize)
+        d+=half(self.e_phentsize)
+        d+=half(self.e_phnum)
+        d+=half(self.e_shentsize)
+        d+=half(self.e_shnum)
+        d+=half(self.e_shstrndx)
+        assert len(d)==0x40
+        return d
+
+class Elf64_Phdr():
+    def __init__(self, p_type):
+        if type(p_type)==int: p_type=struct.pack('&lt;I', p_type)
+        self.p_type=p_type
+        self.p_offset=b''
+        self.p_vaddr=b''
+        self.p_paddr=b'' 
+        self.p_filesz=b''
+        self.p_memsz=b''
+        self.p_flags=b'\x07' # RWX
+        self.p_align=b'\x01'
+    def __len__(self): return 0x38
+    def create(self):
+        d=b''
+        d+=word(self.p_type)
+        d+=word(self.p_flags)
+        d+=off(self.p_offset)
+        d+=addr(self.p_vaddr)
+        d+=addr(self.p_paddr)
+        d+=padq(self.p_filesz)
+        d+=padq(self.p_memsz)
+        d+=padq(self.p_align)
+        assert len(d)==0x38
+        return d
+
+class Elf64_Shdr():
+    def __init__(self, sh_type):
+        if type(sh_type)==int: sh_type=struct.pack("&lt;I", sh_type)
+        self.sh_name=b''
+        self.sh_type=sh_type
+        self.sh_flags=b''
+        self.sh_addr=b''
+        self.sh_offset=b''
+        self.sh_size=b''
+        self.sh_link=b''
+        self.sh_info=b''
+        self.sh_addralign=b'\x01'
+        self.sh_entsize=b''
+    def __len__(self): return 0x40
+    def create(self):
+        d=b''
+        d+=word(self.sh_name)
+        d+=word(self.sh_type)
+        d+=padq(self.sh_flags)
+        d+=addr(self.sh_addr)
+        d+=off(self.sh_offset)
+        d+=padq(self.sh_size)
+        d+=word(self.sh_link)
+        d+=word(self.sh_info)
+        d+=addr(self.sh_addralign)
+        d+=padq(self.sh_entsize)
+        assert len(d)==0x40
+        return d
+
+ehdr=Elf64_Ehdr()
+ehdr.e_phentsize=b''
+ehdr.e_shoff=None
+
+# sh_null: the kernel requires sh_type==SHT_NULL, sh_size==0, sh_addr==0.
+sections = [
+ Elf64_Shdr(0), # sh_null, null=0
+ Elf64_Shdr(1), # .text, progbits=1
+ Elf64_Shdr(2), # .symtab, symtab=1
+ Elf64_Shdr(4), # .rela.gnu.linkonce.this_module, rela=4
+ Elf64_Shdr(3), # .strtab, strtab=3
+ Elf64_Shdr(1), # .gnu.linkonce.this_module, progbits=1
+]
+
+
+do_init_mod_ret=os.popen("objdump --disassemble=do_init_module {}|grep callq -A1|grep do_one_initcall -A1".format(VMLINUX_PATH)).read().split("\n")[1].split(":")[0]
+vermagic=os.popen("gdb -batch -ex 'p vermagic' {}".format(VMLINUX_PATH)).read().split('"')[1]
+print("vermagic: '{}'".format(vermagic))
+
+strtab=b'.gnu.linkonce.this_module\0.modinfo\0'
+modinfo=b"license=GPL\0intree=\0retpoline=\0vermagic="+vermagic.encode()+b"\0\0"
+#modinfo=b"license=gpl\0intree=y\0retpoline=y\0vermagic=5.19.17 smp preempt mod_unload \0\0"
+strtab=modinfo+strtab
+
+
+cur_snum=0
+ehdr.e_shnum=chr(len(sections))
+
+cur_data_ptr=len(ehdr)
+
+# struct module
+#  .name: 0x018 
+this_module=b'\0'*0x18
+# The data after the first \0 is the message passed to printk
+this_module+=b'hi\0:)\n\0' 
+this_module+=b'\0'*(0x160-len(this_module))
+this_module_base=cur_data_ptr
+cur_data_ptr+=len(this_module)
+
+
+# SH_NULL
+sections[cur_snum].sh_addralign=b'' 
+cur_snum+=1
+
+# build the payload
+
+# get the offset from the return address from do_one_initcall to _printk by parsing vmlinux
+do_init_mod_ret=os.popen("objdump --disassemble=do_init_module {}|grep callq -A1|grep do_one_initcall -A1".format(VMLINUX_PATH)).read().split("\n")[1].split(":")[0]
+printk=os.popen("nm {}|grep ' _printk$'".format(VMLINUX_PATH)).read().split(" ")[0]
+a0=int(do_init_mod_ret,16)
+a1=int(printk,16)
+print("return address: "+do_init_mod_ret)
+print("_printk address: "+printk)
+print("offset: "+hex(a1-a0))
+printk_offs=struct.pack("&lt;I",a1-a0)
+
+
+# this payload may require changes for your system. On my kernel, we can get a pointer to this_module at [rpb-0x10]
+# if something crashes, you can easily verify that the code is running by replacing this with \xcc and looking for the panic, or 
+# mov ax, 1; ret and looking for the warning message.
+code=b''
+code+=b'\x48\x8b\x7d\xf0'         # mov rdi, [rbp-0x10] <-- gets the module address 
+code+=b'\x48\x83\xc7\x1b'         # add rdi, 0x1b <-- point to the name field of module+2 
+code+=b'\x48\x8b\x45\x08'         # mov rax, [rbp+8] <-- gets the return location within do_init_module
+code+=b'\x48\x05'+printk_offs     # add rax. &lt;printk_offset&gt; <-- point to printk
+code+=b'\xff\xd0'                 # call rax 
+code+=b'\x31\xc0'                 # xor eax, eax 
+code+=b'\xc3'                     # ret
+
+# currently using the 0x18 bytes before module.name. for a longer payload, jump elsewhere. 
+assert len(code)<=0x18, "Payload is too long: %d > 0x18".format(len(code))
+
+# .text
+code_ptr=struct.pack("&lt;Q",cur_data_ptr)
+sections[cur_snum].sh_size=struct.pack("&lt;I",0x200) # len(ehdr)+len(struct module)
+sections[cur_snum].sh_offset=struct.pack("&lt;I",cur_data_ptr)
+sections[cur_snum].sh_name=struct.pack("&lt;I",strtab.index(b"fo")) # name doesnt matter
+sections[cur_snum].sh_flags=b'\x06' # ALLOC|EXECINSTR
+code_idx=cur_snum
+cur_snum+=1
+
+# .symtab
+def makesymtab(st_name, st_info, st_other, st_shndx, st_value, st_size):
+    dat=struct.pack("&lt;IBBHQQ",st_name,st_info,st_other,st_shndx,st_value,st_size)
+    assert len(dat)==0x18
+    return dat
+
+symtab=b"\0"*0x18
+# symbol is at offset 0 from the start of the .text section
+symtab+=makesymtab(0,0,0, code_idx, 0, 0) # init
+
+sections[cur_snum].sh_size=struct.pack("&lt;I",len(symtab))
+sections[cur_snum].sh_offset=struct.pack("&lt;I",cur_data_ptr)
+sections[cur_snum].sh_flags=b'\x02' # ALLOC
+sections[cur_snum].sh_entsize=b'\x18'
+sections[cur_snum].sh_info=b'\x01'
+sections[cur_snum].sh_name=struct.pack("&lt;I",strtab.index(b"le"))
+symtab_idx=cur_snum
+cur_snum+=1
+
+
+# .rela.gnu.linkonce.this_module
+# elf64_rela: offset (within section), r_info, addend
+def makerela(offset, info, addend=0): return struct.pack("&lt;QQQ", offset, info, addend)
+rela =makerela(0x138, (1<<32)|1)# .init, symtab idx 1, direct 64-bit relocation
+rela+=makerela(0x328, (1<<32)|1, 22)# .exit, symtab idx 1, direct 64-bit relocation. `ret` is 22 bytes into our payload
+
+sections[cur_snum].sh_size=struct.pack("&lt;I",len(rela))
+sections[cur_snum].sh_offset=struct.pack("&lt;I",cur_data_ptr)
+sections[cur_snum].sh_flags=b'\x40' # SHF_INFO_LINK
+sections[cur_snum].sh_link=struct.pack("&lt;H",symtab_idx)
+sections[cur_snum].sh_name=struct.pack("&lt;I",strtab.index(b".linkonce.this_module")) # name doesnt actually matter
+rela_idx=cur_snum
+cur_snum+=1
+
+# .strtab
+sections[cur_snum].sh_size=struct.pack("&lt;I",len(strtab))
+sections[cur_snum].sh_offset=struct.pack("&lt;I",cur_data_ptr)
+sections[cur_snum].sh_name=struct.pack("&lt;I",strtab.index(b".modinfo"))
+sections[cur_snum].sh_flags=b'\x02' # ALLOC
+strtab_idx=cur_snum
+cur_snum+=1
+
+# .gnu.linkonce.this_module
+sections[cur_snum].sh_size=struct.pack("&lt;H", len(this_module) if len(this_module)>0x180 else 0x200) 
+sections[cur_snum].sh_offset=struct.pack("&lt;I",this_module_base)
+sections[cur_snum].sh_flags=b'\x03' # ALLOC|WRITE
+sections[cur_snum].sh_name=struct.pack("&lt;I",strtab.index(b".gnu.linkonce.this_module"))
+this_module_idx=cur_snum
+cur_snum+=1
+
+# ----- end of section headers ----- 
+
+# (offset,size) of free space within struct module
+# not complete, but these are some of the bigger contiguous regions
+module_freespace_map=[
+    (    0, 0x18), # 0: code
+    ( 0x34,   28), # 1: rela
+    ( 0x60, 0x38), # 2: symtab
+    ( 0xb0, 0x80), # 3: strtab
+]
+
+def overlap_region(map_idx, sh_idx, data,pad=True, off=0):
+    nzpad=lambda x,y: x+b'Z'*(y-len(x))
+    global this_module
+    r=module_freespace_map[map_idx]
+    print("{}: {} used out of {} ({} free)".format(map_idx, len(data), r[1], r[1]-len(data)))
+    if pad: data=nzpad(data,r[1])
+    assert len(data)<=r[1]
+    this_module=this_module[:r[0]]+data+this_module[r[0]+len(data):]
+    sections[sh_idx].sh_offset=struct.pack("&lt;I",this_module_base+r[0]+off)
+    
+
+# point this_module rela section to the this_module section
+sections[rela_idx].sh_info=struct.pack("&lt;H", this_module_idx)
+# symtab -- overlap 0 entry with something else
+ehdr.e_shstrndx=struct.pack("&lt;H", strtab_idx)
+overlap_region(0, code_idx, code)
+overlap_region(2, rela_idx, rela)
+# first entry of symtab is ignored
+overlap_region(1, symtab_idx, symtab[0x18:], off=-0x18)
+overlap_region(3, strtab_idx, strtab)
+# fixup shdr offset
+ehdr.e_shoff=struct.pack("&lt;I",cur_data_ptr)
+# point symtab to the strtab section
+sections[symtab_idx].sh_link=struct.pack("&lt;H",strtab_idx)
+
+# build the output
+filedata =ehdr.create()
+filedata+=this_module
+for i in sections:
+    filedata+=i.create()
+print("filesize: {}".format(len(filedata)))
+open("hi.ko","wb").write(filedata)
+
+# -- assert that we don't overlap with known unsafe fields
+def r(a,s=8): return filedata[this_module_base+a:this_module_base+a+s]==b'\0'*s
+def d(a,s=8): return filedata[this_module_base+a:this_module_base+a+s].hex()
+assert r(0x98,24), d(0x98, 24)
+assert r(0x130,0x20), d(0x130, 0x20)
+assert r(0x150,0x40), d(0x150, 0x40)
+assert r(0x190, 0x10), d(0x190, 0x10)
+
+</pre></div></body>

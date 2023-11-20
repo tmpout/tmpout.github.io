@@ -1,0 +1,182 @@
+<html>
+<head>
+<title>easylkb: Easy Linux Kernel Builder</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+easylkb: Easy Linux Kernel Builder                     │                   █   │
+~ ackmage & netspooky                                  └───────────────────█ ──┘
+
+This short writeup is to introduce a convenience script for anyone who wants to 
+build arbitrary Linux kernels and bootable Debian images for testing, debugging,
+or whatev. It's called easylkb and we will be maintaining it here:
+
+<a href="https://github.com/deepseagirl/easylkb">https://github.com/deepseagirl/easylkb</a>
+
+///: What are we trying to do?
+
+Write a simple script to make Linux kernel debugging easier and more accessible.
+
+When you're building the kernel, there are only a few steps you need to do:
+
+- Download the kernel source
+- Configure the kernel source with the options you want
+- Compile the kernel
+
+To run this kernel, you can build it into a Debian image that can be booted
+with qemu. We are adapting syzkaller's create-image.sh for this.
+
+Once you run the kernel, you can debug it using gdb!
+
+///: How do you install easylkb?
+
+Install prerequisites:
+
+  sudo apt install make gcc flex bison libncurses-dev libelf-dev libssl-dev
+  sudo apt install debootstrap
+
+Then clone the repo and run easylkb.py with Python
+
+///: How do you use easylkb?
+
+Build a specific mainline kernel version, use the -k option:
+
+  $ easylkb -k 6.2
+
+Build some other kernel in a directory, use the -p option:
+
+  $ easylkb -p path/to/linux/
+
+Command line flags are tied to specific parts of the build process.
+
+To (d)ownload, (c)onfigure, and co(m)pile a kernel
+
+  $ easylkb -k 6.2 -dcm
+
+To build a Debian (i)mage from this kernel
+
+  $ easylkb -k 6.2 -i
+
+To (r)un the generated image:
+
+  $ easylkb -k 6.2 -r
+
+Combine all of these steps into one:
+
+  $ easylkb -k 6.2 -a
+
+Once this finishes, it will run the built image with qemu, and expose ssh and 
+GDB debugging features accessible via localhost.
+
+///: How Does It Work?
+
+Under the hood this is how the script works:
+
+- Download Linux kernel tarball from the kernel source repository on kernel.org
+- Apply KConfig options that make it bootable with QEMU and debuggable with GDB
+- Compile the kernel using make
+- Create a bootable Debian image using create-image.sh
+
+With the -r option, the script runs the bootable image using QEMU, with ssh and
+remote debugging with gdb enabled.
+
+///: How Do I Interact With The Image?
+
+The image, keys, and run script are stored in the img/ directory within the 
+kernel source.
+
+You can ssh into your image like so:
+
+  $ ssh root@localhost -p 10021 -i ~/kernel/linux-6.2/img/bullseye.id_rsa
+
+The default login for the resulting image is the user "root" with no password.
+
+This is an example ssh config entry for the resulting image, which you can 
+add to your ~/.ssh/config file.
+
+Host linux62
+  HostName localhost
+  User root
+  Port 10021
+  IdentityFile ~/kernel/linux-6.2/img/bullseye.id_rsa
+  StrictHostKeyChecking no
+
+Now you can ssh into your kernel by doing:
+
+  $ ssh linux62
+
+You can scp files by doing
+
+  $ scp myfile.bin linux62:
+
+You can use gdb to debug like this:
+
+  $ gdb ./vmlinux some other args
+
+///: Kernel Debugging
+
+/!\ NOTE: If you are using kernel 5.18 or higher, you may need to add 
+          `CONFIG_DEBUG_INFO_DWARF4=y` to the end of your kconfig! A 
+          recent change affects what options enable kernel debugging.
+
+To debug the kernel, you need $KERNEL_DIR/scripts/gdb/vmlinux-gdb.py
+
+Add this to your ~/.gdbinit file if you want to debug this kernel, changing
+the path to the kernel source you're working with.
+
+add-auto-load-safe-path /home/user/kernel/linux-6.2/scripts/gdb/vmlinux-gdb.py
+
+Now to debug just do
+
+  $ cd /path/to/your/kernel/
+  $ gdb ./vmlinux
+
+Once you're in gdb just do this:
+
+  (gdb) lx-symbols
+  (gdb) target remote :1234
+
+Wow! You're debugging the kernel you just built, pretty neat.
+
+Try setting a breakpoint on load_elf_binary and then running "whoami" in the
+running Linux image.
+
+  (gdb) break load_elf_binary
+  (gdb) continue
+
+When the breakpoint is hit, inspect the bprm structure that represents the
+binary program.
+
+  (gdb) p *bprm
+
+Then you can use the "step" command to step through the kernel's ELF loader!
+
+For more info on kernel debugging with gdb:
+- <a href="https://docs.kernel.org/dev-tools/gdb-kernel-debugging.html">https://docs.kernel.org/dev-tools/gdb-kernel-debugging.html</a>
+- <a href="https://github.com/torvalds/linux">https://github.com/torvalds/linux</a>
+
+We recommend gef as a gdb helper!
+- <a href="https://hugsy.github.io/gef/install/">https://hugsy.github.io/gef/install/</a>
+
+This is a good reference for kernel source
+- <a href="https://elixir.bootlin.com/linux/latest/source">https://elixir.bootlin.com/linux/latest/source</a>
+
+
+</pre></div></body>

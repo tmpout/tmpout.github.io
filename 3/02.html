@@ -1,0 +1,423 @@
+<html>
+<head>
+<title>SPTH INTERVIEW</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                            ━━━━━━━━━━━━━━━━
+                             SPTH INTERVIEW
+
+                                  TMZ
+                            ━━━━━━━━━━━━━━━━
+
+
+1 Questions
+═══════════
+
+1.1 Q: Thank you for agreeing to be interviewed by us! Tell us a little
+about yourself and your interests.
+────────────────────────────────────────────────────────────────────────────────
+
+1.1.1 A: I am an old-school virus writer publishing stuff under the name Second
+Part To Hell (<https://github.com/SPTHvx/>). In my early days (2002-2006), I
+was a member of rRlf (we had several real-life meetings which was fun), and
+published a few things also in other zines such as 29a. After a break,
+from 2010-2014/2015 I worked closely with hh86 to get the Valhalla zines
+running. I was active during that time mainly because of hh86’s constant
+motivation and excitement. Then I  went silent in 2014 but published another
+code that some liked a few months ago in 2023. I am mainly interested in fancy
+proof-of-principle virus-related technologies, such as:
+
+  • New file-or programming language infections.
+
+  For example, I hosted the Language Infection Project (LIP) from
+  2013-2016, intending to write a virus for all of the top 100
+  programming languages. This was really exciting, it motivated the
+  community, and many people contributed new viruses to languages
+  nobody would have thought to infect otherwise for decades.
+  Contributors among others were hh86 (Scilab, Falcon, and others),
+  Genetix (Ocaml and Erlang were some weird functional programming
+  languages), herm1t (mySQL), TMZ contributed some codes infecting Vala,
+  Google’s Go and Nim binaries; and roy g biv, who invented an idea that
+  made it very simple to infect more and more languages with the same
+  strategy, based on Quines (see Valhalla #4).
+
+  In my early days, I wrote the first boot sector virus for CD ROMs (rRlf#6),
+  the first Ruby viruses (29a#7) and the first infectors for Microsoft
+  Infopath and F# (both in rRlf7).
+
+  Probably my personal favourite was my code which was able to infect
+  DNA files via code (see Valhalla #4). It was spreading in the digital
+  world and was searching for .fasta files, which is a format in which
+  genetic information is stored. The idea is: if my codes get into a lab
+  with access to in-cell DNA generation, such as those of Craig Venter
+  and others, then my code can wander from the digital to the biological
+  world. New Code-Mutation techniques.
+
+  • I tried to invent new types of code mutations. Potentially my 3
+    favourites were:
+
+  a) Artificial Evolution in the W32 binary system, by employing ideas
+  from the field of Artificial Life (pioneered by Thomas S. Ray, and
+  employed in awesome ways by Christof Adami and Richard Lenski), such
+  that the file stays relatively robust under random mutations of the
+  binary code. This opens the possibility of collecting many mutations over
+  time, and potentially getting micro and later macro mutation
+  modifications. Peter Ferrie wrote 3 texts in Virus Bulletin about it
+  (called Flibi). Those texts and codes were published in hh86’s virus
+  writing bulletin (which I call Valhalla #0) and Valhalla #1.
+
+  b) First metamorphic script virus, in JavaScript. The idea was
+  developed after many discussions with herm1t, that metalanguages are
+  crucial. JS.Transcriptase carried its own metalanguage and compiler
+  from metalanguage to JavaScript. The compilation was highly
+  probabilistic. It was a pain to debug because some bugs could
+  propagate to the 4th or 5th generation without being noticed. This was
+  probably my technologically most advanced code. that was published in
+  Valhalla #3.
+
+  c) Metamorphism via GPT. GPT can translate language to code, so I can
+  describe in a natural language a code, and get back a Python code. Now
+  I can make it such that the virus does not contain any viral Python
+  code, but just English text that is sent to GPT, translated there to
+  Python, and in the end I run the compiled code from GPT. The cool
+  thing is: GPT can make modifications to both the Python code, as well
+  as the prompts themselves. That’s beyond metamorphism and introduces the
+  new concept of language-morphism or linguisto-morphism (unfortunately,
+  no one took up this concept and was happy with the GPT code mutation),
+  but I think the language-mutation ability is much more crucial in the
+  long term. let’s see. These ideas are published in the current tmp.0ut
+  zine – thanks for giving them a nice place.
+
+
+1.2 Q: What do you currently do for work and hobbies? Still coding or working
+with physics (I understand that this was your major)?
+────────────────────────────────────────────────────────────────────────────────
+
+1.2.1 A: I am a researcher mainly working with AI to understand the world. I
+love to read about all sorts of natural sciences and math and intelligence
+(human, artificial, swarm, emergent, …); also I am a big fan of space.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+1.3 Q: LIP was one of the first times I released full
+viruses. I guess I just want to say thank you for that, I’ve learned a lot
+since then. What do you think about doing another version of it (or something
+similar) and what do you think about BGGP <https://tmpout.sh/bggp/3/>?
+────────────────────────────────────────────────────────────────────────────────
+
+1.3.1 A: Oh, I didn’t know it was your first published file infector. Great to
+hear - 7 years later :). LIP was cool, it brought many people to play with new
+languages. The design was good, and a top-100 list allowed for a big variation,
+you just chose one, learned a few days something new, and got your place at the
+“Great Wall of LIP participations”. Total unexpected was roy g biv’s
+hyper-efficient way to kick out quine-based infectors. In Valhalla #4, he
+published one text which infected 32 different languages! BGGP (with the goal
+of finding methods to crash pre-defined programs) sounds like a very interesting
+variation. The tasks sound more challenging than those for LIP and thus may
+not be directly applicable for newbies, also apparently it only ran for two
+months. I need to go through the results - it’s outside of my expertise, and
+I wouldn’t know how to start.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+1.4 Q: Feels like just yesterday but LIP, discussing ideas on VXHeavens was
+almost 10 years ago. Do you miss the scene?
+────────────────────────────────────────────────────────────────────────────────
+
+1.4.1 A: I enjoyed the time a lot, knowing that computers can be used in
+highly unusual ways is an extremely valuable piece of information that I
+collected over these years, and from which I benefit these days a lot. Meeting
+(IRL or virtual) with many fun and creative people was certainly exciting. I
+have great memories and do not miss it now. I stayed quiet for nearly 10 years
+as I had no good ideas for projects that needed to be done. Until February
+2023 when I got access to the OpenAI’s GPT APIs. There it was clear what had
+to be done.
+
+So while I do not miss the scene, I am extremely happy and grateful
+that a younger generation built the new library vx-underground and
+keep creating vx-zines such as tmp.0ut.
+
+
+1.5 Q: What made you decide to retire from the scene back then? How did it
+felt making this decision?
+────────────────────────────────────────────────────────────────────────────────
+
+1.5.1 A: I was mainly active because the collaboration with hh86 was highly
+productive and motivating. We used Google chat while coding; spending hours
+of decreasing the BugCount and thinking about the next awesome ideas and how
+to make the next very best Valhalla issue. We wanted to push each issue to
+new extremes. For me valhalla#3, JS.Transcriptase was the most technologically
+demanding code - it took ages to debug. I was only able to top that with a
+wild idea - infection of DNA in Valhalla #4 (Mycoplasma mycoides SPTH-syn1.0).
+After that, we talked several times about v5, but honestly, I didn't have
+any idea how to top Transcripase and my DNA-infector SPTH-syn1.0 in
+human-possible reasonable time.
+
+Also, real life kicked in, and there I started to see how I could apply my
+abilities creatively IRL. I think similar things happened to hh86. I
+always told myself that I would write another code when I had another
+good idea. it took 10 years, but I think my GPT code indicates what
+might be possible.
+
+
+1.6 Q: How do you see AI affecting computer viruses and general malware and
+exploits in the future from the offensive and defensive perspective?
+────────────────────────────────────────────────────────────────────────────────
+
+1.6.1 A: I have been wondering for ages how AI can be applied, I had several
+chats with herm1t about it - but never got any really good idea (besides my text
+in Valhalla #2 on “Dynamic Anti-Emulation using Blackbox Analysis”, where a
+virus learns to memorize new anti-debugging tricks. but it was incredible
+brittle.)
+
+Now time has changed. Large language models like GPT seem to make an
+enormous step towards some more general intelligent system. It allows
+for the interaction between natural and computer language. At the
+moment, these systems are still a bit unstable, so one needs to break
+down code into micro-instructions. But imagine a few years from now
+when they create rock-solid codes for macro-instructions. Of course,
+OpenAI could restrict access to malicious systems - but training these
+systems will become significantly cheaper, and their memory
+requirement will be reduced.
+
+At some point, a virus can carry its own trained LLM, trained without
+restrictions. It may be the last VX technique that will ever be
+invented.
+
+I wonder whether this application destroys society before LLMs that
+solve the new-age Turing test invented by DeepMind’s Mustafa Suleyman
+(a code that makes 1mio$ from 100k$). Or maybe some innovative defense
+company stores GPT5 in their war robots. Anyway - let’s watch the race
+about what goes wrong first 🙂
+
+
+1.7 Q: One of your most interesting articles has to be “Infecting Biological
+DNA With Digital Computer Code”. I remember you had some worries about the
+misuse of such techniques. What are your current thoughts about this, also
+considering AI as a factor here?
+────────────────────────────────────────────────────────────────────────────────
+
+1.7.1 A: Thank you! I would love to see one of my codes being written in DNA
+and copied into an E. coli genome one day. I mean - imagine that! … But I think
+it is not as dangerous as other techniques at the moment. I trust that
+laboratories with the ability to write and encode DNA fragments into cell
+genomes are highly secure. And the progress of research in that field seems
+to be significantly slower than for AI, so it's much better to predict what
+might happen and people have more time to prepare. I worry a bit about projects
+for the gain-of-function of biological viruses (which is related, as you write
+the DNA code in a computer) - I am not motivated to get infected by a super-HIV
+or Ebola bug.
+
+Oh - btw there is one thing that is missing. So far we have: 
+• bio -> bio infection: Since 4 billion years ago due to Evolution
+• digital -> digital infection: in the 1980s by Rich Skrenta (Elk Cloner), Amjad
+                                and Basit Farooq Alvi (Brain), and many other
+                                heroes.
+• digital -> bio infection: 2013 by me (Mycoplasma mycoides SPTH-syn1.0)
+• bio -> digital infection: noone yet (you?)
+
+Let me know if you find out how to do it. I will invite you for
+beer&whiskey.
+
+
+1.8 Q: What do you think about modern malware and in which ways do you think
+malware has changed since the last decade?
+────────────────────────────────────────────────────────────────────────────────
+
+1.8.1 A: I didn't follow the developments too much; what I see on Twitter and
+tmp.0ut are very cool technological ideas. However, I was never good at
+super-fancy technology (in contrast to ppl like hh86, roy g biv, or herm1t),
+thus I fear I cannot appreciate them without further context. I usually
+enjoy simple ideas so it seems I am a bit rusty in giving a well-informed
+answer here. That said: If you have developed some fancy unexpected
+code-mutation technique, or infected some cool new target, please write me an
+email with the text/code and a one-sentence dummy explanation 🙂
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+1.9 Q: You mentioned once that hh86 and roy g biv were collective pseudonyms.
+Would you be comfortable on shedding some light on this?
+────────────────────────────────────────────────────────────────────────────────
+
+1.9.1 A: Oh, yes I wrote that - I think it's not true. hh86 suggested to make
+this joke, and I believe for roy g biv, this rumor was around for some time
+(probably because of his enormous productivity over decades).
+
+All I know, hh86 and roy g biv were two enormously gifted vxers, two
+of the best and most productive in the vx history. I mostly had
+contact with them via mail and Google chat, so who knows? Well - for
+hh86, I also sent two letters IRL. One with Carl Sagan’s book Contact,
+and the other with a printed version of Peter Ferrie’s pre-publication
+draft of the first Flibi article.
+
+
+1.10 Q: What are some of your favorite viruses and/or authors and people from
+the scene?
+────────────────────────────────────────────────────────────────────────────────
+
+1.10.1 A: Woa so many!
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+  • MTE by Dark Avenger.
+  Must be on every list number one. No one must forget our prophet!
+
+
+  • Regswap, MetaPHOR, ZMist by the Popes of Metamorphism in the late
+    90s/early 2000s: Vecna, The Mental Driller, Z0MBiE. (in 29a#4,
+    29a#6, 29a#6, respectively)
+
+
+  • Benny’s Linux-Windows cross-infector Winux
+  Masterpiece in 29a #6, infects PE/ELF files. Benny was super skilled
+  and creative to go new paths.
+
+
+  • Apparation by LordAsd (in 29a#3)
+  Carries its own C++ source code and relied on a C++ compiler to create
+  new metamorphic versions of itself.
+
+
+  • New Virus Virus Generation Kit by SnakeByte
+  A beautiful powerful tool that produced highly sophisticated assembler
+  codes of custom-made win32 viruses. Highly variable code generator,
+  which made detection enormously difficult. Was one of the first
+  advanced VX tools I saw, the main motivation for my first tool, BWG
+  (Batch Worm Generator).
+
+
+  • Caribe by Vallez/29A
+  First infector for mobile phones via BlueTooth. (in 29a #8)
+
+
+  • jackie’s tutorials on very fancy script techniques, e.g. javascript
+    and macro viruses.
+  Big inspiration when I started, especially as he lived in Austria too.
+
+
+  • Win32 assembly tutorials by vorgon/iKx
+  Must be around 2004, I learned assembler with them, and vorgon was one
+  of the nicest vxers I ever met. he spent hours and hours in IRC (or
+  MSN Messenger?) with me, explaining me everything. A complete hero!
+
+
+  • roy g biv’s work; so many!
+  rgb pioneered for 20 years or more, James Cook of VXing. Win64
+  conquered. A quine technique that can easily infect 32 different
+  programming languages. High-Tech Windows tricks (heaven’s gate in
+  Valhalla #1) which I wish I would understand but can confirm that they
+  are awesome by hh86’s judgement :).
+
+
+  • philet0ast3r & DiA
+  Philet0ast3r was founder and leader of rRlf, DiA was one of the most
+  active members and zine-editor. I joined rRlf very early (similar time
+  as DiA), I was a newby but because of the motivation was motivated to
+  learn quickly. Without these two guys, I would likely not have
+  continued to push. Also met DiA and philet0ast3r at least 3 times IRL,
+  maybe more often - memories are blurred because of strong alcohol (I
+  used to bring one or more bottles of 80% KORN).
+
+
+  • DiA’s Tamiami Worm (in rRlf#7)
+  DiA was a hell of a vxer who created one of my all time favorite
+  codes: it had its own HTTP server, and creates a fake website using
+  images from the computer. To download the full pictures of the images,
+  you can download a .zip file, which contained the virus. I executed it
+  on my own computer - it worked amazingly!
+
+
+  • herm1t’s ideas and VX Heavens
+  VX Heavens was our library in the old times, kept alive by herm1t.
+  Herm1t is also an amazing coder, highly skilled and interested in
+  using meta-languages for EPO and mutation tricks (see herm1t's metamorphic
+  Linux virus Linux.Lacrimae in EOF #2 and his article “Recompiling the
+  Metamorphism” in Valhalla #2). Many exciting discussions about all sort
+  of VX tech, such as AI for viruses before AlexNet :).
+
+
+  • Eric Filiol’s amazing theory articles
+  The text “From the design of a generic metamorphic engine to a
+  black-box classification of antivirus detection techniques” introduces
+  the idea of tau-obfuscation which is an incredible anti-debugging
+  trick which I wouldn't know how to overcome. (I used this idea in
+  Matlab.MicrophoneFever2 in Valhalla #1). His idea of “Metamorphism,
+  Formal grammars and Undecidable Code Mutation” was extremely
+  inspiring, because of this article, I took a full course on
+  theoretical computer science - just to understand wtf Eric is talking
+  about. Was worth it, I use these ideas in some of my work these days
+  :)
+
+
+  • Qozah - “Polymorphism and Grammars”, 29A#4
+  First usage of formal grammar to analyse code mutation. A breakthrough
+  idea!
+
+
+  • Mark Stamp’s statistical AV techniques and countermeasures.
+  Mark Stamp’s analysed JS.Transcriptase (my complex metamorphic virus)
+  and round-house kicked it using statistical methods (“Hunting for
+  metamorphic JavaScript malware” by M Musale, TH Austin, M Stamp).
+  Another student then took up the project and implemented defence
+  methods into JS.Transcriptase (“Advanced transcriptase for JavaScript
+  malware”, Fabio Di Troia; Corrado Aaron Visaggio; Thomas H. Austin;
+  Mark Stamp).
+
+
+  • JPanic - CAPZLOQ 2.0 in valhalla#4
+  CAPZLOQ infects Win32 PE, Linux i386 ELF, i386 Macho (OS X
+  Executable/Linkable) and FAT (OS X Universal Binary) files. The virus
+  runs under x86-32bit (i386) Windows, Linux, and Mac OS X. (!!). JPanic
+  planned to extend it to Linux64 (see his tutorial in Valhalla #4), but
+  did not have enough time to finish it…
+
+
+  smelly - the organizer of vx underground, our new Library of
+  Alexandria! Thanks so much, and congratulations on this amazingly
+  well-organized project!
+
+
+  TMZ - organizing tmp.0ut, a high-tech vx/hacking ezine that is still
+  going strong. Congratulations and thanks for the interview!
+
+
+  Peter Ferrie – Wonderful analyses of our works; very clever
+  extensions of some of the ideas at a conceptual level (smallest
+  alphabet for mutationally robust codes, see Flibi2 in VirusBulletin).
+
+
+  Mikko Hypponen – One nice virus researcher. One of the few
+  who took my DNA infector at least remotely seriously. Same with my GPT
+  mutation engine. Thanks. Oh, if you haven’t seen it, check out the
+  video where he goes to Pakistan and meets the inventors of Brain
+  (first PC virus). Thats amazing.
+
+
+  hh86 – Last but not least. One of the most skilled, productive, and
+  motivating vxers. hh86 is responsible that I didn't back to sleep
+  after publishing my Artificial Evolution article in 2010. Rather, she
+  made me (and others such as roy g biv, JPanic, and herm1t) contribute
+  heavily to 5 magazine issues of her Valhalla e-zine (valhalla#0-#4). I
+  published most of my best codes there - that means they only exist
+  because of hh86. She wrote amazing codes of very high skill level,
+  examples are codes that use CUDA and GPUs for virus cryptography and
+  infection, Java Bytecode viruses, Win32-Win64 cross infector
+  (W48.Sofia!) and many many more.
+
+  Best greetz to many others that were nice and skilled such as perforin
+  (who hosted my website for a long time), kefi, BlueOwl (both rRlf),
+  malfunction, Belial, genetix, promix, wargame, slagehammer, dahmer,
+  r3s1stanc3, Luca, alcopaul, cyneox, …
+
+
+
+1.12 Q: This space is reserved for you SPTH, feel free to say anything you wish.
+────────────────────────────────────────────────────────────────────────────────
+
+1.12.1 A: Thanks for the fun interview, which let me refresh my memories
+about these old days. Good memories.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+</pre></div></body>

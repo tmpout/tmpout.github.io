@@ -1,0 +1,124 @@
+<html>
+<head>
+<title>DOING THE NASTY: Linux/Nasty</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                   █   │
+DOING THE NASTY: Linux/Nasty                                     │                   █   │
+~ qkumba                                                         └───────────────────█ ──┘
+
+I see a virus named "Nasty", and the song that comes to my mind is the one by Janet 
+Jackson.  I'm about 30 years too early.
+
+
+NASTY LIMITS
+
+The virus begins by opening the current directory, and reading as many entries into memory
+as will fit into a 1kb buffer on the stack.  This might be only a few files if the names 
+are very long.  The virus exits if an error occurred, otherwise it accepts the returned 
+value as the number of bytes that were read...
+
+
+NASTY BUGS
+
+However, here is the first bug: the virus continues if zero bytes were read.  This is 
+interpreted as a buffer of enormous size.  The directory parser will then read 
+uninitialised memory freely.  The result is either an infinite loop, if a zero is read 
+as the reclen value; or it will crash if a large value is read that causes the pointer 
+to reach outside of the buffer.  Of course, the trigger for this bug is a very unlikely 
+scenario, and easy to miss.
+
+If the directory was read correctly, then the virus looks for regular file entries.  
+If one is found, then the virus tries to open the file for read and write.
+
+Here is the second bug: the buffer pointer is saved on the stack prior to attempting to 
+open the file, but it is not removed from the stack if an error occurs.  That leads to 
+an unbalanced stack on exit, which will prevent the host program from being able to 
+access its command-line parameters and environment.  The bug would not be visible if the 
+host program is very simple, which is probably why it was not found.
+
+If the file can be opened for read and write, then the virus copies the filename to a 
+buffer on the stack, immediately below the buffer that holds the directory entries.  
+Fortunately for the virus author, the maximum length of a filename on Linux filesystems 
+is most commonly 255 characters, so there is no risk of overrunning the 400 bytes large 
+buffer.
+
+If the virus can create a memory-map of the file, then the virus parses the file contents.
+The virus is interested in files that are 64-bit x86 ELF format, and not infected already.
+The infection marker is the string "TMZ" in the padding field.  For each file that is 
+considered for infection, the virus searches the program header table for a loadable 
+segment that is both readable and executable.
+
+
+EXPRESSION OF INTEREST
+
+For each program header that is not of interest, the virus adjusts the program header 
+offset in the file in order to make room for the virus.  After parsing all of the program
+header entries, the virus performs the same adjustment to all of the section header 
+entries.
+
+If the virus finds a readable and executable program header, then the virus adjusts both 
+the address and size in the entry to make room for the virus code.  The assumption is 
+that one, and only one, such segment will be found.  This could be considered a bug for 
+three reasons.  One bug is that there might not be any executable segments, because the 
+file might contain only data.  The second bug is that the segment could also be writable, 
+or have other attributes set.  The third bug is that there might be more than one loadable
+segment, and the last one will be used, despite adjustments being made to the address and 
+size of earlier ones.  These changes alter the file permanently, even if the infection 
+process is abandoned later.  This complicates any clean-up effort, since the changes 
+cannot be reversed without knowing that the virus has been run against those files.
+
+After parsing the section headers, the virus attempts to create a file named ".nty.tmp" 
+in the current directory.  If the file creation fails, then the mapped file is leaked.  
+If the file creation succeeds, then the virus moves the location of the program header 
+table and section header table up in memory, to make room for the virus code, and sets 
+the new entrypoint to point to the original location of the program header table, 
+adjusted for the introduced space for the virus code.
+
+The virus writes to the temporary file the new ELF header, then the virus code, and then 
+the rest of the original file.  If all goes well, then the virus unmaps the original file,
+and moves the ".nty.tmp" file to replace the original file.
+
+
+STOP.  HAMMER TIME
+
+After all files in the directory buffer are examined, the virus displays its payload
+
+Nasty by TMZ (c) 2021
+
+Nasty, nasty
+Triple X rated
+Nasty, nasty
+Justice, a waste-pit
+Nasty, nasty
+Deeper in the dirt
+Nasty, nasty
+Making bodies hurt
+
+These are lyrics from the song "Nasty" by The Prodigy.  Then the virus executes the host 
+original entrypoint code.
+
+
+CONCLUSION
+
+Debugging is the process of removing bugs from code.  Therefore, programming is the process 
+of adding bugs to code.  Naming the virus "nasty" is appropriate on several levels.
+
+</pre></div></body>

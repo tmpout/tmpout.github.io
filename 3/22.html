@@ -1,0 +1,590 @@
+<html>
+<head>
+<title>Cramming a Tiny Program into a Tiny ELF File: A Case Study</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+Cramming a Tiny Program into a Tiny ELF File:          │                   █   │
+A Case Study                                           │                   █   │
+~ lm978                                                └───────────────────█ ──┘
+
+-- Introduction ----------------------------------------------------------------
+
+Last fall, I was rereading Brian Raiter's article on tiny ELF programs [1], when
+I decided to try the challenge myself and create the tiniest x86_64 ELF program
+on Linux; I was unaware at the time of others' attempts to answer the question.
+To avoid missing any edge cases that could help, I decided to work from first
+principles, reading the source of the Linux kernel's ELF loader and deriving
+the requirements from that. At first, after ruling out all smaller offsets of
+the program header, I concluded that offset 0x18 was the smallest possible,
+yielding an 80-byte program that returns 42:
+
+00000000: 7f45 4c46 b0e7 40b7 2a0f 0500 0000 0000  .ELF..@.*.......
+00000010: 0200 3e00 0000 0000 0100 0000 0100 0000  ..>.............
+00000020: 1800 0000 0000 0000 1800 0000 0100 0000  ................
+00000030: 0000 0000 0000 3800 0100 0000 0000 0000  ......8.........
+00000040: 0100 0000 0000 0000 0000 0000 0000 0000  ................
+
+(This 80-byte size was already known by Brian Raiter and a few others [2],
+though not widely publicized.) This summer, I found Nathan Otterness's 2021
+article [3] concluding that 105 bytes is the minimum size, and to put the issue
+to rest, I decided to write my own article with a full analysis of the 80-byte
+minimum.
+
+However, in the process of repeating my analysis, I remembered that I had only
+considered executables of type ET_EXEC, and not ET_DYN. As it turned out, this
+was a mistake: with ET_DYN, the program header can just barely be placed at
+offset 0xc. Annoyingly, the entry point is fixed to the 'jg .+0x47' at the very
+start of the file, so another jump has to be placed at offset 0x47, past the end
+of the headers. Overall, this yields a 73-byte program that returns 42:
+
+00000000: 7f45 4c46 b0e7 40b7 2a0f 0500 0100 0000  .ELF..@.*.......
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 0000 0000 0000 3800  ..............8.
+00000030: 0100 0000 0000 3800 0100 0000 0000 0000  ......8.........
+00000040: 0000 0000 0000 00eb bb                   .........
+
+Unless I made another mistake, this is the absolute minimum size for an ELF file
+containing an x86_64 program, modulo the precise definition of a "program". I
+plan to publish the full analysis later this year.
+
+-- A Simple Challenge, and a Straightforward Solution --------------------------
+
+But once I had established the minimum size, I was inspired by Otterness's
+article to turn it into the tiniest x86_64 Hello World program. The natural
+rules for this challenge are pretty simple: write the 14 bytes "Hello, world!\n"
+to stdout, exit with code 0, and produce no other side effects. Of course, the
+actual process of golfing the program is far from simple.
+
+First, let's start with our 80-byte pattern, which doesn't include a mandatory
+instruction at offset 0x47. This allows us to put our entire 14-byte string at
+offset 0x48, immediately following phdr->p_memsz. To place our instructions so
+that they won't interfere with the header fields, we can use a template that I
+created in my analysis:
+
+00000000: 7f45 4c46 **** **** **** **** **** ****  .ELF............
+00000010: 0200 3e00 **** **** 0100 0000 pppp pp00  ..>.............
+00000020: 1800 0000 0000 0000 1800 0000 pppp pp00  ................
+00000030: **** **** **** 3800 0100 qqqq qqqq qq00  ......8.........
+00000040: 0100 qqqq qqqq qq00 **** **** **** ****  ................
+
+Here, the p, q, and * characters are all placeholders. There are a couple extra
+restrictions on their values for the program to be loadable. 0xpppppp must be
+odd, so that phdr->p_flags includes PF_X. Also, if the system doesn't support
+5-level paging, then 0xpppppp can't be larger than 0x007fff, and 0xqqqqqqqqqq
+can't be larger than 0x007fffffff.
+
+The template has enough space for us to write our program with a straightforward
+instruction sequence, with no special tricks necessary, apart from using
+'pop rdi' to set rdi to 1. The value comes from argc, as saved onto the initial
+process stack by the kernel. Adapting this sequence to work when argc != 1 is
+left as an exercise to the reader.
+
+0x1:
+  rex.RB rex.WR rex.RX  /* "ELF" in ELFMAG                 */
+  mov al, 1             /* nr = 1 = __NR_write             */
+  pop rdi               /* fd = argc = 1                   */
+  lea rsi, [rip+0x3a]   /* buf = "Hello, world!\n"         */
+  jmp 0x14
+0x14:
+  mov dl, 14            /* count = 14                      */
+  jmp 0x30
+0x30:
+  syscall               /* write(1, "Hello, world!\n", 14) */
+  mov al, 231           /* nr = 231 = __NR_exit_group      */
+  jmp 0x3a
+0x3a:
+  xor edi, edi          /* error_code = 0                  */
+  syscall               /* exit_group(0)                   */
+0x48:
+  .ascii "Hello, world!\n"
+
+This yields an 86-byte Hello World program:
+
+00000000: 7f45 4c46 b001 5f48 8d35 3a00 0000 eb04  .ELF.._H.5:.....
+00000010: 0300 3e00 b20e eb18 0100 0000 0100 0000  ..>.............
+00000020: 1800 0000 0000 0000 1800 0000 0100 0000  ................
+00000030: 0f05 b0e7 eb04 3800 0100 31ff 0f05 0000  ......8...1.....
+00000040: 0100 31ff 0f05 0000 4865 6c6c 6f2c 2077  ..1.....Hello, w
+00000050: 6f72 6c64 210a                           orld!.
+
+Clearly, this is the tiniest program we can write while keeping the string in
+one piece: the template doesn't let us put it any earlier in the file. Even our
+offset-0xc pattern doesn't help: there are only 11 bytes of free space before
+the mandatory jump instruction, so the 14-byte string would have to be placed
+after it, at offset 0x49. If we want to make the program any tinier, we'll have
+to divide the string into multiple chunks in the file, then reassemble them at
+runtime.
+
+-- Division and Reassembly -----------------------------------------------------
+
+When we divide the string, it makes sense to use the offset-0xc pattern instead
+of the longer offset-0x18 pattern. The template for this offset includes a long
+block of 28 immutable header bytes after the initial free space:
+
+00000000: 7f45 4c46 **** **** **** **** 0100 0000  .ELF............
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 **** **** pppp pppp  ................
+00000030: pppp pp00 qqqq 3800 0100 rr00 **** ****  ......8.........
+00000040: **** ****                                ..
+
+In this case, we have phdr->p_filesz = 0x00pppppppppppppp and phdr->p_memsz =
+0x00rr00010038qqqq, with three different alternatives for their values. Either
+
+1. the file size <= phdr->p_filesz <= 0xfff;
+2. phdr->p_filesz == phdr->p_memsz; or
+3. phdr->p_filesz < phdr->p_memsz, and (phdr->p_filesz & 0xfff) == 0xff4.
+
+In practice, we'll be using the 3rd alternative, so that we can store additional
+instructions within phdr->p_filesz. Once again, if the system doesn't support
+5-level paging, then the two values must both be at most 0x00007fffffffffff (or
+rather, a few megabytes less, to leave room for the process stack). Also, if the
+system *does* support 5-level paging, and phdr->p_memsz is above that size, then
+the vm.overcommit_memory sysctl must be set to 1 ("always overcommit"), to allow
+the kernel to map enough terabytes of read-write memory.
+
+When reassembling the string from two parts, we need to write it into a region
+of writable memory. This leaves us a choice: should we push it onto the stack,
+or should we write it into the program image, which is mapped as WX? The stack
+can be written to very easily, using the family of 'push' instructions. But the
+program image already contains one of the parts, leaving only the other part to
+be written.
+
+For now, let's start with an approach writing to the program image. We can
+actually still join the two parts with a 'push' instruction, if we first use a
+'pop rsp' to replace the stack pointer with a pointer into the image. To obtain
+this pointer, we can replace a 'jmp rel8' with a 'call rel32', adding only 3
+bytes to the instruction sequence, down from the 7 bytes required by a typical
+'lea r64, [rip+disp32]'. Then, to minimize stack wrangling, we can place the
+'call' directly before "orld!\n", so that 'pop rsp; push r64' is sufficient to
+join the two parts. Finally, prior to the 'call', we can use an ordinary
+'mov r64, imm64' to load the first part "Hello, w" into a register.
+
+When fitting the instructions into the template, we must be careful to satisfy
+the 0xff4 requirement on phdr->p_filesz: its first byte must be 0xf4, and its
+second byte must be 0x0f, 0x1f, ..., or 0xff. Best utilizing these two bytes is
+one of our main goals in arranging the sequence. The first byte can be either
+skipped past with a dummy instruction like 'test al, 0xf4' (a8 f4), or used at
+the end of a 3-byte encoding of 'mov rsi, rsp' (48 8b f4). Meanwhile, the second
+byte can be used for 'syscall' (0f 05), 'pop rdi' (5f), or any of the multibyte
+encodings of 'pop r/m64' (8f ...) or 'push r/m64' (ff ...).
+
+Altogether, we have a somewhat twisty instruction sequence, starting with a
+'jrcxz 0x3c' to jump to the first instruction of the trailing free space, and
+using both 'mov rsi, rsp' and 'pop rdi' to cover the 0xff4 in phdr->p_filesz.
+The resulting file takes 84 bytes.
+
+0x0:
+  jg 0x47                      /* "\177E" in ELFMAG               */
+0x47:
+  jrcxz 0x3c
+0x3c:
+  pop rax                      /* nr = argc = 1 = __NR_write      */
+  mov rcx, 0x77202c6f6c6c6548  /* rcx = 'Hello, w'                */
+  jrcxz 0x3c                   /* (not taken)                     */
+  call 0x28                    /* [rsp] = "orld!\n"               */
+  .ascii "orld!\n"
+0x28:
+  pop rsp                      /* rsp = "orld!\n"                 */
+  push rax                     /* [rsp] = 1                       */
+  mov rsi, rsp /* 48 8b f4 */  /* buf + 0x8 = "orld!\n"           */
+  pop rdi      /* 5f */        /* fd = 1                          */
+  push rcx                     /* buf = "Hello, world!\n"         */
+  mov dl, 14                   /* len = 14                        */
+  jmp 0x4
+0x4:
+  syscall                      /* write(1, "Hello, world!\n", 14) */
+  mov al, 231                  /* nr = 231 = __NR_exit_group      */
+  xor edi, edi                 /* error_code = 0                  */
+  syscall                      /* exit_group(0)                   */
+
+00000000: 7f45 4c46 0f05 b0e7 31ff 0f05 0100 0000  .ELF....1.......
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 5c50 488b f45f 51b2  ........\PH.._Q.
+00000030: 0eeb d100 0000 3800 0100 d200 5848 b948  ......8.....XH.H
+00000040: 656c 6c6f 2c20 77e3 f3e8 daff ffff 6f72  ello, w.......or
+00000050: 6c64 210a                                ld!.
+
+Since phdr->p_memsz = 0x00d2000100380000, this program requires 5-level paging
+to run. Luckily, even if you don't own a recent Intel Xeon processor that
+supports it natively, you can emulate 5-level paging with QEMU and a guest that
+enables CONFIG_X86_5LEVEL in its kernel. Personally, I use a premade Arch Linux
+VM image [4], since it is small and quick to boot. Emulating 5-level paging in
+QEMU just takes an extra argument to set the CPU model:
+
+$ qemu-system-x86_64 -cpu qemu64,la57 -m 512 Arch-Linux-x86_64-basic.qcow2
+
+[arch@archlinux ~]$ sudo sysctl vm.overcommit_memory=1
+vm.overcommit_memory = 1
+[arch@archlinux ~]$ ./program; echo $?
+Hello, world!
+0
+
+At this point, our main bottleneck for improving the size is the big fat 5-byte
+'call rel32' before the "orld!\n" part; it blocks us from moving that part any
+earlier in the file. One approach to avoid the call is to use two imm64 operands
+to load the two parts, but that would require placing the 'mov' instruction for
+the "Hello, w" part at offset 0x49 or later, and ultimately it wouldn't end up
+saving any bytes at all. If only we had some way to separate the strings from
+the instructions, so as to use fewer bytes in the trailing free space...
+
+-- The Almighty SYSCALL Instruction --------------------------------------------
+
+The AMD64 psABI [5] has something curious to say about syscalls on Linux:
+
+  A system-call is done via the syscall instruction. The kernel destroys
+  registers %rcx and %r11.
+
+This is pretty vague; what nefarious things could the kernel possibly be doing
+with those registers!? The answer lies not in the psABI, but in the entry for
+the SYSRET instruction in Intel's SDM (and its counterpart in AMD's manual):
+
+  SYSRET is a companion instruction to the SYSCALL instruction. It returns
+  from an OS system-call handler to user code at privilege level 3. It does so
+  by loading RIP from RCX and loading RFLAGS from R11.
+
+This means that rcx is effectively guaranteed to contain the return address on
+return from a 'syscall' instruction. Thus, after running a syscall (even one
+that has no external side effects), we have a pointer into the program image,
+which we can use to push 8 bytes from anywhere in the file onto the stack, with
+only a 3-byte 'push [rcx+disp8]'.
+
+A no-op 'syscall' at the start of the instruction sequence costs us 2 extra
+bytes, but we can make up for it by using only 4 basic blocks instead of 5,
+saving a 2-byte jump instruction. We can use the conveniently-sized 8-byte space
+at offset 0x4 to store the "Hello, w" part, and leave the "orld!\n" part at the
+end of the file. Then, at runtime, we can push the two parts to the stack with a
+pair of 'push' instructions.
+
+Thus, by the power of the almighty SYSCALL instruction, we can make our code a
+bit less twisty, and thereby shrink our file from 84 to 81 bytes.
+
+0x0:
+  jg 0x47                      /* "\177E" in ELFMAG               */
+0x4:
+  .ascii "Hello, w"
+0x47:
+  jrcxz 0x3c
+0x3c:
+  syscall                      /* read(0, NULL, 0)                */
+  pop rax                      /* nr = argc = 1 = __NR_write      */
+  push rax                     /* [rsp] = 1                       */
+  pop rdi                      /* fd = 1                          */
+  push [rcx+0xd]               /* rsp = "orld!\n"                 */
+  push [rcx-0x3a]              /* rsp = "Hello, world!\n"         */
+  jrcxz 0x3c                   /* (not taken)                     */
+  jmp 0x28
+  .ascii "orld!\n"
+0x28:
+  mov dl, 14                   /* len = 14                        */
+  mov rsi, rsp /* 48 8b f4 */  /* buf = "Hello, world!\n"         */
+  syscall      /* 0f 05 */     /* write(1, "Hello, world!\n", 14) */
+  mov al, 231                  /* nr = 231 = __NR_exit_group      */
+  mov dil, 0x0 /* 40 b7 00 */  /* error_code = 0                  */
+  syscall                      /* exit_group(0)                   */
+
+00000000: 7f45 4c46 4865 6c6c 6f2c 2077 0100 0000  .ELFHello, w....
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 b20e 488b f40f 05b0  ..........H.....
+00000030: e740 b700 0f05 3800 0100 b800 0f05 5850  .@....8.......XP
+00000040: 5fff 710d ff71 c6e3 f3eb dd6f 726c 6421  _.q..q.....orld!
+00000050: 0a                                       .
+
+(Note that as our no-op syscall, we attempt to read the stdin stream for 0
+bytes. Could this be considered a side effect? If stdin is redirected to a
+special file from some random driver or subsystem in the kernel, pretty much
+anything could happen when it receives a 0-byte read request from userspace.
+However, apart from FUSE, I am not aware of any driver that doesn't simply
+discard or reject such a read request, so I wouldn't consider this a serious
+issue.)
+
+-- Ouroboros Programming -------------------------------------------------------
+
+  ὁ <δὲ> κύκλος ἐπίπεδον σχῆμά ἐστιν ὑπὸ μιᾶς γραμμῆς περιεχόμενον, καὶ ταύτῃ
+  κυκλικὸν ὀνομάζεται σχῆμα ἀφ' ἑαυτοῦ ἀρχόμενον καὶ εἰς ἑαυτὸν ἀναστρέφοντος
+  καὶ μηδαμοῦ περατουμένου. ὅθεν καὶ Αἰγύπτιοι καθ' ἱερὸν λόγον δράκοντα
+  οὐρηβόρον ταῖς πυραμίσιν ἐγγλύφουσιν. [6]
+
+  Now, the circle is a plane figure bounded by a single line, and thus a shape
+  that begins from itself and ends with itself is called "circular"--which is
+  particularly [true of] time which returns into itself and is never
+  terminated. Hence also the Egyptians, in accordance with a sacred discourse,
+  carve a serpent eating its tail on their pyramids. [7]
+
+So says John Lydus (translated by Mischa Hooker) regarding the symbol of the
+ouroboros. Though our program is required to terminate, we can design it so that
+it returns into itself, as the ouroboros does. At this point, our instruction
+sequence both begins and ends with a 'syscall', and we are already forced to
+jump from the end to the start. Thus, we can close the circle, letting the
+instruction pointer advance once more into the initial 'syscall', so that we no
+longer need the final 'syscall'. This allows us to save 2 bytes.
+
+However, adapting the program in this way isn't entirely trivial, since we can't
+use 'mov rsi, rsp' to cover the 0xf4 byte in phdr->p_filesz. (There's no way to
+set rsp to its final value early enough in the code.) Instead, we can use that
+byte to help us set rax to 1. First, we write 'cmp al, 0xf4' (3c f4), covering
+the 0xf4 byte. Since al is 0 at this point, the comparison will always set the
+carry flag. Then, at the end of phdr->p_filesz, we write 'adc al, 0x0' (14 00),
+covering the 0x00 byte. As long as the carry flag is not cleard between the two
+instructions, the latter will set al to 1, as desired.
+
+However, there's a catch to this trick. It only works      .----.
+if rax starts at 0, but our program begins with the      .' o  /------.
+no-op read(0, NULL, 0) syscall, which uses rax for      /     /SYSCALL '-.
+its return value. If it fails, rax will be set to a    '   JMP'.-----.POP '.
+negative errno value, and our trick won't set it to    | OR     '.    '-.CM \
+1 properly. Thus, for our program to work, stdin      / X .-----'        \ P \
+must be a readable stream. Since lots of command-    / V /     .          \ P \
+line applications can't cope with a missing or      ' O .      |\          . U '
+bizzare stdin stream, I think that this is a        | M | .----' '------.  | S |
+reasonable restriction for a Hello World            | L | |Hello, world!|  | H |
+program, akin to requiring that argc == 1.          | L | '-------------'  | M |
+                                                    . A '                  ' O .
+When we remove the final 'syscall', rotate the       \ C \                / V /
+program so it returns to the initial 'syscall',       \ S \              / A /
+and use our trick to set rax to 1, we obtain a         \ YS'-.        .-'CD /
+79-byte program. Now, our Hello World has become        '. POP'------'PMJ .'
+even tinier than the original return-42 program!          '-. HSUPHSUP .-'
+                                                             '--------'
+0x0:
+  jg 0x47                         /* "\177E" in ELFMAG               */
+0x4:
+  .ascii "Hello, w"
+0x47:
+  jmp 0x28
+  .ascii "orld!\n"
+0x28:
+  syscall                         /* read(0, NULL, 0) = 0            */
+  pop rdi                         /* fd = argc = 1                   */
+  cmp al, 0xf4    /* 3c f4 */     /* CF = 1                          */
+  push [rcx+0x1f] /* ff 71 1f */  /* rsp = "orld!\n"                 */
+  mov dl, 14                      /* len = 14                        */
+  adc al, 0x0     /* 14 00 */     /* nr = 1 = __NR_write             */
+  jmp 0x3c
+0x3c:
+  push [rcx-0x26]                 /* rsp = "Hello, world!\n"         */
+  push rsp                        /* [rsp] = "Hello, world!\n"       */
+  pop rsi                         /* buf = "Hello, world!\n"         */
+  syscall                         /* write(1, "Hello, world!\n", 14) */
+  mov al, 231                     /* nr = 231 = __NR_exit_group      */
+  xor edi, edi                    /* error_code = 0                  */
+  jmp 0x28
+0x28:
+  syscall                         /* exit_group(0)                   */
+
+00000000: 7f45 4c46 4865 6c6c 6f2c 2077 0100 0000  .ELFHello, w....
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 0f05 5f3c f4ff 711f  .........._<..q.
+00000030: b20e 1400 eb06 3800 0100 1500 ff71 da54  ......8......q.T
+00000040: 5e0f 05b0 e731 ffeb df6f 726c 6421 0a    ^....1...orld!.
+
+-- Tightening the Loop ---------------------------------------------------------
+
+Recall that the ouroboros begins from itself and ends with itself. In the art of
+Ouroboros Programming, we must unify the beginning and the end, creating a whole
+that encompasses both. Our program begins by setting the arguments for write(),
+and ends by setting the arguments for exit_group(). How can we turn these two
+sections into one, so that we only need a single 'syscall' instruction?
+
+Since it has only one argument, exit_group() is pretty simple to call. We can
+modify the logic of the larger part of the loop so that it sets rax = __NR_write
+and rdi = 1 on the first iteration, then sets rax = __NR_exit_group and rdi = 0
+on the second iteration. We can leave the rest of the logic unmodified, since it
+only sets the value of rsi after pushing the two parts.
+
+Setting rdi is trivial: since we already have 'pop rdi' early in the program to
+set its value to argc = 1, we can push a 0 to the stack right before calling
+write(), so it will be read by 'pop rdi'. Meanwhile, setting rax is trickier,
+since we want it to have a large initial value only on the second iteration.
+Luckily, we can do this with only 1 additional byte, by adding 'xchg ebx, eax'
+to the start of the loop, and 'mov bl, 230' at the end of the loop. (The loop
+increments al by 1, so by the end of the second iteration, rax will become
+__NR_exit_group = 231.)
+
+Finally, since there's no more room for the "orld!\n" part at the end of the
+file, we can move it over to offset 0x3c, so that the jump can skip right past
+it. Compared to the last program, we have added 1 byte to 'mov al, 231', and
+removed 1 byte from 'xor edi, edi', so those balance out. We still save 2 bytes
+from merging the two 'syscall' instructions, so our program is now 77 bytes.
+
+0x0:
+  jg 0x47                         /* "\177E" in ELFMAG               */
+0x4:
+  .ascii "Hello, w"
+0x3c:
+  .ascii "orld!\n"
+0x47:
+  syscall                         /* read(0, NULL, 0) = 0            */
+  xchg ebx, eax                   /* (no-op)                         */
+  pop rdi                         /* fd = argc = 1                   */
+  jmp 0x28
+0x28:
+  push [rcx-0xd]                  /* rsp = "orld!\n"                 */
+  cmp al, 0xf4    /* 3c f4 */     /* CF = 1                          */
+  push [rcx-0x45] /* ff 71 bb */  /* rsp = "Hello, world!\n"         */
+  push rsp                        /* [rsp] = "Hello, world!\n"       */
+  pop rsi                         /* buf = "Hello, world!\n"         */
+  adc al, 0x0     /* 14 00 */     /* nr = 1 = __NR_write             */
+  jmp 0x42
+0x42:
+  push rdx                        /* [rsp] = 0                       */
+  mov dl, 14                      /* len = 14                        */
+  mov bl, 230                     /* rbx = 230                       */
+  syscall                         /* write(1, "Hello, world!\n", 14) */
+  xchg ebx, eax                   /* nr = 230                        */
+  pop rdi                         /* error_code = 0                  */
+  jmp 0x28
+0x28:
+  push [rcx-0xd]
+  cmp al, 0xf4    /* 3c f4 */     /* CF = 1                          */
+  push [rcx-0x45] /* ff 71 bb */
+  push rsp
+  pop rsi
+  adc al, 0x0     /* 14 00 */     /* nr = 231 = __NR_exit_group      */
+  jmp 0x42
+0x42:
+  push rdx
+  mov dl, 14
+  mov bl, 230
+  syscall                         /* exit_group(0)                   */
+
+00000000: 7f45 4c46 4865 6c6c 6f2c 2077 0100 0000  .ELFHello, w....
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 ff71 f33c f4ff 71bb  .........q.<..q.
+00000030: 545e 1400 eb0c 3800 0100 1500 6f72 6c64  T^....8.....orld
+00000040: 210a 52b2 0eb3 e60f 0593 5feb db         !.R......._..
+
+This is the end of the line: I don't know of any trick, method, or strategy that
+can make this program any tinier. I'm reluctant to say that this is the absolute
+minimum size; after all, anything can happen with self-modifying code, and
+there's too much free space to simulate every wild possibility of what it could
+do. However, I doubt that this program could be made any smaller through
+conventional means.
+
+-- Hello World in the Real World -----------------------------------------------
+
+The tinier versions of this program have all required 5-level paging, to get as
+much use as possible out of phdr->p_filesz. It would be nice if we could have a
+slightly longer program that anyone can run at home, outside of a VM. Adapting
+our program in this way isn't actually all that difficult: the main difference
+is that phdr->p_filesz has to end in four 0x00 bytes, so that it doesn't become
+greater than phdr->p_memsz. We can reuse these bytes within an 'adc eax, 0x0'
+(15 00 00 00 00) instruction, to set rax to 1.
+
+Apart from that, adapting the program to 4-level paging just involves rotating
+the instructions around. The version presented here is 81 bytes, but I'm not
+quite so certain that a conventional 80-byte version isn't possible.
+
+0x0:
+  jg 0x47                    /* "\177E" in ELFMAG               */
+0x4:
+  .ascii "Hello, w"
+0x3c:
+  .ascii "orld!\n"
+0x47:
+  syscall                    /* read(0, NULL, 0) = 0            */
+  jmp 0x28
+0x28:
+  xchg ebx, eax              /* (no-op)                         */
+  mov dl, 14                 /* len = 14                        */
+  cmp al, 0xf4 /* 3c f4 */   /* CF = 1                          */
+  pop rdi                    /* fd = argc = 1                   */
+  nop
+  adc eax, 0x0 /* 15 ... */  /* nr = 1 = __NR_write             */
+  jmp 0x3c
+0x3c:
+  push [rcx+0x2]             /* rsp = "orld!\n"                 */
+  push [rcx-0x45]            /* rsp = "Hello, world!\n"         */
+  push rsp                   /* [rsp] = "Hello, world!\n"       */
+  pop rsi                    /* buf = "Hello, world!\n"         */
+  mov bl, 230                /* rbx = 230                       */
+  push rbp                   /* [rsp] = 0                       */
+  syscall                    /* write(1, "Hello, world!\n", 14) */
+  jmp 0x28
+0x28:
+  xchg ebx, eax              /* nr = 230                        */
+  mov dl, 14
+  cmp al, 0xf4 /* 3c f4 */   /* CF = 1                          */
+  pop rdi                    /* error_code = 0                  */
+  nop
+  adc eax, 0x0 /* 15 ...*/   /* nr = 231 = __NR_exit_group      */
+  jmp 0x3c
+0x3c:
+  push [rcx+0x2]
+  push [rcx-0x45]
+  push rsp
+  pop rsi
+  mov bl, 230
+  push rbp
+  syscall                    /* exit_group(0)                   */
+
+00000000: 7f45 4c46 4865 6c6c 6f2c 2077 0100 0000  .ELFHello, w....
+00000010: 0300 3e00 0c00 0000 0000 0000 0c00 0000  ..>.............
+00000020: 0c00 0000 0000 0000 93b2 0e3c f45f 9015  ...........<._..
+00000030: 0000 0000 eb06 3800 0100 0000 ff71 02ff  ......8......q..
+00000040: 71bb 545e b3e6 550f 05eb dd6f 726c 6421  q.T^..U....orld!
+00000050: 0a                                       .
+
+-- Conclusion ------------------------------------------------------------------
+
+This entire task has perhaps been not very exciting from an ELF perspective;
+we've merely golfed a short x86_64 program within the peculiar constraints set
+out at the beginning. However, I think tasks like these provide partial answers
+to the eternal question of Kolmogorov complexity: "What sorts of programs can be
+expressed within an ELF file of a given length?" I've always been fascinated by
+this, since clearly any given program has an optimal length, as a mathematical
+property of the kernel and the processor. And as far as I know, the question for
+ELF files hasn't been studied very thoroughly; since any programs has to work
+around the headers, the format has been relatively unpopular for sizecoding. (Or
+perhaps the unpopularity just stems from the lack of simple MMIO on Linux...)
+
+Regardless, I hope that this can serve as a case study of the sort of "thinking
+outside the box" that can be helpful when golfing binary programs. At many
+points while writing this, I thought that I'd surely reached the limit of how
+tiny I could make the program, only for that limit to be broken by a brand-new
+technique different from what I'd previously been trying. Much of this, I think,
+arises from the flexiblity of control flow in binary code: a jump is no larger
+than any other instruction, so even with only a few basic blocks, there are
+countless ways to thread the program execution between them.
+
+This is particularly exemplified by my dramatically-named Ouroboros Programming
+(for which I am sure a more appropriate name already exists). Most instructions
+are general-purpose, so instead of thinking only in terms of an instruction's
+immediate function, we can also consider all of its possible alternative
+functions. Thus, a 'syscall' instruction isn't just some particular syscall, but
+every single syscall in the kernel that we're able to set up the arguments for.
+And a 'pop' instruction doesn't care whether we used a 'push' to store the data
+behind [rsp]; it just cares that it ended up there one way or another.
+
+It all raises the question, just how much code could we be reusing for multiple
+purposes in our golfed programs, if only the opportunities weren't so difficult
+to recognize? If my experience with this task is any lesson, it's more than we
+would think.
+
+-- References ------------------------------------------------------------------
+
+[1] https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
+[2] https://www.muppetlabs.com/~breadbox/software/tiny/return42.html
+[3] https://nathanotterness.com/2021/10/tiny_elf_modernized.html
+[4] https://gitlab.archlinux.org/archlinux/arch-boxes
+[5] https://gitlab.com/x86-psABIs/x86-64-ABI
+[6] https://archive.org/details/ioannislaurenti00wuengoog/page/39
+[7] https://archive.org/details/JohnLydusOnTheMonthsTr.Hooker2ndEd.2017/page/n82
+
+</pre></div></body>

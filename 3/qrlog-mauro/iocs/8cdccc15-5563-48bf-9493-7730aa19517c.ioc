@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<OpenIOC xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="8cdccc15-5563-48bf-9493-7730aa19517c" last-modified="2023-02-08T17:54:49Z" published-date="0001-01-01T00:00:00" xmlns="http://openioc.org/schemas/OpenIOC_1.1">
+  <metadata>
+    <short_description>QRLog Indicators</short_description>
+    <description>IOCs for QRLog malware spotted in-the-wild in February 2023.</description>
+    <authored_by>Mauro Eldritch</authored_by>
+    <authored_date>2023-02-08T17:35:31Z</authored_date>
+    <links />
+  </metadata>
+  <criteria>
+    <Indicator operator="OR" id="d85d2426-677c-4a83-8397-95612d43a3fb">
+      <IndicatorItem id="ba647cdd-8b7e-4674-94ad-c4b84a9abcef" condition="is" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/Md5sum" type="endpoint" />
+        <Content type="md5">0fb16054a1486b754d1fcc5c6b6e1b01</Content>
+      </IndicatorItem>
+      <IndicatorItem id="2a7cf487-dfd1-49f0-b532-4db7f13bdd78" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">QRCodeWriter.java</Content>
+      </IndicatorItem>
+      <IndicatorItem id="07f59c4f-f25a-47d0-a1aa-1897748e9b39" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">QRCodeGenerator_Java.zip</Content>
+      </IndicatorItem>
+      <IndicatorItem id="652ce5b3-3de7-41e1-a759-db213ff8e68d" condition="is" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/Md5sum" type="endpoint" />
+        <Content type="md5">26b7d315dd19eb932a08fe474e0f0c31</Content>
+      </IndicatorItem>
+      <IndicatorItem id="6e4dc367-5f5e-46de-8f8b-ad68f57b91d2" condition="contains" preserve-case="false" negate="false">
+        <Context document="PortItem" search="PortItem/remoteIP" type="endpoint" />
+        <Content type="IP">45.77.123.18</Content>
+      </IndicatorItem>
+      <IndicatorItem id="b135445b-8a83-4255-ba16-20a1cb7005f8" condition="contains" preserve-case="false" negate="false">
+        <Context document="PortItem" search="PortItem/remoteIP" type="endpoint" />
+        <Content type="IP">3.90.35.35</Content>
+      </IndicatorItem>
+      <IndicatorItem id="e09c5392-eee7-4eb9-bf04-99e74691e8f6" condition="contains" preserve-case="false" negate="false">
+        <Context document="Network" search="Network/String" type="network" />
+        <Content type="string">auth.pxaltonet.org</Content>
+      </IndicatorItem>
+      <IndicatorItem id="2edccdd3-6504-498f-a0a9-0f6b2a25cdbd" condition="contains" preserve-case="false" negate="false">
+        <Context document="Network" search="Network/String" type="network" />
+        <Content type="string">www.git-hub.me</Content>
+      </IndicatorItem>
+      <IndicatorItem id="a6287e64-03e8-495f-85b9-37e0317a5fbc" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">prefTmp.java</Content>
+      </IndicatorItem>
+      <IndicatorItem id="2ea09d5e-939f-415f-9451-390ba9722d37" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">p.dat</Content>
+      </IndicatorItem>
+      <IndicatorItem id="ffb59c9e-71ec-4726-b496-a1edd21a7d9e" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">QRLog.java</Content>
+      </IndicatorItem>
+      <IndicatorItem id="5d974968-7723-49bb-ad1e-8c378851d70c" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">AppleAccount.pdf</Content>
+      </IndicatorItem>
+      <IndicatorItem id="c38b1a8a-7e68-43d9-8bd3-28bbc50e127b" condition="contains" preserve-case="false" negate="false">
+        <Context document="FileItem" search="FileItem/FileName" type="endpoint" />
+        <Content type="string">AppleAccountAgent</Content>
+      </IndicatorItem>
+      <IndicatorItem id="53dc49ca-91f6-4416-8821-208b4e29f790" condition="contains" preserve-case="false" negate="false">
+        <Context document="Network" search="Network/URI" type="network" />
+        <Content type="string">/file/d/1J6943NKwGIcWHh7lj4o9gJe__9p7F1o7/view</Content>
+      </IndicatorItem>
+    </Indicator>
+  </criteria>
+  <parameters />
+</OpenIOC>
