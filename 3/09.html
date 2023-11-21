@@ -1,6 +1,6 @@
 <html>
 <head>
-<title>TITLE</title>
+<title>Silver Bullet to ELF Projects</title>
 <meta charset="utf-8">
 <link href="./style.css" rel="stylesheet" type="text/css">
 </head>
@@ -46,11 +46,11 @@ clearly demonstrates that some ELF and program headers are ignored by the
 loader. I took the inspiration from these corruptions and targeted the open 
 source projects with just one silver bullet, which is the `dead_bytes.bin`. I 
 wanted to prove the idea of "Linux loader is the least picky parsers among the
-standart Linux toolkit". At first, I also decided to suggest a fix for every 
+standart Linux toolkit". I also decided to suggest a fix for every 
 crash I found in order to be more useful both for myself and for the projects.
 However, surprisingly, even though I haven't written any advanced harnesses (was
 just using argv, which means slower execution per sec), this heretic and barely 
-valid "dead_bytes.bin" binary alone was alone was able to cause some problems! 
+valid "dead_bytes.bin" binary alone was able to cause some problems! 
 I spent my time mostly with crash triages. As you can imagine, after a while it 
 started to get really exhausting. (Reaching out developers, checking how the 
 project owner handles things, accepted naming, CoC's etc etc.) It may sound I 
@@ -63,11 +63,11 @@ I tested eight projects which are;
 
     1) [ ] binutils/readelf                                    [ ] no crash 
     2) [x] elfmaster/libelfmaster                              [x] crash
-    3) [x] radareorg/radare2 (CVE-2023-1605)[1]
+    3) [x] radareorg/radare2 (CVE-2023-1605)[1]                [o] Infinite Loop
     4) [x] jacob-baines/elfparser 
     5) [x] finixbit/elf-parser 
     6) [ ] eliben/pyelftools (unhandled EI_VERSION)
-    7) [ ] lief-project/LIEF 
+    7) [o] lief-project/LIEF
     8) [ ] cea-sec/miasm 
 
 I also included the AFL build options for targeted projects in my repository[2] 
@@ -321,7 +321,7 @@ $ watch -n 0.1 -t "xxd example/default/.cur_input"
 ─ Extras ─────────────────────────────────────────────────────────────────────
 
 I was able to minimize the crasher inputs efficiently with afl-collect:
-  * https://gitlab.com/rc0r/afl-utils (Thanks to richinseattle for recommending)
+  * https://gitlab.com/rc0r/afl-utils (Thanks to richinseattle)
 
 With "splitmind" gdb plugin, I was able to analyze the crashes more easily:
   *  https://github.com/jerdna-regeiz/splitmind (tmux and ipython needed)
@@ -338,7 +338,7 @@ speed is not practical for personal setups.
 
 So yeah it's pretty much about it! You have seen that even small fuzzing 
 campaigns, with little bit tinkering, can do find bizarre bugs in a short time. 
-Special "yo!" to elfmaster, xcellerator and tmp0ut crew!
+Special "yo!" to richinseattle, elfmaster, xcellerator and tmp0ut crew!
 
 Thanks for reading, you absolute legends!
 
@@ -353,5 +353,6 @@ Thanks for reading, you absolute legends!
 [5] libelfmaster.c: Sanity check - https://github.com/elfmaster/libelfmaster/blob/master/src/libelfmaster.c#L2920
 [6] libelfmaster.c: ELF_PHDRS_F is set - https://github.com/elfmaster/libelfmaster/blob/master/src/libelfmaster.c#L2915
 [7] Custom Mutators - https://github.com/AFLplusplus/AFLplusplus/tree/stable/custom_mutators/examples
+[8] Endless Loop in LIEF::ELF::Binary::eh_frame_functions() - https://github.com/lief-project/LIEF/issues/958
 
 </pre></div></body>
