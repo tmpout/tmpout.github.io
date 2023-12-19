@@ -1,0 +1,1328 @@
+<html>
+<head>
+<title>in-memory-only fd-less ELF execution (with Perl)</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+in-memory-only fd-less ELF execution (with Perl)       │                   █   │
+~ isra _replace_this_by_@ fastmail.net                 └───────────────────█ ──┘
+
+====[ motivation ]==============================================================
+
+Approaches for in-memory-only ELF execution[1] typically use memfd_create() and
+fexecve() syscalls which rely on the existence of file descriptors in the /proc
+filesystem. This behaviour can be monitored and detected without much effort[2].
+Therefore, the following questions arise:
+
+ Is it possible to achieve in-memory-only ELF execution without using file
+ descriptors?
+
+ If so, can it be done using the default toolset of a common Linux distribution
+ (i.e. without installing additional tools)?
+
+The answer is yes, thanks to Perl's standard modules and a bit of peek & poke.
+
+This article will describe the implementation of exec_elf64.pl, a script for
+in-memory-only ELF execution without touching the filesystem. This approach has
+the following considerations:
+
+ - The ELF's binary content is hardcoded into the script's source code.
+
+ - The ELF is parsed and loaded into memory.
+
+ - The loading process supports relocations and use of external symbols from
+   shared objects. In this case, external symbols are loaded from glibc.
+
+ - Supports x64 ELFs.
+
+ - The script is written in Perl, an interpreted language available by default
+ on most Linux x64 distributions. Version 5.008001 or higher is required.
+
+Full source code can be found at:
+
+    https://git.sr.ht/~hckng/elf/tree/master/item/exec_elf64.pl
+    https://github.com/ilv/elf/blob/main/exec_elf64.pl
+
+
+====[ preliminaries  ]=====================================================
+
+The steps for loading and executing an ELF in memory can be summarized as
+follows:
+
+ 1) Read ELF's binary content.
+ 2) Parse ELF's headers (sections, segments, etc).
+ 3) Use headers information to map ELF code and data into memory.
+ 4) Apply relocations (including external symbols).
+ 5) Execute ELF's mapped functions.
+
+Each of these steps will be discussed in the next sections, considering the
+following ELF object:
+
+------------------------------ START obj.c -------------------------------------
+ #include <stdio.h>
+
+ void print_japh(void) {
+     putchar('j');
+     putchar('a');
+     putchar('p');
+     putchar('h');
+     putchar('\n');
+ }
+
+ int main(void) {
+     char *str = "i am an elf";
+
+     printf("%s\n", str);
+     print_japh();
+
+     return 0;
+ }
+------------------------------- END obj.c --------------------------------------
+
+ $ gcc -c obj.c
+ $ file obj.o
+ obj.o: ELF 64-bit LSB relocatable, x86-64, version 1 (SYSV), not stripped
+
+
+====[ part 1: read ELF ]========================================================
+
+The usual approach for opening a file and perform I/O operations on it (such as
+read, write, seek, etc.) is by specifying a path to an existing file on the
+filesystem or by specifying a file descriptor, which in some cases may represent
+an "anonymous" or memory-only file[1]. These options require interaction with
+the regular filesystem and proc filesystem respectively.
+
+However, Perl provides an alternative method to open a filehandle by using a
+reference to a scalar variable instead of a filename. Consider the following:
+
+--------------------------------------------------------------------------------
+my $buff;
+my $str = "hello world";
+
+open my $fh, '<', \$str;
+read $fh, $buff, 5;
+close $fh;
+
+print "content read: $buff\n";
+--------------------------------------------------------------------------------
+
+The above code creates a filehandle $fh using a reference to the string $str and
+successfully reads 5 bytes into $buff by using the read() function. This method
+can also be applied to open the contents of an ELF object from a string
+reference and perform I/O operations on it.
+
+First, the read_elf() subroutine is defined as follows:
+
+--------------------------------------------------------------------------------
+ sub read_elf {
+     my $code = get_code();
+     open my $fh, '<:raw', \$code;
+
+     return ($code, $fh);
+ }
+--------------------------------------------------------------------------------
+
+The string $code and the filehandle $fh are returned since both will be used
+later during the parsing and mapping processes. To create the string $code the
+following perl one-liner is used:
+
+ $ perl -e 'print"my \$code = \"\";\n";$/=\32;' \
+ -e 'print"\$code .= pack q/H*/, q/".(unpack"H*")."/;\n" while(<>)' ./obj.o
+
+The command above generates a string $code that contains the binary data of the
+ELF object. The string $code can then be included in the get_code() subroutine:
+
+--------------------------------------------------------------------------------
+ sub get_code {
+     my $code = "";
+     $code .= pack q/H*/, q/7f454c460201010000000000[...]000000000000000000000/;
+     $code .= pack q/H*/, q/000000000000000018040000[...]40000000040000d000c00/;
+     $code .= pack q/H*/, q/554889e5bf6a000000e80000[...]f6000bf70000000e80000/;
+     $code .= pack q/H*/, q/0000bf68000000e800000000[...]00000e3554889e54883ec/;
+     [...]
+     [...]
+     $code .= pack q/H*/, q/000000000000000000000000[...]000006100000000000000/;
+     $code .= pack q/H*/, q/000000000000000001000000[...]000000000000000000/;
+     return $code;
+ }
+--------------------------------------------------------------------------------
+
+For simplicity, the get_code() subroutine is defined at the end of the
+exec_elf64.pl script to make it easy to replace the string $code by a new one.
+
+
+====[ part 2: parse ELF ]=======================================================
+
+Perl does not provide an standard module for parsing ELFs. However, the unpack()
+function can be used to extract the ELF's binary content based on a set of fixed
+data templates[3]:
+
+ - "C", an unsigned char value (1 byte).
+ - "a", a string with arbitrary binary data (1 byte).
+ - "x", a null byte.
+ - "S", an unsigned short value (2 bytes).
+ - "i", a signed integer value (4 bytes).
+ - "I", an unsigned integer value (4 bytes).
+ - "q", a signed quad value (8 bytes).
+ - "Q", An unsigned quad value (8 bytes).
+
+The ELF header, section header table, symbol table, string table and relocations
+are parsed based mostly on the Linux referenced specifications[4][5][6][7] and
+the logic implemented in readelf.pl[8].
+
+For the purpose of this work, two auxiliary subroutines ru() and mk_hash() are
+defined for reading/unpacking data and for creating hashes associated to the
+parsed headers, respectively. Then, the initial ELF header is read and parsed
+as follows (using the field names defined in @e_keys):
+
+--------------------------------------------------------------------------------
+# elf header keys
+my @e_keys = (
+    'ei_mag0', 'ei_mag1', 'ei_mag2', 'ei_mag3', 'ei_class', 'ei_data',
+    'ei_version', 'ei_osabi', 'ei_abiversion', #ei_pad ignored
+    'e_type', 'e_machine', 'e_version', 'e_entry', 'e_phoff', 'e_shoff',
+    'e_flags', 'e_ehsize', 'e_phentsize', 'e_phnum', 'e_shentsize', 'e_shnum',
+    'e_shstrndx'
+);
+
+[...]
+
+sub parse_ehdr {
+    my @hdr = ru($efh, "C a a a C C C C C x7 S S I q q q I S S S S S S", 0x40);
+    mk_hash(\%ehdr, \@e_keys, \@hdr);
+}
+--------------------------------------------------------------------------------
+
+In this case the ELF header is stored in %ehdr and its values can be accessed
+by using their corresponding field names (e.g. $ehdr{'ei_mag0'}).
+
+The program header table information is not used throughout the parsing and
+mapping processes and therefore is skipped. Next, the section header table is
+read and parsed as follows:
+
+--------------------------------------------------------------------------------
+ sub parse_shtab {
+     seek $efh, $ehdr{'e_shoff'}, "SEEK_SET";
+     for (my $i = 0; $i < $ehdr{'e_shnum'}; $i++) {
+         my %sh;
+         my @hdr = ru($efh, "I I q q q q I I q q", $ehdr{'e_shentsize'});
+         mk_hash(\%sh, \@sh_keys, \@hdr);
+         push @shtab, \%sh;
+
+         # read content of section header entry of type 'STRTAB'
+         if($sh{'sh_type'} == 3) {
+             my $tmpstr;
+             my $curr_offset = tell $efh;
+             seek $efh, $sh{'sh_offset'}, "SEEK_SET";
+             read $efh, $tmpstr, $sh{'sh_size'};
+             seek $efh, $curr_offset, "SEEK_SET";
+             $strtab{$sh{'sh_offset'}} = $tmpstr;
+         }
+     }
+ }
+--------------------------------------------------------------------------------
+
+In the above code the section header table is represented by the @shtab array
+and its entries are represented as hashes based on the field names defined in
+the @sh_keys array.
+
+Additionally, when a section header table entry of sh_type = 3 (STRTAB) is
+found, the $efh filehandle position is set to its sh_offset for reading the
+entry's content and store it in %strtab, the hash that represents the string
+table.
+
+The section header table is parsed a second time to retrieve the name of each
+entry based on the contents of the string table. The indexes for the text, data,
+symtab, rodata and rela.text sections (in @shtab) are stored for direct access
+to such sections later in the parsing and mapping processes.
+
+--------------------------------------------------------------------------------
+ sub secname {
+     my $ndx = shift;
+     my $str = shift;
+
+     my $s = substr($str, $ndx);
+     my $r = substr($s, 0, index($s, "\0"));
+ }
+
+ # parse section names from string table
+ sub parse_secnames {
+     my $shstrtab = $shtab[$ehdr{'e_shstrndx'}];
+     for(my $i = 0; $i < $ehdr{'e_shnum'}; $i++) {
+         my $name = secname(
+             $shtab[$i]{'sh_name'},
+             $strtab{$shstrtab->{'sh_offset'}}
+         );
+         # add 'name' to each section header entry
+         $shtab[$i]{'name'} = $name;
+
+         # save indexes for easier access to relevant segments
+         $text_ndx       = $i if($name eq '.text');
+         $data_ndx       = $i if($name eq '.data');
+         $symtab_ndx     = $i if($name eq '.symtab');
+         $rodata_ndx     = $i if($name eq '.rodata');
+         $relatext_ndx   = $i if($name eq '.rela.text');
+     }
+ }
+--------------------------------------------------------------------------------
+
+Next, the symbol table is read and parsed as follows:
+
+--------------------------------------------------------------------------------
+ # parse symbol table
+ [...]
+ my $symtab      = $shtab[$symtab_ndx];
+ my $sh_link     = $shtab[$symtab->{'sh_link'}];
+ my $num_entry   = $symtab->{'sh_size'}/$symtab->{'sh_entsize'};
+ [...]
+ seek $efh, $symtab->{'sh_offset'}, "SEEK_SET";
+ for (my $i = 0; $i < $num_entry; $i++) {
+     my %sym;
+     my @hdr = ru($efh, "I C C S q q", $symtab->{'sh_entsize'});
+     mk_hash(\%sym, \@st_keys, \@hdr);
+
+     my $type = $sym{'st_info'} & 0x0f;
+     my $name = secname(
+         $sym{'st_name'},
+         $strtab{$sh_link->{'sh_offset'}}
+     );
+     # add 'name' to each symbol
+     $sym{'name'} = $name;
+     push @symtab, \%sym;
+
+     # save st_value of symbols of type 'FUNC'
+     $funcs{$name} = $sym{'st_value'} if($type == 2);
+ }
+--------------------------------------------------------------------------------
+
+The symbol table is represented by the @symtab array and its entries are
+represented as hashes based on the field names defined in the @st_keys array,
+with an extra field "name" that represents the symbol's name obtained from the
+string table. Additionally, the %funcs hash is used to store the st_value of
+a function based on its name.
+
+Relocations are read and parsed in a similar way:
+
+--------------------------------------------------------------------------------
+ # parse relocations
+ my $rt = $shtab[$relatext_ndx];
+ my $entry_num = $rt->{'sh_size'}/$rt->{'sh_entsize'};
+ [..]
+ for (my $i = 0; $i < $entry_num; $i++) {
+     my %r;
+     my @hdr = ru($efh, "q Q i", $rt->{'sh_entsize'});
+     mk_hash(\%r, \@r_keys, \@hdr);
+
+     # 4 bytes on little endian order
+     my $sym_ndx = unpack("V", pack("N", $r{'r_info'} >> 8));
+     # low-order bits only
+     my $type = $r{'r_info'} & 0x0f;
+     my $sym_name = $symtab[$sym_ndx]{'name'};
+     my $sym_shndx = $symtab[$sym_ndx]{'st_shndx'};
+
+     $r{'type'} = $type;
+     $r{'symndx'} = $sym_ndx;
+     push @relocs, \%r;
+
+     # save external symbols (st_shndx of type 'UND')
+     # the num_extsym counter is used later for lookup in a 'jump table'
+     $extsym{$sym_name} = $num_extsym++ if($sym_shndx == 0);
+ }
+--------------------------------------------------------------------------------
+
+In this case, the relocations are represented by the @relocs array and its
+entries are represented as hashes based on the field names defined in the
+@r_keys array, with two extra fields "type" and "symndx" that represent the
+relocation type and the index in the symbol table of the symbol associated to
+the relocation entry. The hash %extsym is used as well to keep track of the
+number of external symbols and their names.
+
+Finally, parse_elf() subroutine is defined as follows:
+
+--------------------------------------------------------------------------------
+ sub parse_elf {
+     my $fh = shift;
+     $efh = $fh;
+
+     parse_ehdr();
+     parse_shtab();
+     parse_secnames();
+     parse_symtab();
+     parse_relocs();
+ }
+--------------------------------------------------------------------------------
+
+
+====[ part 3: map ELF ]=========================================================
+
+Most of the mapping process is based on [9] which consists basically in three
+steps:
+
+   i) Memory mapping
+  ii) Copying data into mapped area
+ iii) Memory access protection
+
+
+i) Memory mapping
+
+Memory mapping can be achieved by using Perl's syscall() to call mmap:
+
+--------------------------------------------------------------------------------
+ my $ptr = syscall(9, $addr, $size, $protect, $flags, -1, 0);
+--------------------------------------------------------------------------------
+
+Where:
+
+ - 9 is the number of the mmap syscall in Linux x86_64.
+
+ - $addr is the starting address for the new mapping. If 0, mmap will choose a
+   suitable address and return it.
+
+ - $size is the size of the mapping.
+
+ - $protect is an integer that indicates the memory protection of the mapping.
+   Possible values can be checked at [10]. In this case the value
+   PROT_READ | PROT_WRITE = 3 is used.
+
+ - $flags is an integer that indicates visibility of mapping changes and the
+   use of files. In this case the value MAP_SHARED | MAP_ANONYMOUS = 33 is used.
+
+The remaining parameters are related to file mapping and can be ignored by using
+the values -1 and 0.
+
+mmap will return the starting address of the mapped area on success and -1 on
+failure.
+
+
+ii) Copying data into mapped area
+
+Unlike mmap, there is no syscall for copying data into memory. There is also no
+built-in function in Perl for copying raw data into memory. However, there are
+some memory tricks that can be used to that end: peek & poke.
+
+The code used for peek & poke is from [11], a script for syscall/shellcode
+injection in OSX, which allows to copy arbitrary data $bytes into a memory
+address $location of choice.
+
+(NOTE: some comments and checks were redacted for simplicity; the remaining
+comments are from the original author)
+
+--------------------------------------------------------------------------------
+sub _pack_address {
+  my $p = pack("Q", $_[0]);
+  return $p;
+}
+
+sub peek {
+  unpack "P$_[1]", _pack_address($_[0]);
+}
+
+sub poke {
+  my($location, $bytes) = @_;
+
+  my $len = length($bytes);
+  my $addr = _pack_address($location);
+
+  # construct a B::PV object, backed by a SV/SvPV to a dummy string
+  # length($bytes) long, and substitute $location as the actual string storage
+  # we specifically use the same length so we do not have to deal with resizing
+  my $dummy = 'X' x $len;
+  my $dummy_addr = \$dummy + 0;
+  my $ghost_sv_contents = peek($dummy_addr, 8 + 4 + 4 + $Config{ivsize});
+  substr( $ghost_sv_contents, 8 + 4 + 4, 8 ) = $addr;
+
+  my $ghost_string_ref = bless( \ unpack(
+    "Q",
+    # it is crucial to create a copy of $sv_contents, and work with a temporary
+    # memory location. Otherwise perl memory allocation will kick in and wreak
+    # considerable havoc culminating with an inevitable segfault
+    do { no warnings 'pack'; pack( 'P', $ghost_sv_contents.'' ) },
+  ), 'B::PV' )->object_2svref;
+
+  # now when we write to the newly created "string" we are actually writing
+  # to $location
+  eval 'substr($$ghost_string_ref, 0, $len) = $bytes';
+  return $len;
+}
+--------------------------------------------------------------------------------
+
+In short, poke() modifies Perl's internal data types to force the creation of
+a temporary variable pointing to a string located at $location and then change
+the string's content with $bytes. To have a better understanding of how poke()
+works it's necessary to dig deeper into advanced concepts of Perl internals,
+which is beyond the scope of this  article. The reader can check [12][13] for
+more information.
+
+
+iii) Memory access protection
+
+Similar to memory mapping, Perl's syscall() is used to call mprotect:
+
+--------------------------------------------------------------------------------
+ my $mp = syscall(10, $addr, $size, $protect);
+--------------------------------------------------------------------------------
+
+Where:
+
+ - 10 is the number of the mprotect syscall in Linux x86_64.
+
+ - $addr an $size define the interval of the mapping area where access
+    protections will be updated.
+
+ - $protect is an integer that indicates the memory protection[14] for the
+   specified interval. In this case the values PROT_READ | PROT_EXEC = 5 and
+   PROT_READ = 1 are used.
+
+mprotect will return 0 on success and -1 on failure.
+
+The mapping process can now be done following the steps described on [9]. First,
+the ELF object code is mapped and its content copied into the mapped area.
+
+--------------------------------------------------------------------------------
+ $base_ptr = mmap(0, length($code), 3, 33);
+ if($base_ptr == -1) {
+     print "Failed to allocate memory for ELF\n";
+     exit;
+ }
+
+ poke($base_ptr, $code, length($code));
+--------------------------------------------------------------------------------
+
+Then the text, data, and rodata segments are mapped and copied into memory next
+to each other, along with an auxiliary jump table (described later). Given that
+the $code variable is a string that contains the binary content of the ELF
+object (as discussed in part 1), the content of each segment can be obtained by
+extracting a substring of $code based on their sh_offset and sh_size values.
+
+--------------------------------------------------------------------------------
+ my $text    = $shtab[$text_ndx];
+ my $data    = $shtab[$data_ndx];
+ my $rodata  = $shtab[$rodata_ndx];
+
+ my $jmptab_size = $num_extsym*14;
+
+ my $text_ptr = mmap(
+     0,
+     page_align($text->{'sh_size'}) +
+     page_align($data->{'sh_size'}) +
+     page_align($rodata->{'sh_size'}) +
+     page_align($jmptab_size),
+     3,
+     33
+ );
+
+ if ($text_ptr == -1) {
+     print "Failed to allocate memory for .text\n";
+     exit;
+ }
+
+ my $data_ptr   = $text_ptr + page_align($text->{'sh_size'});
+ my $rodata_ptr = $data_ptr + page_align($data->{'sh_size'});
+ my $jmptab_ptr = $rodata_ptr + page_align($rodata->{'sh_size'});
+
+ # copy segments into memory
+ poke(
+     $text_ptr,
+     substr($code, $text->{'sh_offset'}, $text->{'sh_size'})
+ );
+ poke(
+     $data_ptr,
+     substr($code, $data->{'sh_offset'}, $data->{'sh_size'})
+ );
+ poke(
+     $rodata_ptr,
+     substr($code, $rodata->{'sh_offset'}, $rodata->{'sh_size'})
+ );
+--------------------------------------------------------------------------------
+
+After this the relocations are applied and the memory access protections are set
+for the text segment, rodata segment and jump table.
+
+--------------------------------------------------------------------------------
+ do_relocs($text_ptr, $data_ptr, $rodata_ptr, $jmptab_ptr);
+
+ if(mprotect($text_ptr, $text->{'sh_size'}, 5) == -1) {
+     print "Failed to mprotect .text\n";
+     exit;
+ }
+
+ # check .rodata sh_size fist in case is not defined
+ if(exists $rodata->{'sh_size'}) {
+     if(mprotect($rodata_ptr, $rodata->{'sh_size'}, 1) == -1) {
+         print "Failed to mprotect .rodata\n";
+         exit;
+     }
+ }
+
+ if(mprotect($jmptab_ptr, $jmptab_size, 5) == -1) {
+     print "Failed to mprotect jump table\n";
+     exit;
+ }
+--------------------------------------------------------------------------------
+
+
+====[ part 4: relocations and external symbols ]================================
+
+Similar to the mapping process, relocations are performed following the steps
+described in [15] which only considers relocations of type R_X86_64_PLT32 = 4
+and R_X86_64_PC32 = 2 for the text, data and rodata segments. Once again, the
+use of poke() allows copying the calculated relocation address into the original
+patch offset address.
+
+--------------------------------------------------------------------------------
+ my $sym_ndx = $relocs[$i]{'symndx'};
+
+ [...]
+
+ my $patch_offset = $text_ptr + $relocs[$i]{'r_offset'};
+
+ $base_ptr = $text_ptr if($sec_name eq '.text');
+ $base_ptr = $data_ptr if($sec_name eq '.data');
+ $base_ptr = $rodata_ptr if($sec_name eq '.rodata');
+
+ $sym_addr = $base_ptr + $symtab[$sym_ndx]{'st_value'};
+
+ [...]
+
+ if($relocs[$i]{'type'} == 4 or $relocs[$i]{'type'} == 2) {
+     my $relo = $sym_addr + $relocs[$i]{'r_addend'} - $patch_offset;
+     # pack in little endian order (4 bytes)
+     $relo = pack("V", $relo);
+     # apply relocation by simply copying the calculated address
+     # into the patch offset address
+     poke($patch_offset, $relo, length($relo));
+ }
+--------------------------------------------------------------------------------
+
+External symbols, identified by having st_shndx = 0 (UND), are handled during
+the relocation process following the steps described in [16]. To achieve that, a
+simplified PLT/GOT is implemented by using an auxiliary jump table to resolve
+external references. Each entry in the jump table contains:
+
+ - The address of the external symbol (8 bytes).
+ - A fixed jump instruction "\xff\x25\xf2\xff\xff\xff" (6 bytes).
+
+For simplicity, the jump table is implemented by mapping N*14 bytes after the
+rodata segment and each entry on the jump table starts at position i*14, where
+'N' is the number of external symbols and 'i' is a value between 0 and N-1 that
+represents the i-th external symbol found during the parsing process.
+
+--------------------------------------------------------------------------------
+ sub map_elf {
+
+     [...]
+
+     my $jmptab_size = $num_extsym*14;
+
+     # map segments and 'jump table' next to each other
+     my $text_ptr = mmap(
+         0,
+         page_align($text->{'sh_size'}) +
+         page_align($data->{'sh_size'}) +
+         page_align($rodata->{'sh_size'}) +
+         page_align($jmptab_size),
+         3,
+         33
+     );
+
+     [...]
+
+     my $jmptab_ptr = $rodata_ptr + page_align($rodata->{'sh_size'});
+
+     [...]
+
+ }
+--------------------------------------------------------------------------------
+
+Given that the jump table is close enough in memory to the rest of the sections,
+the relocation for an external symbol must be calculated against the fixed jump
+instruction in its jump table's entry, which performs a backwards jump (-14
+bytes) to the start of the entry, where the actual address of the external
+symbol is stored.
+
+--------------------------------------------------------------------------------
+ my $sym_ndx = $relocs[$i]{'symndx'};
+
+ [...]
+
+ my $sym_name = $symtab[$sym_ndx]{'name'};
+
+ [...]
+
+ my $jmptab_ndx = $jmptab_ptr + ($extsym{$sym_name}*14);
+ $sym_addr = $jmptab_ndx + 8;
+--------------------------------------------------------------------------------
+
+The external symbol address can be obtained by using Perl's DynaLoader standard
+module that "Dynamically load C libraries into Perl code"[17]. First, a library
+reference for looking up the symbol must be loaded with dl_load_file(). In this
+case the glibc shared object is used:
+
+--------------------------------------------------------------------------------
+ my $libc_path = "/usr/lib/x86_64-linux-gnu/libc.so.6";
+ my $libref = DynaLoader::dl_load_file($libc_path, 0x01);
+--------------------------------------------------------------------------------
+
+The external symbol address is looked up using dl_find_symbol() with the library
+reference and the symbol's name as parameters. The jump table entry is then
+built by packing the external address in little-endian order and appending the
+jump instruction. Finally, the jump table entry is copied into memory at the
+position $jmptab_ndx calculated before. After this the relocation process is
+resumed using $jmptab_ndx + 8 as the symbol address for the relocation formula.
+
+--------------------------------------------------------------------------------
+ my $jmptab_ndx = $jmptab_ptr + ($extsym{$sym_name}*14);
+ $sym_addr = $jmptab_ndx + 8;
+
+ [...]
+
+ my $ext_addr = DynaLoader::dl_find_symbol($libref, $sym_name);
+
+ # "V" format is 4 bytes; external address is 8 bytes
+ my ($p1, $p2) = unpack("V2", pack("Q", $ext_addr));
+ my $jmptab_entry = pack("V", $p1);
+ $jmptab_entry .= pack("V", $p2);
+ $jmptab_entry .= "\xff\x25\xf2\xff\xff\xff";
+
+ # update 'jump table' in memory
+ poke($jmptab_ndx, $jmptab_entry, length($jmptab_entry));
+
+ [...]
+ my $relo = $sym_addr + $relocs[$i]{'r_addend'} - $patch_offset;
+--------------------------------------------------------------------------------
+
+
+====[ part 5: execute ELF ]=====================================================
+
+Perl's DynaLoader standard module is used once again to execute the ELF's mapped
+functions. In addition to loading external libraries and finding symbols,
+DynaLoader can install "external subroutines" by using dl_install_xsub():
+
+--------------------------------------------------------------------------------
+ my $ref = dl_install_xsub($perl_name, $symref [, $filename])
+--------------------------------------------------------------------------------
+
+This method creates a new Perl external subroutine named $perl_name using
+$symref as a pointer to the function which implements the routine. On success,
+dl_install_xsub() returns a reference to the "installed function". According to
+the DynaLoader documentation:
+
+"It must be stressed that the DynaLoader, by itself, is practically useless
+for accessing non-Perl libraries because it provides almost no Perl-to-C
+'glue'. There is, for example, no mechanism for calling a C library function
+or supplying arguments"
+
+However, it is possible to use dl_install_xsub() providing the st_value of an
+ELF's mapped function as pointer and successfully achieve execution.
+
+--------------------------------------------------------------------------------
+sub exec_func {
+    my $func_name   = shift;
+    my $text_ptr    = shift;
+    my $func_ptr    = $funcs{$func_name};
+
+    my $func = DynaLoader::dl_install_xsub(
+        "_japh", # not really used
+        $text_ptr + $func_ptr,
+        __FILE__ # no file
+    );
+
+    # dereference and execute
+    &{$func};
+}
+--------------------------------------------------------------------------------
+
+In this case the name of the function to be executed is "main". Finally, the
+main logic of the script can be reduced to:
+
+--------------------------------------------------------------------------------
+my ($code, $fh) = read_elf();
+parse_elf($fh);
+my $text_ptr = map_elf($code);
+exec_func('main', $text_ptr);
+--------------------------------------------------------------------------------
+
+And then:
+
+ $ perl exec_elf64.pl
+ i am an elf
+ japh
+
+====[ after math  ]=============================================================
+
+To achieve complete fd-less execution, one option is encoding the script's
+source code in base64 on a remote host, decode it on the target machine and then
+pipe it to the perl interpreter:
+
+ # on a remote host
+ $ cat exec_elf64.pl | base64 --wrap 0
+ IyEvdXNyL2Jpbi9wZXJsCgp1c2UgRHluYU[...........................................]
+ [.............................................................................]
+ [.............................................................................]
+ [.............................................................................]
+ ByZXR1cm4gJGNvZGU7Cn0=
+
+ # on the target machine
+ $ echo "IyEvdXNyL2Jpbi9wZX[...]ByZXR1cm4gJGNvZGU7Cn0=" | base64 -d | perl
+ i am an elf
+ japh
+
+
+On the other hand, to make it easier to test and debug exec_elf64.pl with other
+ELFs objects the read_elf() subroutine can be adapted to open regular files as
+follows:
+
+--------------------------------------------------------------------------------
+sub read_elf {
+    # uncomment below to open ELF as a regular file
+    my $in = pop (@ARGV);
+    my $code = "";
+
+    open my $fh, '<:raw', $in;
+    $code .= $_ while(<$fh>);
+    close $fh;
+
+    open my $fh, '<:raw', $in;
+
+    #my $code = get_code();
+    #open my $fh, '<:raw', \$code;
+
+    return ($code, $fh);
+}
+--------------------------------------------------------------------------------
+
+For completeness an additional test is performed with a more elaborated ELF,
+in this case, the "self-mutating x86_64 C program"[18] which implements
+self-mutating code to spawn a /bin/sh shell:
+
+ $ gcc -c selfmut.c
+ $ ps o user,cmd
+ USER     CMD
+ isra     /bin/bash
+ isra     ps o user,cmd
+
+ $ perl exec_elf64.pl selfmut.o
+ Calling foo
+ i: 1
+ Calling foo
+ $ ps o user,cmd
+ USER     CMD
+ isra     /bin/bash
+ isra     /bin/sh
+ isra     ps o user,cmd
+
+
+====[ extra mile  ]=============================================================
+
+The original script for syscall/shellcode injection in OSX[11] can be easily
+adapted for Linux x64 by using the mmap() and mprotect() subroutines described
+in part 3, achieving assembly code execution with the use of DynaLoader and
+peek & poke.
+
+Consider the following code:
+
+---------------------------- BEGIN code.s --------------------------------------
+BITS 64
+global _start
+section .text
+_start:
+    call main
+    db "i am a shellcode", 0xa, 0x0
+
+ main:
+    xor rax, rax
+    xor rdx, rdx
+    inc al
+    mov rdi, rax
+    pop rsi
+    mov dl, 17
+    syscall
+    xor rdx, rdx
+    mov rax, 60
+    syscall
+------------------------------- END code.s -------------------------------------
+
+ $ nasm -f elf64 code.s -o code.o
+ $ objdump -d code.o
+
+Then, using the hexadecimal representation of the text section of code.o:
+
+--------------------------------------------------------------------------------
+my $code = "\xe8\x12\x00\x00\x00\x69\x20\x61\x6d\x20\x61\x20\x73\x68\x65\x6c";
+$code   .= "\x6c\x63\x6f\x64\x65\x0a\x00\x48\x31\xc0\x48\x31\xd2\xfe\xc0\x48";
+$code   .= "\x89\xc7\x5e\xb2\x11\x0f\x05\x48\x31\xd2\xb8\x3c\x00\x00\x00\x0f";
+$code   .= "\x05";
+
+my $p = mmap(0, length($code), 3, 33);
+if($p == -1) {
+  print "Couldn't mmap!\n";
+  exit;
+}
+
+poke($p, $code, length($code));
+
+if(mprotect($p, length($code), 5) == -1) {
+    print "Failed to mprotect\n";
+    exit;
+}
+my $func = DynaLoader::dl_install_xsub("_shell", $p, __FILE__);
+&{$func};
+------------------------------ END CODE ----------------------------------------
+
+ $ perl exec_asm.pl
+ i am a shellcode
+
+Which can also be executed fd-less by using the approach mentioned before
+(base64 encoding and decoding).
+
+
+====[ references  ]=============================================================
+
+[1] https://magisterquis.github.io/2018/03/31/in-memory-only-elf-execution.html
+[2] https://sandflysecurity.com/blog/detecting-linux-memfd-create-fileless-malware-with-command-line-forensics/
+[3] https://perldoc.perl.org/functions/pack
+[4] https://refspecs.linuxfoundation.org/elf/gabi4+/ch4.eheader.html
+[5] https://refspecs.linuxbase.org/elf/gabi4+/ch4.sheader.html
+[6] https://refspecs.linuxbase.org/elf/gabi4+/ch4.symtab.html
+[7] https://refspecs.linuxbase.org/elf/gabi4+/ch4.reloc.html
+[8] https://github.com/lampmanyao/readelf/blob/master/readelf.pl
+[9] https://blog.cloudflare.com/how-to-execute-an-object-file-part-1/
+[10] https://man7.org/linux/man-pages/man2/mmap.2.html
+[11] https://gist.github.com/monoxgas/c0b0f086fc7aa057a8256b42c66761c8
+[12] https://perldoc.perl.org/perlguts
+[13] https://awarenetwork.org/etc/aware.ezine.1.alpha.txt
+[14] https://man7.org/linux/man-pages/man2/mprotect.2.html
+[15] https://blog.cloudflare.com/how-to-execute-an-object-file-part-2/
+[16] https://blog.cloudflare.com/how-to-execute-an-object-file-part-3/
+[17] https://perldoc.perl.org/DynaLoader
+[18] https://shanetully.com/2013/12/writing-a-self-mutating-x86_64-c-program/
+
+
+====[ source code ]=============================================================
+
+IyEvdXNyL2Jpbi9wZXJsCiMgZXhlY19lbGY2NC5wbAojIHdyaXR0ZW4gYnkgaXNyYSAtIGlzcmEg
+X3JlcGxhY2VfYnlfQF8gZmFzdG1haWwubmV0IC0gaHR0cHM6Ly9oY2tuZy5vcmcKIwojIGh0dHBz
+Oi8vZ2l0LnNyLmh0L35oY2tuZy9lbGYvdHJlZS9tYXN0ZXIvaXRlbS9leGVjX2VsZjY0LnBsCiMg
+aHR0cHM6Ly9naXRodWIuY29tL2lsdi9lbGYvYmxvYi9tYWluL2V4ZWNfZWxmNjQucGwKIyAKIyB2
+ZXJzaW9uIDAuMSAtIDIwMjMKIwojIGluLW1lbW9yeS1vbmx5IGZkLWxlc3MgRUxGIGV4ZWN1dGlv
+bjoKIwojICAtIHJlYWQsIHBhcnNlLCBtYXAsIGFuZCBleGVjdXRlIGEgaGFyZGNvZGVkIEVMRiB4
+NjQgb2JqZWN0CiMgIC0gc3VwcG9ydHMgcmVsb2NhdGlvbiBhbmQgZXh0ZXJuYWwgc3ltYm9scyAo
+ZnJvbSBnbGliYykKIyAgLSB1c2VzIFBlcmwgdjUuMDA4MDAxIG9yIGhpZ2hlcgojICAtIG9ubHkg
+c3RhbmRhcmQgbW9kdWxlcyBhcmUgdXNlZAojCiMgdG8gcnVuOgojICAgICAkIHBlcmwgZXhlY19l
+bGY2NC5wbAojCiMgb3IgKGZ1bGwgZmQtbGVzcyk6CiMgICAgICQgZWNobyBCQVNFNjRfRU5DT0RF
+RF9DT05URU5UIHwgYmFzZTY0IC1kIHwgcGVybAojCiMgdGhhbmtzIHRvIHRtcDB1dCBhbmQgdnh1
+ZyBmb3IgYWxsIHRoZSByZXNvdXJjZXMKIwoKCnVzZSBEeW5hTG9hZGVyOwojdXNlIERldmVsOjpQ
+ZWVrOwp1c2UgNS4wMDgwMDE7ICMgYmVjYXVzZSA1LjYgZG9lc24ndCBoYXZlIEI6OlBWOjpvYmpl
+Y3RfMnN2cmVmCnVzZSBDb25maWc7CnVzZSBCICgpOyAjIGZvciBCOjpQVgp1c2Ugc3RyaWN0OwoK
+CiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMKIyByZWFkIGVsZgojIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+CgpzdWIgcmVhZF9lbGYgewogICAgIyB1bmNvbW1lbnQgYmVsb3cgdG8gb3BlbiBFTEYgYXMgYSBy
+ZWd1bGFyIGZpbGUKICAgICNteSAkaW4gPSBwb3AgKEBBUkdWKTsKICAgICNteSAkY29kZSA9ICIi
+OwoKICAgICNvcGVuIG15ICRmaCwgJzw6cmF3JywgJGluOwogICAgIyRjb2RlIC49ICRfIHdoaWxl
+KDwkZmg+KTsKICAgICNjbG9zZSAkZmg7CgogICAgI29wZW4gbXkgJGZoLCAnPDpyYXcnLCAkaW47
+CgogICAgbXkgJGNvZGUgPSBnZXRfY29kZSgpOwogICAgb3BlbiBteSAkZmgsICc8OnJhdycsIFwk
+Y29kZTsKCiAgICByZXR1cm4gKCRjb2RlLCAkZmgpOwp9CgoKIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IwojIHBhcnNlIGVsZiB4NjQKIyByZWZlcmVuY2U6IGh0dHBzOi8vZ2l0aHViLmNvbS9sYW1wbWFu
+eWFvL3JlYWRlbGYvYmxvYi9tYXN0ZXIvcmVhZGVsZi5wbAojIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+CgojIyMjIyMjIGdsb2JhbCB2YXJpYWJsZXMgIyMjIyMjIwoKIyBhcnJheXMgZm9yIHNlY3Rpb24g
+aGVhZGVyIHRhYmxlLCBzeW1ib2wgaGVhZGVyIHRhYmxlLCByZWxvY2F0aW9ucwpteSAoQHNodGFi
+LCBAc3ltdGFiLCBAcmVsb2NzKTsKIyBoYXNoZXMgZm9yIGVsZiBoZWFkZXIsIHN0cmluZyB0YWJs
+ZSwgZXh0ZXJuYWwgc3ltYm9scywgZnVuY3Rpb25zCm15ICglZWhkciwgJXN0cnRhYiwgJWV4dHN5
+bSwgJWZ1bmNzKTsKCiMgaW5kZXhlcyBmb3IgcmVsZXZhbnQgc2VnbWVudHMgb24gdGhlIHNlY3Rp
+b24gaGVhZGVyIHRhYmxlCm15ICgkdGV4dF9uZHgsICRkYXRhX25keCwgJHJvZGF0YV9uZHgsICRz
+eW10YWJfbmR4LCAkcmVsYXRleHRfbmR4KTsKCiMgbnVtYmVyIG9mIGV4dGVybmFsIHN5bWJvbHMK
+bXkgJG51bV9leHRzeW0gPSAwOwoKIyBzaGFyZWQgbGlicmFyeSB0byBsb29rdXAgZXh0ZXJuYWwg
+c3ltYm9scwojIG9ubHkgZ2xpYmMgZm9yIG5vdwpteSAkbGliY19wYXRoID0gIi91c3IvbGliL3g4
+Nl82NC1saW51eC1nbnUvbGliYy5zby42IjsKbXkgJGxpYnJlZiA9IER5bmFMb2FkZXI6OmRsX2xv
+YWRfZmlsZSgkbGliY19wYXRoLCAweDAxKTsKCiMgZWxmIGZpbGUgaGFuZGxlcgpteSAkZWZoOwoK
+IyMjIyMjIyBrZXlzIGZvciByZWxldmFudCBoYXNoZXMgIyMjIyMjIwoKIyBlbGYgaGVhZGVyIGtl
+eXMKbXkgQGVfa2V5cyA9ICgKICAgICdlaV9tYWcwJywgJ2VpX21hZzEnLCAnZWlfbWFnMicsICdl
+aV9tYWczJywgJ2VpX2NsYXNzJywgJ2VpX2RhdGEnLCAKICAgICdlaV92ZXJzaW9uJywgJ2VpX29z
+YWJpJywgJ2VpX2FiaXZlcnNpb24nLCAjZWlfcGFkIGlnbm9yZWQKICAgICdlX3R5cGUnLCAnZV9t
+YWNoaW5lJywgJ2VfdmVyc2lvbicsICdlX2VudHJ5JywgJ2VfcGhvZmYnLCAnZV9zaG9mZicsCiAg
+ICAnZV9mbGFncycsICdlX2Voc2l6ZScsICdlX3BoZW50c2l6ZScsICdlX3BobnVtJywgJ2Vfc2hl
+bnRzaXplJywgJ2Vfc2hudW0nLAogICAgJ2Vfc2hzdHJuZHgnCik7CgojIHNlY3Rpb24gaGVhZGVy
+IGtleXMKbXkgQHNoX2tleXMgPSAoCiAgICAnc2hfbmFtZScsICdzaF90eXBlJywgJ3NoX2ZsYWdz
+JywgJ3NoX2FkZHInLCAnc2hfb2Zmc2V0JywgJ3NoX3NpemUnLAogICAgJ3NoX2xpbmsnLCAnc2hf
+aW5mbycsICdzaF9hZGRyYWxpZ24nLCAnc2hfZW50c2l6ZScKKTsKCiMgc3ltYm9sIHRhYmxlIGtl
+eXMKbXkgQHN0X2tleXMgPSAoCiAgICAnc3RfbmFtZScsICdzdF9pbmZvJywgJ3N0X290aGVyJywg
+J3N0X3NobmR4JywgJ3N0X3ZhbHVlJywgJ3N0X3NpemUnCik7CgojIHJlbG9jYXRpb25zIGtleXMK
+bXkgQHJfa2V5cyA9ICgncl9vZmZzZXQnLCAncl9pbmZvJywgJ3JfYWRkZW5kJyk7CgoKIyMjIyMj
+IyBhdXhpbGlhcnkgc3Vicm91dGluZXMgIyMjIyMjIwoKIyByZWFkICYgdW5wYWNrIGJpbmFyeSBj
+b250ZW50CnN1YiBydSB7CiAgICBteSAkZmggID0gc2hpZnQ7CiAgICBteSAkdHBsID0gc2hpZnQ7
+CiAgICBteSAkc3ogID0gc2hpZnQ7CgogICAgcmVhZCAkZmgsIG15ICRidWZmLCAkc3o7CiAgICBy
+ZXR1cm4gdW5wYWNrKCR0cGwsICRidWZmKTsKfQoKIyBtYWtlIGhhc2ggdG8gZWFzaWx5IGhhbmRs
+ZSB2YXJpb3VzIGhlYWRlcnMgCnN1YiBta19oYXNoIHsKICAgIG15ICRoYXNocmVmID0gc2hpZnQ7
+CiAgICBteSAka2V5c3JlZiA9IHNoaWZ0OwogICAgbXkgJHZhbHNyZWYgPSBzaGlmdDsKCiAgICBm
+b3IobXkgJGkgPSAwOyAkaSA8IEB7JGtleXNyZWZ9OyAkaSsrKSB7CiAgICAgICAgJGhhc2hyZWYt
+Pnska2V5c3JlZi0+WyRpXX0gPSAkdmFsc3JlZi0+WyRpXTsKICAgIH0KfQoKIyBwYXJzZSBlbGYg
+aGVhZGVyCiMgc2VlIGh0dHBzOi8vcmVmc3BlY3MubGludXhmb3VuZGF0aW9uLm9yZy9lbGYvZ2Fi
+aTQrL2NoNC5laGVhZGVyLmh0bWwKc3ViIHBhcnNlX2VoZHIgewogICAgbXkgQGhkciA9IHJ1KCRl
+ZmgsICJDIGEgYSBhIEMgQyBDIEMgQyB4NyBTIFMgSSBxIHEgcSBJIFMgUyBTIFMgUyBTIiwgMHg0
+MCk7CiAgICBta19oYXNoKFwlZWhkciwgXEBlX2tleXMsIFxAaGRyKTsKfQoKIyBwYXJzZSBzZWN0
+aW9uIGhlYWRlciB0YWJsZQojIHNlZSBodHRwczovL3JlZnNwZWNzLmxpbnV4YmFzZS5vcmcvZWxm
+L2dhYmk0Ky9jaDQuc2hlYWRlci5odG1sCnN1YiBwYXJzZV9zaHRhYiB7CiAgICBzZWVrICRlZmgs
+ICRlaGRyeydlX3Nob2ZmJ30sICJTRUVLX1NFVCI7IAogICAgZm9yIChteSAkaSA9IDA7ICRpIDwg
+JGVoZHJ7J2Vfc2hudW0nfTsgJGkrKykgewogICAgICAgIG15ICVzaDsKICAgICAgICBteSBAaGRy
+ID0gcnUoJGVmaCwgIkkgSSBxIHEgcSBxIEkgSSBxIHEiLCAkZWhkcnsnZV9zaGVudHNpemUnfSk7
+CiAgICAgICAgbWtfaGFzaChcJXNoLCBcQHNoX2tleXMsIFxAaGRyKTsKICAgICAgICBwdXNoIEBz
+aHRhYiwgXCVzaDsKCiAgICAgICAgIyByZWFkIGNvbnRlbnQgb2Ygc2VjdGlvbiBoZWFkZXIgZW50
+cnkgb2YgdHlwZSAnU1RSVEFCJwogICAgICAgIGlmKCRzaHsnc2hfdHlwZSd9ID09IDMpIHsKICAg
+ICAgICAgICAgbXkgJHRtcHN0cjsKICAgICAgICAgICAgbXkgJGN1cnJfb2Zmc2V0ID0gdGVsbCAk
+ZWZoOwogICAgICAgICAgICBzZWVrICRlZmgsICRzaHsnc2hfb2Zmc2V0J30sICJTRUVLX1NFVCI7
+CiAgICAgICAgICAgIHJlYWQgJGVmaCwgJHRtcHN0ciwgJHNoeydzaF9zaXplJ307CiAgICAgICAg
+ICAgIHNlZWsgJGVmaCwgJGN1cnJfb2Zmc2V0LCAiU0VFS19TRVQiOwogICAgICAgICAgICAkc3Ry
+dGFieyRzaHsnc2hfb2Zmc2V0J319ID0gJHRtcHN0cjsKICAgICAgICB9CiAgICB9Cn0KCiMgZ2V0
+IHNlY3Rpb24gbmFtZQpzdWIgc2VjbmFtZSB7CiAgICBteSAkbmR4ID0gc2hpZnQ7CiAgICBteSAk
+c3RyID0gc2hpZnQ7CgogICAgbXkgJHMgPSBzdWJzdHIoJHN0ciwgJG5keCk7CiAgICBteSAkciA9
+IHN1YnN0cigkcywgMCwgaW5kZXgoJHMsICJcMCIpKTsKfQoKIyBwYXJzZSBzZWN0aW9uIG5hbWVz
+IGZyb20gc3RyaW5nIHRhYmxlCnN1YiBwYXJzZV9zZWNuYW1lcyB7CiAgICBteSAkc2hzdHJ0YWIg
+PSAkc2h0YWJbJGVoZHJ7J2Vfc2hzdHJuZHgnfV07CiAgICBmb3IobXkgJGkgPSAwOyAkaSA8ICRl
+aGRyeydlX3NobnVtJ307ICRpKyspIHsKICAgICAgICBteSAkbmFtZSA9IHNlY25hbWUoCiAgICAg
+ICAgICAgICRzaHRhYlskaV17J3NoX25hbWUnfSwgCiAgICAgICAgICAgICRzdHJ0YWJ7JHNoc3Ry
+dGFiLT57J3NoX29mZnNldCd9fQogICAgICAgICk7CiAgICAgICAgIyBhZGQgJ25hbWUnIHRvIGVh
+Y2ggc2VjdGlvbiBoZWFkZXIgZW50cnkKICAgICAgICAkc2h0YWJbJGldeyduYW1lJ30gPSAkbmFt
+ZTsKCiAgICAgICAgIyBzYXZlIGluZGV4ZXMgZm9yIGVhc2llciBhY2Nlc3MgdG8gcmVsZXZhbnQg
+c2VnbWVudHMKICAgICAgICAkdGV4dF9uZHggICAgICAgPSAkaSBpZigkbmFtZSBlcSAnLnRleHQn
+KTsKICAgICAgICAkZGF0YV9uZHggICAgICAgPSAkaSBpZigkbmFtZSBlcSAnLmRhdGEnKTsKICAg
+ICAgICAkc3ltdGFiX25keCAgICAgPSAkaSBpZigkbmFtZSBlcSAnLnN5bXRhYicpOwogICAgICAg
+ICRyb2RhdGFfbmR4ICAgICA9ICRpIGlmKCRuYW1lIGVxICcucm9kYXRhJyk7CiAgICAgICAgJHJl
+bGF0ZXh0X25keCAgID0gJGkgaWYoJG5hbWUgZXEgJy5yZWxhLnRleHQnKTsKICAgIH0KfQoKIyBw
+YXJzZSBzeW1ib2wgdGFibGUKIyBzZWUgaHR0cHM6Ly9yZWZzcGVjcy5saW51eGJhc2Uub3JnL2Vs
+Zi9nYWJpNCsvY2g0LnN5bXRhYi5odG1sCnN1YiBwYXJzZV9zeW10YWIgewogICAgbXkgJHN5bXRh
+YiAgICAgID0gJHNodGFiWyRzeW10YWJfbmR4XTsKICAgIG15ICRzaF9saW5rICAgICA9ICRzaHRh
+Ylskc3ltdGFiLT57J3NoX2xpbmsnfV07CiAgICBteSAkbnVtX2VudHJ5ICAgPSAkc3ltdGFiLT57
+J3NoX3NpemUnfS8kc3ltdGFiLT57J3NoX2VudHNpemUnfTsKCiAgICBteSAkY3Vycl9maWxlX29m
+ZnNldCA9IHRlbGwgJGVmaDsKICAgIHNlZWsgJGVmaCwgJHN5bXRhYi0+eydzaF9vZmZzZXQnfSwg
+IlNFRUtfU0VUIjsKICAgIGZvciAobXkgJGkgPSAwOyAkaSA8ICRudW1fZW50cnk7ICRpKyspIHsK
+ICAgICAgICBteSAlc3ltOwogICAgICAgIG15IEBoZHIgPSBydSgkZWZoLCAiSSBDIEMgUyBxIHEi
+LCAkc3ltdGFiLT57J3NoX2VudHNpemUnfSk7CiAgICAgICAgbWtfaGFzaChcJXN5bSwgXEBzdF9r
+ZXlzLCBcQGhkcik7CgogICAgICAgIG15ICR0eXBlID0gJHN5bXsnc3RfaW5mbyd9ICYgMHgwZjsK
+ICAgICAgICBteSAkbmFtZSA9IHNlY25hbWUoCiAgICAgICAgICAgICRzeW17J3N0X25hbWUnfSwg
+CiAgICAgICAgICAgICRzdHJ0YWJ7JHNoX2xpbmstPnsnc2hfb2Zmc2V0J319CiAgICAgICAgKTsK
+ICAgICAgICAjIGFkZCAnbmFtZScgdG8gZWFjaCBzeW1ib2wgCiAgICAgICAgJHN5bXsnbmFtZSd9
+ID0gJG5hbWU7CiAgICAgICAgcHVzaCBAc3ltdGFiLCBcJXN5bTsKCiAgICAgICAgIyBzYXZlIHN0
+X3ZhbHVlIG9mIHN5bWJvbHMgb2YgdHlwZSAnRlVOQycKICAgICAgICAkZnVuY3N7JG5hbWV9ID0g
+JHN5bXsnc3RfdmFsdWUnfSBpZigkdHlwZSA9PSAyKTsKICAgIH0KICAgIHNlZWsgJGVmaCwgJGN1
+cnJfZmlsZV9vZmZzZXQsICJTRUVLX1NFVCI7Cn0KCiMgcGFyc2UgcmVsb2NhdGlvbnMKIyBzZWUg
+aHR0cHM6Ly9yZWZzcGVjcy5saW51eGJhc2Uub3JnL2VsZi9nYWJpNCsvY2g0LnJlbG9jLmh0bWwK
+c3ViIHBhcnNlX3JlbG9jcyB7CiAgICBteSAkcnQgPSAkc2h0YWJbJHJlbGF0ZXh0X25keF07CiAg
+ICBteSAkZW50cnlfbnVtID0gJHJ0LT57J3NoX3NpemUnfS8kcnQtPnsnc2hfZW50c2l6ZSd9OwoK
+ICAgIG15ICRjdXJyX2ZpbGVfb2Zmc2V0ID0gdGVsbCAkZWZoOwogICAgc2VlayAkZWZoLCAkcnQt
+Pnsnc2hfb2Zmc2V0J30sICJTRUVLX1NFVCI7CiAgICBmb3IgKG15ICRpID0gMDsgJGkgPCAkZW50
+cnlfbnVtOyAkaSsrKSB7CiAgICAgICAgbXkgJXI7CiAgICAgICAgbXkgQGhkciA9IHJ1KCRlZmgs
+ICJxIFEgaSIsICRydC0+eydzaF9lbnRzaXplJ30pOwogICAgICAgIG1rX2hhc2goXCVyLCBcQHJf
+a2V5cywgXEBoZHIpOwoKICAgICAgICAjIDQgYnl0ZXMgb24gbGl0dGxlIGVuZGlhbiBvcmRlciAK
+ICAgICAgICBteSAkc3ltX25keCA9IHVucGFjaygiViIsIHBhY2soIk4iLCAkcnsncl9pbmZvJ30g
+Pj4gOCkpOwogICAgICAgICMgbG93LW9yZGVyIGJpdHMgb25seQogICAgICAgIG15ICR0eXBlID0g
+JHJ7J3JfaW5mbyd9ICYgMHgwZjsgCiAgICAgICAgbXkgJHN5bV9uYW1lID0gJHN5bXRhYlskc3lt
+X25keF17J25hbWUnfTsKICAgICAgICBteSAkc3ltX3NobmR4ID0gJHN5bXRhYlskc3ltX25keF17
+J3N0X3NobmR4J307CgogICAgICAgICRyeyd0eXBlJ30gPSAkdHlwZTsKICAgICAgICAkcnsnc3lt
+bmR4J30gPSAkc3ltX25keDsKICAgICAgICBwdXNoIEByZWxvY3MsIFwlcjsKCiAgICAgICAgIyBz
+YXZlIGV4dGVybmFsIHN5bWJvbHMgKHN0X3NobmR4IG9mIHR5cGUgJ1VORCcpCiAgICAgICAgIyB0
+aGUgbnVtX2V4dHN5bSBjb3VudGVyIGlzIHVzZWQgbGF0ZXIgZm9yIGxvb2t1cCBpbiBhICdqdW1w
+IHRhYmxlJwogICAgICAgICRleHRzeW17JHN5bV9uYW1lfSA9ICRudW1fZXh0c3ltKysgaWYoJHN5
+bV9zaG5keCA9PSAwKTsKICAgIH0KICAgIHNlZWsgJGVmaCwgJGN1cnJfZmlsZV9vZmZzZXQsICJT
+RUVLX1NFVCI7Cn0KCiMgZ2x1ZSBpdCBhbGwgdG9nZXRoZXIKc3ViIHBhcnNlX2VsZiB7CiAgICBt
+eSAkZmggPSBzaGlmdDsKICAgICRlZmggPSAkZmg7CiAgICAKICAgIHBhcnNlX2VoZHIoKTsKICAg
+IHBhcnNlX3NodGFiKCk7CiAgICBwYXJzZV9zZWNuYW1lcygpOwogICAgcGFyc2Vfc3ltdGFiKCk7
+CiAgICBwYXJzZV9yZWxvY3MoKTsKfQoKCiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMKIyBwZWVrICYg
+cG9rZSAKIwojIG9yaWdpbmFsIGNvZGUgYnkgTmljayBMYW5kZXJzCiMgaHR0cHM6Ly9naXN0Lmdp
+dGh1Yi5jb20vbW9ub3hnYXMvYzBiMGYwODZmYzdhYTA1N2E4MjU2YjQyYzY2NzYxYzgKIwojIGFk
+YXB0ZWQgZm9yIExpbnV4IHg2NCBieSBpc3JhCiMgbW9zdCBvZiB0aGUgY29tbWVudHMgYXJlIGZy
+b20gdGhlIG9yaWdpbmFsIGF1dGhvcgojIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjCgojIHBhY2sgdmFs
+dWUgaW50byBhbiB1bnNpZ25lZCBxdWFsIHZhbHVlIChmb3IgbWVtb3J5IGFkZHJlc3NlcykKc3Vi
+IF9wYWNrX2FkZHJlc3MgewogICAgbXkgJHAgPSBwYWNrKCJRIiwgJF9bMF0pOwogICAgcmV0dXJu
+ICRwOwp9CgojIGNvbnZlcnQgdmFsdWUgaW50byBhIFN2UFYKc3ViIHBlZWsgewogICAgdW5wYWNr
+ICJQJF9bMV0iLCBfcGFja19hZGRyZXNzKCRfWzBdKTsKfQoKIyBjb3B5ICRieXRlcyBvZiBsZW5n
+dGggJGxlbiBpbnRvIGFkZHJlc3MgJGxvY2F0aW9uCnN1YiBwb2tlIHsKICAgIG15KCRsb2NhdGlv
+biwgJGJ5dGVzLCAkbGVuKSA9IEBfOwogICAgbXkgJGFkZHIgPSBfcGFja19hZGRyZXNzKCRsb2Nh
+dGlvbik7CiAgICAjIGNvbnN0cnVjdCBhIEI6OlBWIG9iamVjdCwgYmFja2VkIGJ5IGEgU1YvU3ZQ
+ViB0byBhIGR1bW15IHN0cmluZyAKICAgICMgbGVuZ3RoKCRieXRlcykgbG9uZywgYW5kIHN1YnN0
+aXR1dGUgJGxvY2F0aW9uIGFzIHRoZSBhY3R1YWwgc3RyaW5nCiAgICAjIHN0b3JhZ2Ugd2Ugc3Bl
+Y2lmaWNhbGx5IHVzZSB0aGUgc2FtZSBsZW5ndGggc28gd2UgZG8gbm90IGhhdmUgdG8KICAgICMg
+ZGVhbCB3aXRoIHJlc2l6aW5nCiAgICBteSAkZHVtbXkgPSAnWCcgeCAkbGVuOwogICAgbXkgJGR1
+bW15X2FkZHIgPSBcJGR1bW15ICsgMDsKICAgIG15ICRnaG9zdF9zdl9jb250ZW50cyA9IHBlZWso
+JGR1bW15X2FkZHIsIDggKyA0ICsgNCArICRDb25maWd7aXZzaXplfSk7CgoKICAgIHN1YnN0cigg
+JGdob3N0X3N2X2NvbnRlbnRzLCA4ICsgNCArIDQsIDggKSA9ICRhZGRyOyAgICAKCiAgICBteSAk
+Z2hvc3Rfc3RyaW5nX3JlZiA9IGJsZXNzKCBcIHVucGFjaygKICAgICAgICAiUSIsCiAgICAgICAg
+IyBpdCdzIGNydWNpYWwgdG8gY3JlYXRlIGEgY29weSBvZiAkc3ZfY29udGVudHMsIGFuZCB3b3Jr
+IHdpdGggYQogICAgICAgICMgdGVtcG9yYXJ5IG1lbW9yeSBsb2NhdGlvbi4gT3RoZXJ3aXNlIHBl
+cmwgbWVtb3J5IGFsbG9jYXRpb24gd2lsbAogICAgICAgICMga2ljayBpbiBhbmQgd3JlYWsgY29u
+c2lkZXJhYmxlIGhhdm9jIGN1bG1pbmF0aW5nIHdpdGggYW4gaW5ldml0YWJsZQogICAgICAgICMg
+c2VnZmF1bHQKICAgICAgICBkbyB7IG5vIHdhcm5pbmdzICdwYWNrJzsgcGFjayggJ1AnLCAkZ2hv
+c3Rfc3ZfY29udGVudHMuJycgKSB9LAogICAgKSwgJ0I6OlBWJyApLT5vYmplY3RfMnN2cmVmOwog
+ICAgIyBub3cgd2hlbiB3ZSB3cml0ZSB0byB0aGUgbmV3bHkgY3JlYXRlZCAic3RyaW5nIiB3ZSBh
+cmUgYWN0dWFsbHkgd3JpdGluZwogICAgIyB0byAkbG9jYXRpb24uIG5vdGUgd2UgSEFWRSB0byB1
+c2UgbHZhbHVlIHN1YnN0ciAtIGEgcGxhaW4gYXNzaWdubWVudCB3aWxsCiAgICAjIGFkZCBhIFww
+CiAgICAjCiAgICAjIEFsc28gaW4gb3JkZXIgdG8ga2VlcCB0aHJlYWRpbmcgb24gcGVybCA1Ljgu
+eCBoYXBweSB3ZSAqaGF2ZSogdG8gcGVyZm9ybQogICAgIyB0aGlzIGluIGEgc3RyaW5nIGV2YWwu
+IEkgZG9uJ3QgaGF2ZSB0aGUgc2xpZ2h0ZXN0IGlkZWEgd2h5IDopICAgIAogICAgZXZhbCAnc3Vi
+c3RyKCQkZ2hvc3Rfc3RyaW5nX3JlZiwgMCwgJGxlbikgPSAkYnl0ZXMnOwogICAgcmV0dXJuICRs
+ZW47Cn0KCgojIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjCiMgbWFwIGVsZiB4NjQKIwojIHJlZmVyZW5j
+ZXM6CiMgIC0gaHR0cHM6Ly9ibG9nLmNsb3VkZmxhcmUuY29tL2hvdy10by1leGVjdXRlLWFuLW9i
+amVjdC1maWxlLXBhcnQtMS8KIyAgLSBodHRwczovL2Jsb2cuY2xvdWRmbGFyZS5jb20vaG93LXRv
+LWV4ZWN1dGUtYW4tb2JqZWN0LWZpbGUtcGFydC0yLwojICAtIGh0dHBzOi8vYmxvZy5jbG91ZGZs
+YXJlLmNvbS9ob3ctdG8tZXhlY3V0ZS1hbi1vYmplY3QtZmlsZS1wYXJ0LTMvIAojIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjCgojIDRLIHBhZ2VzIApzdWIgcGFnZV9hbGlnbiB7CiAgICBteSAkbiA9IHNo
+aWZ0OwogICAgcmV0dXJuICgkbiArICg0MDk2IC0gMSkpICYgfig0MDk2IC0gMSk7Cn0KCiMgbWVt
+b3J5IG1hcApzdWIgbW1hcCB7CiAgICAjIHN5c2NhbGwgbnVtYmVyIGZvciBtbWFwIGlzIDkgb24g
+TGludXggeDg2XzY0CiAgICAjICRhZGRyIGNhbiBiZSBhIGZpeGVkIHZhbHVlLCBvciAwIHRvIGxl
+dCBtbWFwIGNob29zZSBvbmUKICAgICMgaXQgcmV0dXJucyBhIHBvaW50ZXIgdG8gdGhlIG1hcHBl
+ZCBhcmVhIG9uIHN1Y2Nlc3MsIC0xIG9uIGZhaWx1cmUKICAgIG15ICgkYWRkciwgJHNpemUsICRw
+cm90ZWN0LCAkZmxhZ3MpID0gQF87CiAgICBteSAkcmV0ID0gc3lzY2FsbCg5LCAkYWRkciwgJHNp
+emUsICRwcm90ZWN0LCAkZmxhZ3MsIC0xLCAwKTsKICAgIHJldHVybiAkcmV0Owp9CgojIG1lbW9y
+eSBwcm90ZWN0CnN1YiBtcHJvdGVjdCB7CiAgICAjIGl0IHJldHVybnMgMCBvbiBzdWNjZXNzLCAt
+MSBvbiBmYWlsdXJlCiAgICBteSAoJGFkZHIsICRzaXplLCAkcHJvdGVjdCkgPSBAXzsKICAgIG15
+ICRyZXQgPSBzeXNjYWxsKDEwLCAkYWRkciwgJHNpemUsICRwcm90ZWN0KTsKICAgIHJldHVybiAk
+cmV0Owp9CgojIGNhbGN1bGF0ZSBhbmQgYXBwbHkgcmVsb2NhdGlvbnMKc3ViIGRvX3JlbG9jcyB7
+CiAgICAjIHBvaW50ZXJzIHRvIG1hcHBlZCBzZWdtZW50cyBhbmQgJ2p1bXAgdGFibGUnCiAgICBt
+eSAkdGV4dF9wdHIgICAgPSBzaGlmdDsKICAgIG15ICRkYXRhX3B0ciAgICA9IHNoaWZ0OwogICAg
+bXkgJHJvZGF0YV9wdHIgID0gc2hpZnQ7CiAgICBteSAkam1wdGFiX3B0ciAgPSBzaGlmdDsKICAg
+IG15ICRydCAgICAgICAgICA9ICRzaHRhYlskcmVsYXRleHRfbmR4XTsKICAgIG15ICRudW1fcmVs
+b2NzICA9ICRydC0+eydzaF9zaXplJ30vJHJ0LT57J3NoX2VudHNpemUnfTsKIAogICAgZm9yICht
+eSAkaSA9IDA7ICRpIDwgJG51bV9yZWxvY3M7ICRpKyspIHsKICAgICAgICAjIHdoZXJlIHRvIHBh
+dGNoIC50ZXh0IAogICAgICAgIG15ICRzeW1fbmR4ID0gJHJlbG9jc1skaV17J3N5bW5keCd9Owog
+ICAgCiAgICAgICAgIyBzeW1ib2wgYW5kIHNlY3Rpb24gd2l0aCByZXNwZWN0IHRvIHdoaWNoIHRo
+ZSByZWxvY2F0aW9uIGlzIHBlcmZvcm1lZAogICAgICAgICMgZXh0ZXJuYWwgc3ltYm9scyBhcmUg
+aWRlbnRpZmllZCBieSBzdF9zaG5keCA9PSAwICh0eXBlIFVORCkKICAgICAgICBteSAkc3ltX25h
+bWUgPSAkc3ltdGFiWyRzeW1fbmR4XXsnbmFtZSd9OwogICAgICAgIG15ICRzeW1fc2huZHggPSAk
+c3ltdGFiWyRzeW1fbmR4XXsnc3Rfc2huZHgnfTsKICAgICAgICBteSAkc2VjX25hbWUgPSAkc2h0
+YWJbJHN5bV9zaG5keF17J25hbWUnfTsKCiAgICAgICAgaWYoJHNlY19uYW1lIGVxICcudGV4dCcg
+fHwgJHNlY19uYW1lIGVxICcuZGF0YScgCiAgICAgICAgICAgIHx8ICRzZWNfbmFtZSBlcSAnLnJv
+ZGF0YScgfHwgJHN5bV9zaG5keCA9PSAwKSB7CiAgICAgICAgICAgIG15ICRiYXNlX3B0cjsKICAg
+ICAgICAgICAgbXkgJHBhdGNoX29mZnNldCA9ICR0ZXh0X3B0ciArICRyZWxvY3NbJGldeydyX29m
+ZnNldCd9OwoKICAgICAgICAgICAgJGJhc2VfcHRyID0gJHRleHRfcHRyIGlmKCRzZWNfbmFtZSBl
+cSAnLnRleHQnKTsKICAgICAgICAgICAgJGJhc2VfcHRyID0gJGRhdGFfcHRyIGlmKCRzZWNfbmFt
+ZSBlcSAnLmRhdGEnKTsKICAgICAgICAgICAgJGJhc2VfcHRyID0gJHJvZGF0YV9wdHIgaWYoJHNl
+Y19uYW1lIGVxICcucm9kYXRhJyk7CgogICAgICAgICAgICBteSAkc3ltX2FkZHI7CiAgICAgICAg
+ICAgIGlmKCRzeW1fc2huZHggIT0gMCkgewogICAgICAgICAgICAgICAgJHN5bV9hZGRyID0gJGJh
+c2VfcHRyICsgJHN5bXRhYlskc3ltX25keF17J3N0X3ZhbHVlJ307CiAgICAgICAgICAgIH0gZWxz
+ZSB7CiAgICAgICAgICAgICAgICAjIGV4dGVybmFsIHN5bWJvbHMKCiAgICAgICAgICAgICAgICAj
+IGEgJ2p1bXAgdGFibGUnIGlzIHVzZWQgZm9yIGp1bXBpbmcgdG8gZXh0ZXJuYWwgYWRkcmVzc2Vz
+CiAgICAgICAgICAgICAgICAjIGVhY2ggZW50cnkgb24gdGhlICdqdW1wIHRhYmxlJyB1c2VzIDE0
+IGJ5dGVzOiA4IGJ5dGVzIGZvcgogICAgICAgICAgICAgICAgIyB0aGUgZXh0ZXJuYWwgYWRkcmVz
+cyB3aGVyZSB0byBqdW1wICsgNiBieXRlcyBmb3IgdGhlIGp1bXAKICAgICAgICAgICAgICAgICMg
+aW5zdHJ1Y3Rpb24KCiAgICAgICAgICAgICAgICAjIG9mZnNldCBvbiB0aGUgJ2p1bXAgdGFibGUn
+IGlzIGNhbGN1bGF0ZWQgYmFzZWQgb24gdGhlIG51bWJlcgogICAgICAgICAgICAgICAgIyBvZiBl
+eHRlcm5hbCBzeW1ib2xzOyBmaXJzdCBlbnRyeSBzdGFydHMgYXQgb2Zmc2V0IDAsIHNlY29uZAog
+ICAgICAgICAgICAgICAgIyBhdCBvZmZzZXQgMTQsIHRoaXJkIGF0IG9mZnNldCAyOCwgYW5kIHNv
+IG9uIGFuZCBzbyBmb3J0aAogICAgICAgICAgICAgICAgbXkgJGptcHRhYl9uZHggPSAkam1wdGFi
+X3B0ciArICgkZXh0c3lteyRzeW1fbmFtZX0qMTQpOwoKICAgICAgICAgICAgICAgICMgdGhlIHN5
+bWJvbCBhZGRyZXNzIHVzZWQgZm9yIHRoZSByZWxvY2F0aW9uIGZvcm11bGEgc2hvdWxkCiAgICAg
+ICAgICAgICAgICAjIHBvaW50IHRvIHRoZSBqdW1wIGluc3RydWN0aW9uIGluIHRoZSAnanVtcCB0
+YWJsZScgZW50cnksIHRodXMKICAgICAgICAgICAgICAgICMgdGhlIGZpcnN0IDggYnl0ZXMgYXJl
+IHNraXBwZWQKICAgICAgICAgICAgICAgICRzeW1fYWRkciA9ICRqbXB0YWJfbmR4ICsgODsKCiAg
+ICAgICAgICAgICAgICAjIHRoZSBhY3R1YWwgZXh0ZXJuYWwgc3ltYm9sIGFkZHJlc3MgCiAgICAg
+ICAgICAgICAgICBteSAkZXh0X2FkZHIgPSBEeW5hTG9hZGVyOjpkbF9maW5kX3N5bWJvbCgkbGli
+cmVmLCAkc3ltX25hbWUpOwoKICAgICAgICAgICAgICAgICMgcGFjayBhZGRyZXNzIGluIGxpdHRs
+ZSBlbmRpYW4gb3JkZXIgYW5kIHRoZW4gYXBwZW5kIHRoZSBqdW1wOgogICAgICAgICAgICAgICAg
+IyAweGZmIDB4MjUgZm9yIHRoZSBpbnN0cnVjdGlvbiBpdHNlbGYgYW5kIDB4ZmZmZmZmZjIgPSAt
+MTQgZm9yCiAgICAgICAgICAgICAgICAjIHRoZSBvZmZzZXQgKGp1bXAgMTQgYnl0ZXMgYmFja3dh
+cmRzIHRvIHRoZSBleHRlcm5hbCBhZGRyZXNzKQoKICAgICAgICAgICAgICAgICMgIlYiIGZvcm1h
+dCBpcyA0IGJ5dGVzOyBleHRlcm5hbCBhZGRyZXNzIGlzIDggYnl0ZXMKICAgICAgICAgICAgICAg
+IG15ICgkcDEsICRwMikgPSB1bnBhY2soIlYyIiwgcGFjaygiUSIsICRleHRfYWRkcikpOwogICAg
+ICAgICAgICAgICAgbXkgJGptcHRhYl9lbnRyeSA9IHBhY2soIlYiLCAkcDEpOwogICAgICAgICAg
+ICAgICAgJGptcHRhYl9lbnRyeSAuPSBwYWNrKCJWIiwgJHAyKTsKICAgICAgICAgICAgICAgICRq
+bXB0YWJfZW50cnkgLj0gIlx4ZmZceDI1XHhmMlx4ZmZceGZmXHhmZiI7CgogICAgICAgICAgICAg
+ICAgIyB1cGRhdGUgJ2p1bXAgdGFibGUnIGluIG1lbW9yeQogICAgICAgICAgICAgICAgcG9rZSgk
+am1wdGFiX25keCwgJGptcHRhYl9lbnRyeSwgbGVuZ3RoKCRqbXB0YWJfZW50cnkpKTsKICAgICAg
+ICAgICAgfQogICAgIAogICAgICAgICAgICAjIFJfWDg2XzY0X1BMVDMyICg0KSBhbmQgUl9YODZf
+NjRfUEMzMiAoMikgcmVsb2NhdGlvbnMKICAgICAgICAgICAgIyBpdCB1c2VzIHRoZSBmb3JtdWxh
+ZSBMICsgQSAtIFAgYW5kIFMgKyBBIC0gUCwgYXNzdW1pbmcgTCA9IFMKICAgICAgICAgICAgaWYo
+JHJlbG9jc1skaV17J3R5cGUnfSA9PSA0IG9yICRyZWxvY3NbJGldeyd0eXBlJ30gPT0gMikgewog
+ICAgICAgICAgICAgICAgbXkgJHJlbG8gPSAkc3ltX2FkZHIgKyAkcmVsb2NzWyRpXXsncl9hZGRl
+bmQnfSAtICRwYXRjaF9vZmZzZXQ7CiAgICAgICAgICAgICAgICAjIHBhY2sgaW4gbGl0dGxlIGVu
+ZGlhbiBvcmRlciAoNCBieXRlcykKICAgICAgICAgICAgICAgICRyZWxvID0gcGFjaygiViIsICRy
+ZWxvKTsKICAgICAgICAgICAgICAgICMgYXBwbHkgcmVsb2NhdGlvbiBieSBzaW1wbHkgY29weWlu
+ZyB0aGUgY2FsY3VsYXRlZCBhZGRyZXNzCiAgICAgICAgICAgICAgICAjIGludG8gdGhlIHBhdGNo
+IG9mZnNldCBhZGRyZXNzCiAgICAgICAgICAgICAgICBwb2tlKCRwYXRjaF9vZmZzZXQsICRyZWxv
+LCBsZW5ndGgoJHJlbG8pKTsKICAgICAgICAgICAgfQogICAgICAgIH0gCiAgICB9Cn0KCiMgbWFw
+IGNvZGUgKG1lbW9yeSBtYXAsIHBva2UgY29kZSwgcmVsb2NhdGUsIG1lbW9yeSBwcm90ZWN0KQpz
+dWIgbWFwX2VsZiB7CiAgICBteSAkY29kZSA9IHNoaWZ0OwoKICAgIG15ICRiYXNlX3B0ciA9IG1t
+YXAoMCwgbGVuZ3RoKCRjb2RlKSwgMywgMzMpOwogICAgaWYoJGJhc2VfcHRyID09IC0xKSB7CiAg
+ICAgICAgcHJpbnQgIkZhaWxlZCB0byBhbGxvY2F0ZSBtZW1vcnkgZm9yIEVMRlxuIjsKICAgICAg
+ICBleGl0OwogICAgfQoKICAgIHBva2UoJGJhc2VfcHRyLCAkY29kZSwgbGVuZ3RoKCRjb2RlKSk7
+CgogICAgbXkgJHRleHQgICAgPSAkc2h0YWJbJHRleHRfbmR4XTsKICAgIG15ICRkYXRhICAgID0g
+JHNodGFiWyRkYXRhX25keF07CiAgICBteSAkcm9kYXRhICA9ICRzaHRhYlskcm9kYXRhX25keF07
+CgogICAgIyBzaXplIG9mICdqdW1wIHRhYmxlJyBpcyBudW1iZXIgb2YgZXh0ZXJuYWwgc3ltYm9s
+cyAqIDE0IGJ5dGVzCiAgICBteSAkam1wdGFiX3NpemUgPSAkbnVtX2V4dHN5bSoxNDsKCiAgICAj
+IG1hcCBzZWdtZW50cyBhbmQgJ2p1bXAgdGFibGUnIG5leHQgdG8gZWFjaCBvdGhlcgogICAgbXkg
+JHRleHRfcHRyID0gbW1hcCgKICAgICAgICAwLCAKICAgICAgICBwYWdlX2FsaWduKCR0ZXh0LT57
+J3NoX3NpemUnfSkgKyAKICAgICAgICBwYWdlX2FsaWduKCRkYXRhLT57J3NoX3NpemUnfSkgKyAK
+ICAgICAgICBwYWdlX2FsaWduKCRyb2RhdGEtPnsnc2hfc2l6ZSd9KSArCiAgICAgICAgcGFnZV9h
+bGlnbigkam1wdGFiX3NpemUpLCAKICAgICAgICAzLCAKICAgICAgICAzMwogICAgKTsKICAgIGlm
+ICgkdGV4dF9wdHIgPT0gLTEpIHsKICAgICAgICBwcmludCAiRmFpbGVkIHRvIGFsbG9jYXRlIG1l
+bW9yeSBmb3IgLnRleHRcbiI7CiAgICAgICAgZXhpdDsKICAgIH0KICAgIAogICAgbXkgJGRhdGFf
+cHRyICAgPSAkdGV4dF9wdHIgKyBwYWdlX2FsaWduKCR0ZXh0LT57J3NoX3NpemUnfSk7CiAgICBt
+eSAkcm9kYXRhX3B0ciA9ICRkYXRhX3B0ciArIHBhZ2VfYWxpZ24oJGRhdGEtPnsnc2hfc2l6ZSd9
+KTsKICAgIG15ICRqbXB0YWJfcHRyID0gJHJvZGF0YV9wdHIgKyBwYWdlX2FsaWduKCRyb2RhdGEt
+Pnsnc2hfc2l6ZSd9KTsKCiAgICAjIGNvcHkgc2VnbWVudHMgaW50byBtZW1vcnkKICAgIHBva2Uo
+CiAgICAgICAgJHRleHRfcHRyLCAKICAgICAgICBzdWJzdHIoJGNvZGUsICR0ZXh0LT57J3NoX29m
+ZnNldCd9LCAkdGV4dC0+eydzaF9zaXplJ30pCiAgICApOwoKICAgIHBva2UoCiAgICAgICAgJGRh
+dGFfcHRyLCAKICAgICAgICBzdWJzdHIoJGNvZGUsICRkYXRhLT57J3NoX29mZnNldCd9LCAkZGF0
+YS0+eydzaF9zaXplJ30pCiAgICApOwoKICAgIHBva2UoCiAgICAgICAgJHJvZGF0YV9wdHIsIAog
+ICAgICAgIHN1YnN0cigkY29kZSwgJHJvZGF0YS0+eydzaF9vZmZzZXQnfSwgJHJvZGF0YS0+eydz
+aF9zaXplJ30pCiAgICApOwoKICAgIGRvX3JlbG9jcygkdGV4dF9wdHIsICRkYXRhX3B0ciwgJHJv
+ZGF0YV9wdHIsICRqbXB0YWJfcHRyKTsKCiAgICBpZihtcHJvdGVjdCgkdGV4dF9wdHIsICR0ZXh0
+LT57J3NoX3NpemUnfSwgNSkgPT0gLTEpIHsKICAgICAgICBwcmludCAiRmFpbGVkIHRvIG1wcm90
+ZWN0IC50ZXh0XG4iOwogICAgICAgIGV4aXQ7CiAgICB9CgogICAgIyBjaGVjayAucm9kYXRhIHNo
+X3NpemUgZmlyc3QgaW4gY2FzZSBpcyBub3QgZGVmaW5lZAogICAgaWYoZXhpc3RzICRyb2RhdGEt
+Pnsnc2hfc2l6ZSd9KSB7CiAgICAgICAgaWYobXByb3RlY3QoJHJvZGF0YV9wdHIsICRyb2RhdGEt
+Pnsnc2hfc2l6ZSd9LCAxKSA9PSAtMSkgewogICAgICAgICAgICBwcmludCAiRmFpbGVkIHRvIG1w
+cm90ZWN0IC5yb2RhdGFcbiI7CiAgICAgICAgICAgIGV4aXQ7CiAgICAgICAgfQogICAgfQoKICAg
+IGlmKG1wcm90ZWN0KCRqbXB0YWJfcHRyLCAkam1wdGFiX3NpemUsIDUpID09IC0xKSB7CiAgICAg
+ICAgcHJpbnQgIkZhaWxlZCB0byBtcHJvdGVjdCBqdW1wIHRhYmxlXG4iOwogICAgICAgIGV4aXQ7
+CiAgICB9CgogICAgIyByZXR1cm4gcG9pbnRlciB0byBzdGFydCBvZiB0aGUgdGV4dCBzZWdtZW50
+CiAgICAjIGl0IHdpbGwgYmUgdXNlZCB0byBjYWxjdWxhdGUgdGhlIHBvaW50ZXIgb2YgdGhlIGZ1
+bmN0aW9uIHRvIGJlIGV4ZWN1dGVkCiAgICByZXR1cm4gJHRleHRfcHRyOwp9CgojIGV4ZWN1dGUg
+bWFwcGVkIGZ1bmN0aW9uIChlLmcuIG1haW4pCnN1YiBleGVjX2Z1bmMgewogICAgbXkgJGZ1bmNf
+bmFtZSAgID0gc2hpZnQ7CiAgICBteSAkdGV4dF9wdHIgICAgPSBzaGlmdDsKICAgIG15ICRmdW5j
+X3B0ciAgICA9ICRmdW5jc3skZnVuY19uYW1lfTsKCiAgICBteSAkZnVuYyA9IER5bmFMb2FkZXI6
+OmRsX2luc3RhbGxfeHN1YigKICAgICAgICAiX2phcGgiLCAjIG5vdCByZWFsbHkgdXNlZAogICAg
+ICAgICR0ZXh0X3B0ciArICRmdW5jX3B0ciwgCiAgICAgICAgX19GSUxFX18gIyBubyBmaWxlCiAg
+ICApOwoKICAgICMgZGVyZWZlcmVuY2UgYW5kIGV4ZWN1dGUKICAgICZ7JGZ1bmN9Owp9CgoKIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIwojIG1haW4KIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIwoKbXkgKCRj
+b2RlLCAkZmgpID0gcmVhZF9lbGYoKTsKcGFyc2VfZWxmKCRmaCk7Cm15ICR0ZXh0X3B0ciA9IG1h
+cF9lbGYoJGNvZGUpOwpleGVjX2Z1bmMoJ21haW4nLCAkdGV4dF9wdHIpOwoKCiMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMKIyBFTEYgYmluYXJ5IGNvbnRlbnQKIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMj
+IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIwoK
+IyBoYXJkY29kZWQgdG8gYWNoaWV2ZSBmZC1sZXNzIGV4ZWN1dGlvbgojIHBlcmwgLWUgJ3ByaW50
+Im15IFwkY29kZSA9IFwiXCI7XG4iOyQvPVwzMjsnIFwKIyAtZSAncHJpbnQiXCRjb2RlIC49IHBh
+Y2sgcS9IKi8sIHEvIi4odW5wYWNrIkgqIikuIi87XG4iIHdoaWxlKDw+KScgLi9vYmoubwojCiMg
+aGFyZGNvZGVkIEMgY29kZToKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSBCRUdJTiBvYmouYyAt
+LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyAjaW5jbHVkZSA8c3RkaW8u
+aD4KIyAKIyB2b2lkIHByaW50X2phcGgodm9pZCkgewojICAgICBwdXRjaGFyKCdqJyk7CiMgICAg
+IHB1dGNoYXIoJ2EnKTsKIyAgICAgcHV0Y2hhcigncCcpOwojICAgICBwdXRjaGFyKCdoJyk7CiMg
+ICAgIHB1dGNoYXIoJ1xuJyk7CiMgfQojIAojIGludCBtYWluKHZvaWQpIHsKIyAgICAgY2hhciAq
+c3RyID0gImkgYW0gYW4gZWxmIjsKIyAKIyAgICAgcHJpbnRmKCIlc1xuIiwgc3RyKTsKIyAgICAg
+cHJpbnRfamFwaCgpOwojIAojICAgICByZXR1cm4gMDsKIyB9CiMgLS0tLS0tLS0tLS0tLS0tLS0t
+LS0tLS0gRU5EIG9iai5jIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t
+CiMKCnN1YiBnZXRfY29kZSB7CiAgICBteSAkY29kZSA9ICIiOwogICAgJGNvZGUgLj0gcGFjayBx
+L0gqLywgcS83ZjQ1NGM0NjAyMDEwMTAwMDAwMDAwMDAwMDAwMDAwMDAxMDAzZTAwMDEwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAw
+MDAwMDE4MDQwMDAwMDAwMDAwMDAwMDAwMDAwMDQwMDAwMDAwMDAwMDQwMDAwZDAwMGMwMC87CiAg
+ICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzU1NDg4OWU1YmY2YTAwMDAwMGU4MDAwMDAwMDBiZjYx
+MDAwMDAwZTgwMDAwMDAwMGJmNzAwMDAwMDBlODAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gq
+LywgcS8wMDAwYmY2ODAwMDAwMGU4MDAwMDAwMDBiZjBhMDAwMDAwZTgwMDAwMDAwMDkwNWRjMzU1
+NDg4OWU1NDg4M2VjLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMTA0ODhkMDUwMDAwMDAw
+MDQ4ODk0NWY4NDg4YjQ1Zjg0ODg5YzdlODAwMDAwMDAwZTgwMDAwMDAwMGI4MDAwMC87CiAgICAk
+Y29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDBjOWMzNjkyMDYxNmQyMDYxNmUyMDY1NmM2NjAwMDA0
+NzQzNDMzYTIwMjg0NDY1NjI2OTYxNmUyMDMxMzAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywg
+cS8yZTMyMmUzMTJkMzYyOTIwMzEzMDJlMzIyZTMxMjAzMjMwMzIzMTMwMzEzMTMwMDAxNDAwMDAw
+MDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDE3YTUyMDAwMTc4MTAwMTFi
+MGMwNzA4OTAwMTAwMDAxYzAwMDAwMDFjMDAwMDAwMDAwMDAwMDAzOTAwMDAwMC87CiAgICAkY29k
+ZSAuPSBwYWNrIHEvSCovLCBxLzAwNDEwZTEwODYwMjQzMGQwNjc0MGMwNzA4MDAwMDAwMWMwMDAw
+MDAzYzAwMDAwMDAwMDAwMDAwMmIwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8w
+MDQxMGUxMDg2MDI0MzBkMDY2NjBjMDcwODAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAwMDAwMDAxMDAw
+MDAwMDQwMGYxZmYwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAu
+PSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDMwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDMwMDAzMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwMDA0MDAwMDAwMDAwMDAwMDAw
+MDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDMwMDA1MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBw
+YWNrIHEvSCovLCBxLzAwMDAwMDAwMDMwMDA3MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDMwMDA4MDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwMDA2MDAwMDAwMDAwMDAwMDAwMDAw
+LzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAwMDAwMDA3MDAwMDAwMTIw
+MDAxMDAwMDAwMDAwMDAwMDAwMDAwMzkwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNr
+IHEvSCovLCBxLzEyMDAwMDAwMTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDI4MDAwMDAwMTAwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDMwMDAwMDAwMTIwMDAxMDAzOTAwMDAwMDAwMDAwMDAwLzsK
+ICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMmIwMDAwMDAwMDAwMDAwMDM1MDAwMDAwMTAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEv
+SCovLCBxLzAwNmY2MjZhMmU2MzAwNzA3MjY5NmU3NDVmNmE2MTcwNjgwMDVmNDc0YzRmNDI0MTRj
+NWY0ZjQ2NDY1MzQ1NTQvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS81ZjU0NDE0MjRjNDU1
+ZjAwNzA3NTc0NjM2ODYxNzIwMDZkNjE2OTZlMDA3MDc1NzQ3MzAwMDAwMDAwMDAwMDAwLzsKICAg
+ICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMGEwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMGIwMDAwMDBm
+Y2ZmZmZmZmZmZmZmZmZmMTQwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCov
+LCBxLzA0MDAwMDAwMGIwMDAwMDBmY2ZmZmZmZmZmZmZmZmZmMWUwMDAwMDAwMDAwMDAwMDA0MDAw
+MDAwMGIwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS9mY2ZmZmZmZmZmZmZmZmZm
+MjgwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMGIwMDAwMDBmY2ZmZmZmZmZmZmZmZmZmLzsKICAgICRj
+b2RlIC49IHBhY2sgcS9IKi8sIHEvMzIwMDAwMDAwMDAwMDAwMDA0MDAwMDAwMGIwMDAwMDBmY2Zm
+ZmZmZmZmZmZmZmZmNDQwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBx
+LzAyMDAwMDAwMDUwMDAwMDBmY2ZmZmZmZmZmZmZmZmZmNTQwMDAwMDAwMDAwMDAwMDA0MDAwMDAw
+MGQwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS9mY2ZmZmZmZmZmZmZmZmZmNTkw
+MDAwMDAwMDAwMDAwMDA0MDAwMDAwMDkwMDAwMDBmY2ZmZmZmZmZmZmZmZmZmLzsKICAgICRjb2Rl
+IC49IHBhY2sgcS9IKi8sIHEvMjAwMDAwMDAwMDAwMDAwMDAyMDAwMDAwMDIwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwNDAwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAy
+MDAwMDAwMDIwMDAwMDAzOTAwMDAwMDAwMDAwMDAwMDAyZTczNzk2ZDc0NjE2MjAwMmU3Mzc0NzI3
+NDYxNjIvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDJlNzM2ODczNzQ3Mjc0NjE2MjAw
+MmU3MjY1NmM2MTJlNzQ2NTc4NzQwMDJlNjQ2MTc0NjEwMDJlNjI3MzczLzsKICAgICRjb2RlIC49
+IHBhY2sgcS9IKi8sIHEvMDAyZTcyNmY2NDYxNzQ2MTAwMmU2MzZmNmQ2ZDY1NmU3NDAwMmU2ZTZm
+NzQ2NTJlNDc0ZTU1MmQ3Mzc0NjE2My87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzZiMDAy
+ZTcyNjU2YzYxMmU2NTY4NWY2NjcyNjE2ZDY1MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAvOwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBh
+Y2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMjAwMDAwMDAwMTAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzA2MDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwNDAwMDAwMDAwMDAwMDAwMDY0MDAwMDAwMDAwMDAwMDAv
+OwogICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAxYjAwMDAwMDA0MDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sg
+cS9IKi8sIHEvNDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBjMDAyMDAwMDAwMDAwMDAw
+YzAwMDAwMDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzBhMDAwMDAwMDEw
+MDAwMDAwODAwMDAwMDAwMDAwMDAwMTgwMDAwMDAwMDAwMDAwMDI2MDAwMDAwMDEwMDAwMDAvOwog
+ICAgJGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MGE0MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9I
+Ki8sIHEvMDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMmMw
+MDAwMDAwODAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAzMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwYTQwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAvOwogICAg
+JGNvZGUgLj0gcGFjayBxL0gqLywgcS8wMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAzMTAwMDAwMDAxMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8s
+IHEvMDIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBhNDAwMDAwMDAwMDAwMDAwMGMwMDAw
+MDAwMDAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDAwMDAwMDAw
+MTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDM5MDAwMDAwMDEwMDAwMDAvOwogICAgJGNv
+ZGUgLj0gcGFjayBxL0gqLywgcS8zMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMGIwMDAw
+MDAwMDAwMDAwMDAyODAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEv
+MDAwMDAwMDAwMDAwMDAwMDAxMDAwMDAwMDAwMDAwMDAwMTAwMDAwMDAwMDAwMDAwNDIwMDAwMDAw
+MTAwMDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwZDgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAvOwogICAgJGNvZGUg
+Lj0gcGFjayBxL0gqLywgcS8wMDAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMDA1NzAwMDAwMDAxMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDIw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDBkODAwMDAwMDAwMDAwMDAwNTgwMDAwMDAwMDAw
+MDAwMC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDAwMDAwMDAwODAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDUyMDAwMDAwMDQwMDAwMDAvOwogICAgJGNvZGUgLj0g
+cGFjayBxL0gqLywgcS80MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDgwMDMwMDAwMDAw
+MDAwMDAzMDAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMGEwMDAw
+MDAwODAwMDAwMDA4MDAwMDAwMDAwMDAwMDAxODAwMDAwMDAwMDAwMDAwMDEwMDAwMDAwMjAwMDAw
+MC87CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
+MDAwMDAwMzAwMTAwMDAwMDAwMDAwMDUwMDEwMDAwMDAwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFj
+ayBxL0gqLywgcS8wYjAwMDAwMDA5MDAwMDAwMDgwMDAwMDAwMDAwMDAwMDE4MDAwMDAwMDAwMDAw
+MDAwOTAwMDAwMDAzMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4MDAyMDAwMDAwMDAwMDAwM2EwMDAwMDAwMDAwMDAwMC87
+CiAgICAkY29kZSAuPSBwYWNrIHEvSCovLCBxLzAwMDAwMDAwMDAwMDAwMDAwMTAwMDAwMDAwMDAw
+MDAwMDAwMDAwMDAwMDAwMDAwMDExMDAwMDAwMDMwMDAwMDAvOwogICAgJGNvZGUgLj0gcGFjayBx
+L0gqLywgcS8wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMGIwMDMwMDAwMDAwMDAwMDA2
+MTAwMDAwMDAwMDAwMDAwLzsKICAgICRjb2RlIC49IHBhY2sgcS9IKi8sIHEvMDAwMDAwMDAwMDAw
+MDAwMDAxMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwLzsKCiAgICByZXR1cm4gJGNvZGU7
+Cn0=
+
+</pre></div></body>

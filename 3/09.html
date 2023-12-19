@@ -1,0 +1,358 @@
+<html>
+<head>
+<title>Silver Bullet to ELF Projects</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+__________________________________TMPOU_________________________________________
+_________________________________TTM_POU________________________________________
+_________________________________TTMP_OUT_______________________________________
+__________________________________TMPO_UTT______________________________________
+_________________________A________TMPOU_TTM_____________________________________
+___________________________________TMPO__UTT________SILVER______________________
+___________________________________TMPOU_TTMP___________________________________
+____________________________________TMPOU_TTMP__________________________________
+_______________________BULLET________TMPOU_TTMP_________________________________
+______________________________________TMPOU_TTM_________________________________
+______________________________________MPOUTMP_UTT____________TO_________________
+_______________________________________UTTMPOU_TMP______________________________
+________________________________________MOUTTM_TMPOU____________________________
+_______________________________________TTMPOUTMTMPOUT___________________________
+________________________ELF____________OUTPOUTTMPOUTTM__________________________
+______________________________________TTMPOUTPTMPOUTTM__________________________
+___________________________________OUTTMPOUTTMPOU__TMP__________________________
+_____________________________3_3333__TMPOUTTMPOUTTMPOU__________________________
+____________________________3_333_333___3333333333333____CONSUMER_______________
+___________________________3__33__333_____3333333333____________________________
+__________________________333333333__3333____33333333___________________________
+_________________________3333333333___333333333333333___________________________
+_________________________3333333333___333333333333________PROJECTS______________
+__________________________3333333333__3333333333333_____________________________
+___________________________333333333_333333333333333____________________________
+____________________________3333333333333333333333333___________________________
+____________________________33333333333____33333333333__________________________
+___________________________33333_33333______333333333333________________________
+___________________________333___33333______3333333333333_______________________
+__________________________333_3333333________333333__333333_____________________
+_________________________333_33333333________333__33____33333___________________
+─//─────────────────────────────────────────────────────────────────────────────
+─ Introduction ───────────────────────────────────────────────────────────────
+
+I've been thinking about fuzzing the projects that take ELF binaries as an input
+since I read xcellerator's "Dead Bytes"[0] blog in tmpout #1. In his blog, he 
+clearly demonstrates that some ELF and program headers are ignored by the 
+loader. I took the inspiration from these corruptions and targeted the open 
+source projects with just one silver bullet, which is the `dead_bytes.bin`. I 
+wanted to prove the idea of "Linux loader is the least picky parsers among the
+standart Linux toolkit". I also decided to suggest a fix for every 
+crash I found in order to be more useful both for myself and for the projects.
+However, surprisingly, even though I haven't written any advanced harnesses (was
+just using argv, which means slower execution per sec), this heretic and barely 
+valid "dead_bytes.bin" binary alone was able to cause some problems! 
+I spent my time mostly with crash triages. As you can imagine, after a while it 
+started to get really exhausting. (Reaching out developers, checking how the 
+project owner handles things, accepted naming, CoC's etc etc.) It may sound I 
+have worked on thousand projects but no.
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ S c o p e ──────────────────────────────────────────────────────────────────
+
+I tested eight projects which are;
+
+    1) [ ] binutils/readelf                                    [ ] no crash 
+    2) [x] elfmaster/libelfmaster                              [x] crash
+    3) [x] radareorg/radare2 (CVE-2023-1605)[1]                [o] Infinite Loop
+    4) [x] jacob-baines/elfparser 
+    5) [x] finixbit/elf-parser 
+    6) [ ] eliben/pyelftools (unhandled EI_VERSION)
+    7) [o] lief-project/LIEF
+    8) [ ] cea-sec/miasm 
+
+I also included the AFL build options for targeted projects in my repository[2] 
+for the people would want to experience for themselves.
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ The Adventure Begins ───────────────────────────────────────────────────────
+
+Actually, starting a simple fuzzing campaign with AFL++ is really simple. 
+
+It requires two things;
+
+    1) Building and instrumenting the project with AFL++ toolchain
+    2) Finding a function or a example binary that is capable 
+       of consuming and handling the mutated input.
+
+You may ask, "What is Instrumentation?". Let's simply clarify that!
+
+Instrumentation can be explained as tailoring code blocks to increase the amount
+of code that is tested by the fuzzer. The injected code allows fuzzers to get 
+coverage information and which track code paths were executed. Instrumentation 
+also helps to find more complex bugs, which is a problem if you do "brute-force 
+fuzzing", (mutating bytes randomly (also known as "dumb" mode)).
+
+Do not be fooled by the term "dumb" mode. With just 30 lines of python code, 
+so1den had found a null point deref vulnerability in radare2[3]. The difference 
+here is, the guidance and those feedback markers through instrumentation. 
+Last thing you need to know is, instrumentation is done at compilation time in 
+the examples in this paper.
+
+Now you know about instrumentation, you can see why the project must be built 
+with AFL++. These two things are enough for a primitive fuzzer. At least, it 
+will test some functions of the target while you are developing a much more 
+advanced version of it. Let's take radare2 for an example and assume that we do
+not know anything about the code, how it is written, or how radare2 processes 
+files. The steps are;
+
+    1) $ git clone https://github.com/radareorg/radare2.git && cd radare2;
+    2) $ CC=afl-gcc CXX=afl-c++ ./configure 
+        (In Languages Tab: C 96.7% and C++ 0.7%)
+    3) $ CC=afl-gcc CXX=afl-c++ make -j24 (wait till finish)
+    4) $ afl-fuzz -i dir_to_sample_binaries/ -- binr/radare2/radare2 -qq -AA @@
+        ...
+        Then voila! Our campaign started!
+    
+Funny thing is, this was how CVE-2023-1605 is found in just 15 minutes with a 
+silver bullet! After understanding these simple steps, you can do speedrun 
+them in %ANY% categories!  (new contest idea? idk heheh...)
+
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ Example Finding ────────────────────────────────────────────────────────────
+
+The most interesting project to me was elfmaster's safe ELF parsing library. 
+"libelfmaster"[4] has some sanity checks for malicious headers, and gives 
+warnings about them. The most interesting modes are ELF_LOAD_F_FORENSICS and
+ELF_LOAD_F_STRICT (I call it as panic mode). 
+
+I used `elfparse.c` example as a starting point and a harness and found crashes
+in both modes. I find these crashes valuable because I assume that the flags 
+will be used by somebody doing forensics and that somebody SERIOUSLY does not 
+want to be in trouble. 
+
+Gave "dead_bytes.bin" as a silver seed, and the fuzzer could successfully mutate
+it into something can pass these sanity checks and crash the library. 
+
+For example, there is a check for unsafe program header table values in 
+libelfmaster.c#2920[5]:
+
+    if (elf_flags(obj, ELF_PHDRS_F) == true &&
+        elf_type(obj) != ET_REL) {
+        offset_len = obj->ehdr64->e_phoff +
+            obj->ehdr64->e_phnum * sizeof(Elf64_Phdr);
+        if (offset_len > obj->size) {
+            elf_error_set(error, "unsafe phdr table value(s)");
+            goto err;
+        }
+    }
+
+It can be explained like this;
+
+  1) Check if ELF_PHDRS_F flag is set and ELF File Identifier is not ET_REL
+     (Relocatable File)
+  2) Calculate if e_phoff + ( e_phnum * sizeof(elf64 program header struct) )
+     exceeds object's actual size 
+  3) If exceeds go to error.
+
+Also,  at libelfmaster.c#2915[6], if both e_phnum && e_phoff are greater than
+zero, ELF_PHDRS_F is set.
+
+Did you see how this check can be bypassed already? The mutated input that
+caused the crash had the following attributes;
+
+  1) e_phoff = 0 
+  2) e_phnum was an integer that is greater than zero.
+  3) Type was ET_EXEC (Executable File)
+
+This input will have no ELF_PHDRS_F flag, thus it will not reach that
+offset_len > actual_size sanity check on the first line of the code snippet. 
+Then, it -potentially- will lead to some unvalid and dangerous memory mappings.  
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ True Dead Bytes Mutator ────────────────────────────────────────────────────
+
+The findings so far do not actually have much to do with bytes that xcellerator
+found as dead. We need a true mutator that is changing only the dead bytes. 
+Thanks to AFL++, it allows it's users to write a custom mutator. To accomplish
+this goal, I examined the examples in AFLplusplus' github repository[7]
+
+I took example.c file as a starting point. 
+
+============================ code starts here ==================================
+/*
+   AFL++ Custom Mutator for LibGolf
+   Written by @echel0n
+   compile like this:
+   gcc -O3 -fPIC -shared -o golf_mutator.so -I ~/AFLplusplus/include/ oof.c
+ */
+#include "libgolf.h"
+#include "shellcode.h" 
+#include "afl-fuzz.h" // <- it's at aflplusplus/include
+#include &lt;stdint.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#define uchar unsigned char
+#define DATA_SIZE 0x100
+
+typedef struct my_mutator {
+  afl_state_t *afl;
+  size_t trim_size_current;
+  int trimmming_steps;
+  int cur_step;
+  u8 *mutated_out, *post_process_buf, *trim_buf;
+} my_mutator_t;
+
+my_mutator_t *afl_custom_init(afl_state_t *afl, unsigned int seed) {
+  srand(seed); // needed also by surgical_havoc_mutate()
+  my_mutator_t *data = calloc(1, sizeof(my_mutator_t));
+  if (!data) {
+    perror("afl_custom_init alloc");
+    return NULL;
+  }
+  if ((data->mutated_out = (u8 *)malloc(MAX_FILE)) == NULL) {
+    perror("afl_custom_init malloc");
+    return NULL;
+  }
+  if ((data->post_process_buf = (u8 *)malloc(MAX_FILE)) == NULL) {
+    perror("afl_custom_init malloc");
+    return NULL;
+  }
+  if ((data->trim_buf = (u8 *)malloc(MAX_FILE)) == NULL) {
+    perror("afl_custom_init malloc");
+    return NULL;
+  }
+  data->afl = afl;
+  return data;
+}
+
+// literally copy-pasted those from example.c, nothing changed.
+
+size_t afl_custom_fuzz(my_mutator_t *data, uint8_t *in_buf, size_t buf_size,
+                       u8 **out_buf, uint8_t *add_buf,
+                       size_t add_buf_size, // add_buf can be NULL
+                       size_t max_size) {
+
+  RawBinary elf_obj;                           // }  \
+  RawBinary *elf = &elf_obj;                   // }   \
+  elf->isa = 62;                               // }    \
+  Elf64_Ehdr *ehdr;                            // }     -> INIT_ELF(X86_64, 64) MACRO
+  Elf64_Phdr *phdr;                            // }    /     expanded for better 
+  copy_text_segment(elf, buf, sizeof(buf));    // }   /      understanding
+  ehdr = populate_ehdr(elf);                   // }  /
+  phdr = populate_phdr(elf);                   // } /
+  set_entry_point(elf);                        // }/
+  
+  size_t mutated_size = ehdr_size + phdr_size + elf->text.text_size;
+  
+  // let's put the mutated bytes into dead bytes.
+
+  ehdr->e_ident[EI_CLASS] = (uint8_t *)(in_buf + pos);
+  pos = pos + 1;
+  ehdr->e_ident[EI_DATA] = (uint8_t *)(in_buf + pos);
+  pos = pos + 1;
+  ehdr->e_ident[EI_VERSION] = (uint8_t *)(in_buf + pos);
+  pos = pos + 1;
+  ehdr->e_ident[EI_OSABI] = (uint8_t *)(in_buf + pos);
+  pos = pos + 1;
+  for (int i = 0x8; i < 0x10; ++i) {
+    (ehdr->e_ident)[i] = (uint8_t *)(in_buf + pos);
+    pos = pos + 1;
+  }
+
+  ehdr->e_version = (uint32_t *)(in_buf + pos);
+  pos = pos + 4;
+  // sections headers
+  ehdr->e_shoff = (uint64_t *)(in_buf + pos);
+  pos = pos + 8;
+  ehdr->e_shentsize = (uint16_t *)(in_buf + pos);
+  pos = pos + 2;
+  ehdr->e_shnum = (uint16_t *)(in_buf + pos);
+  pos = pos + 2;
+  ehdr->e_shstrndx = (uint16_t *)(in_buf + pos);
+  pos = pos + 2;
+  ehdr->e_flags = (uint32_t *)(in_buf + pos);
+  pos = pos + 4;
+  // physical addr
+  phdr->p_paddr = (uint64_t *)(in_buf + pos);
+  pos = pos + 8;
+  phdr->p_align = (uint64_t *)(in_buf + pos);
+  pos = pos + 8;
+
+  /* let's mimic GEN_ELF()
+   * Write:
+   * - ELF Header
+   * - Program Header
+   * - Text Segment
+   */
+
+  memcpy(data->mutated_out, ehdr, ehdr_size);
+  memcpy(data->mutated_out + ehdr_size, phdr, phdr_size);
+  memcpy(data->mutated_out + ehdr_size + phdr_size, elf->text.text_segment,
+         elf->text.text_size);
+
+  *out_buf = data->mutated_out;
+  return mutated_size;
+}
+
+void afl_custom_deinit(my_mutator_t *data) {
+  free(data->post_process_buf);
+  free(data->mutated_out);
+  free(data->trim_buf);
+  free(data);
+}
+
+============================ code ends here ====================================
+
+The custom mutator is ready to be used! Use the shared library like this:
+
+$ AFL_CUSTOM_MUTATOR_LIBRARY=/dir/to/golf_mutator.so \
+    afl-fuzz -i ~/binary_samples/ -o example -D -- ./radare2 -qq -AA @@ 
+
+Friendly Reminder: Always check if the instrumented binary is in-use. 
+    (ex. lazy way to do: strings bin | grep __afl)
+
+Also, you can check the newly created binaries in example/default/.cur_input:
+
+$ watch -n 0.1 -t "xxd example/default/.cur_input" 
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ Extras ─────────────────────────────────────────────────────────────────────
+
+I was able to minimize the crasher inputs efficiently with afl-collect:
+  * https://gitlab.com/rc0r/afl-utils (Thanks to richinseattle)
+
+With "splitmind" gdb plugin, I was able to analyze the crashes more easily:
+  *  https://github.com/jerdna-regeiz/splitmind (tmux and ipython needed)
+
+For python projects, I found this repository to prepare harnesses for python 
+projects. However, when instrumentation is applied, the execution per second
+speed is not practical for personal setups.
+
+  * https://github.com/jwilk/python-afl 
+  * example miasm harness[2] (check cea-sec/miasm section)
+
+─//─────────────────────────────────────────────────────────────────────────────
+─ Conclusion ─────────────────────────────────────────────────────────────────
+
+So yeah it's pretty much about it! You have seen that even small fuzzing 
+campaigns, with little bit tinkering, can do find bizarre bugs in a short time. 
+Special "yo!" to richinseattle, elfmaster, xcellerator and tmp0ut crew!
+
+Thanks for reading, you absolute legends!
+
+─//─────────────────────────────────────────────────────────────────────────────────
+─ Links & References ─────────────────────────────────────────────────────────────
+
+[0] Dead Bytes - https://tmpout.sh/1/1.html
+[1] CVE-2023-1605 - https://nvd.nist.gov/vuln/detail/CVE-2023-1605
+[2] How to build projects - https://github.com/echel0nn/golfuzz/blob/main/examples/04_afl/how_to_build.md 
+[3] Fuzzing Radare2 For 0days In About 30 Lines Of Code - https://tmpout.sh/1/5.html
+[4] libelfmaster - https://github.com/elfmaster/libelfmaster
+[5] libelfmaster.c: Sanity check - https://github.com/elfmaster/libelfmaster/blob/master/src/libelfmaster.c#L2920
+[6] libelfmaster.c: ELF_PHDRS_F is set - https://github.com/elfmaster/libelfmaster/blob/master/src/libelfmaster.c#L2915
+[7] Custom Mutators - https://github.com/AFLplusplus/AFLplusplus/tree/stable/custom_mutators/examples
+[8] Endless Loop in LIEF::ELF::Binary::eh_frame_functions() - https://github.com/lief-project/LIEF/issues/958
+
+</pre></div></body>

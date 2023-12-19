@@ -1,0 +1,811 @@
+<html>
+<head>
+<title>Concealing Namespaces Within a File Descriptor</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+   ||                                           Teh Intornet
+   ||       __
+   ||      /  \                                       *
+   ||     |~\  |                                 *    *    *
+   ||      \/  |_                                  * * * *
+ TUNNEL     /    \                                *  * *  *
+   ..  ___/'/   \ |                           * * * * * * * * *
+   ``=|    /|  /','                               *  * *  *
+      |,.-' ./' ,'                                 * * * *
+           /,`\,'                                *    *    *
+           ``                                         *
+        4026532413                    .---------- 4026531992 ---------.
+             | .net_ns                |               | .net_ns       |
+             |                        |               |               |
+       .-------------------------------------. .-------------. .-------------.
+       | | socket |              | nsproxy | | | | nsproxy | | | | nsproxy | |
+       | '--------'              '---------' | | '---------' | | '---------' |
+       |             A  T A S K              | |    INIT     | |    BASH     |
+       '-------------------------------------' '-------------' '-------------'
+
+
+Concealing Namespaces Within a File Descriptor
+~ Fanda Uchytil (h4x.cz)
+
+===[ Abstract ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this paper, we will delve into several techniques that can help us hide an
+entire namespace within a seemingly innocent file descriptor. This can be
+particularly useful during the post-exploitation phase when we need a concealed
+tunnel.
+
+We will explore some aspects related to namespaces. We will begin by discussing
+how the user can interface with namespaces and how they are referenced. We will
+then look at the technique of hiding a network namespace within a single socket
+and explore how inotify can be used as a path obfuscator. Throughout our
+exploration, we will also examine the available detection mechanisms. Finally,
+we will demonstrate the practical application of these techniques by creating a
+simple kernelspace "reverse-proxy" within a dormant userspace process.
+
+
+
+
+===[ Introduction: What Are Linux Namespaces Anyway? ]~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Linux namespaces are simple in concept, yet complicated in implementation. It
+is apparent that they were added as an afterthought, and that the kernel code
+had to be twisted to implement them [ref1]. As the old saying goes:
+
+  "Opportunity makes the hacker."
+
+Namespaces serve as fundamental building blocks for containers [ref2], utilized
+by platforms like Docker and LXC. They provide a mechanism to alter a process'
+perspective of the system. The true power of namespaces lies in their ability
+to function independently.
+
+For instance, if we want to restrict an application's network access to a
+specific network, we can easily create a new network namespace, bind a (SOCKS)
+socket as the sole interface to the external world, create firewall rules for
+redirection, and move the process into the network namespace. In this scenario,
+if the (SOCKS) socket stops working, the application will be unable to access
+any other network (I highly recommend this approach for enforcing VPN traffic;
+see [ref3]).
+
+The main downfall of namespaces or Linux in general is their limited
+observability. And I'm not talking about tracing, which is nearly perfect. What
+I am referring to is making a good assessment about the state of the running
+system, especially for those who are not kernel developers.
+
+In this article, we will primarily focus on the network namespace due to its
+highly practical applications.
+
+
+
+
+===[ Interacting with Namespaces ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Here is a crash course on working with namespaces from userspace [ref2]:
+
+  - A new namespace can be created using two syscalls: ''clone(2)'' or
+    ''unshare(2)''.
+
+  - A process can switch to another namespace using the ''setns(2)'' syscall.
+
+  - Various information about a namespace can be obtained using the classic
+    ''ioctl(2)'' syscall.
+
+  - A namespace can be referenced through the ''nsfs'' pseudo file system
+    located at ''/proc/PID/ns''.
+
+Don't worry, we will make use of them later on.
+
+
+
+
+===[ Death by Lack of Reference: How Namespaces Die? ]~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The lifetime of a namespace mostly depends on the last standing process that is
+referencing it. In most cases, when the referencing process terminates, any
+namespaces without any reference are automatically removed.
+
+(There seem to be some exceptions, for instance bind mount: it just moves the
+reference to another process's mount namespace, so if that process also
+terminates, the namespace will be removed).
+
+Each namespace has its own reference counter(s). When a new namespace is
+created, the counter is set to 1, because the process calling the syscall is
+referencing it. Whenever the namespace is referenced, such as when creating a
+listening TCP socket, the counter is incremented. When the counter reaches
+zero, the namespace is cleaned up and removed.
+
+For example, the initialization of a network namespace [ref4] looks as follows:
+
+  /* setup_net runs the initializers for the network namespace object.
+   */
+  static int setup_net(struct net *net, struct user_namespace *user_ns)
+  {
+      ...
+      refcount_set(&net-&gt;count, 1);     /* To decide when the network namespace
+                                           should be freed. */
+      refcount_set(&net-&gt;passive, 1);   /* To decide when the network namespace
+                                           should be shut down. */
+
+(Btw, ''net-&gt;passive'' holds the reference to the network namespace, ensuring
+that it is not freed. However, it does not prevent network interfaces from
+being removed, which is not the desired outcome. To increase the counter
+''net-&gt;passive'' for the current network namespace, one approach is to mount
+sysfs within the namespace).
+
+The increment and decrement operations are primarily performed by these inline
+functions [ref5]:
+
+  static inline struct net *get_net(struct net *net)
+  {
+      refcount_inc(&net-&gt;count);
+      return net;
+  }
+
+  static inline void put_net(struct net *net)
+  {
+      if (refcount_dec_and_test(&net-&gt;count))
+          __put_net(net);
+  }
+
+The ''net-&gt;count'' is incremented, for example, when a socket is created
+(allocated/cloned), when an ''nsfs'' file descriptor is opened, or bind-
+mounted. Other interesting places include netlink operations and network
+modules such as NFS, CIFS, Ceph, ...
+
+
+
+
+===[ Hiding a Network Namespace within a Socket ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sockets have three intriguing aspects:
+
+  1. They are (more or less) associated with a network namespace.
+
+  2. They are a commonly used functionality. (No suspicion there, right?)
+
+  3. We can retrieve the network namespace associated with them.
+
+When we create a socket file descriptor, it increments the reference counter
+for the current network namespace [ref6]. Keeping this in mind, let's explore
+what happens when we create a new network namespace, create a socket there, and
+then switch back to the original network namespace. If our hypothesis is
+correct, the file descriptor should be able to hold the new network namespace
+even if it is the only file descriptor referencing it.
+
+Remember, we must abide by the hacker's oath -- PoC || GTFO:
+
+---------------------------{ socket_ns_reference.c }---------------------------
+#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;sched.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+
+#define pw(s)  printf (s); getc (stdin)
+
+int main (int argc, char *argv[])
+{
+    int fd_socket;
+    int fd_netns_orig;
+
+    fd_netns_orig = open ("/proc/self/ns/net", O_RDONLY);
+
+    pw ("@ ORIGINAL NET NS...");
+
+    unshare (CLONE_NEWNET);
+    fd_socket = socket (AF_INET, SOCK_STREAM, 0);
+
+    pw ("@ NEW NET NS + NEW SOCKET...");
+
+    setns (fd_netns_orig, CLONE_NEWNET);
+    close (fd_netns_orig);
+
+    pw ("@ ORIGINAL NET NS + EXISTING SOCKET...");
+
+    close (fd_socket);
+
+    pw ("@ ORIGINAL NET NS + CLOSED SOCKET...");
+
+    return 0;
+}
+-------------------------------------------------------------------------------
+
+To summarize what we did:
+
+  1. We opened ''/proc/self/ns/net'' to create a reference to our current
+     network namespace. (We need it to switch back to it).
+
+  2. Using the ''unshare(2)'' syscall, we created a new network namespace and
+     switched our process to it.
+
+  3. In the new network namespace, we created a socket.
+
+  4. We then switched back to the original network namespace.
+
+  5. At this point, the only reference to the new network namespace is the
+     socket ''fd_socket''.
+
+  6. When we close the socket, the new network namespace ceases to exist.
+
+Neato! We are effectively holding the entire network namespace with just one
+socket. Let's take it a step further and create something more practical. We
+will create a fully functional network similar to what you would find in a
+container. In the following example, we will utilize the highly useful tool
+from the ''iproute2'' package to help us in setting up the network.
+
+----------------------------{ socket_container.c }-----------------------------
+#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;sched.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+
+#define pw(s)  printf (s); getc (stdin)
+
+int main (int argc, char *argv[])
+{
+    int fd_netns_orig, fd_netns_new;
+    char str[512];
+
+    /* Keep the reference to the host NET NS. */
+    fd_netns_orig = open ("/proc/self/ns/net", O_RDONLY);
+
+    /* Create a new network "container" */
+    unshare (CLONE_NEWNET);
+    socket (AF_INET, SOCK_STREAM, 0);
+    fd_netns_new = open ("/proc/self/ns/net", O_RDONLY);
+
+    /* Create a macvlan interface and move it to our "container" */
+    setns (fd_netns_orig, CLONE_NEWNET);
+    system ("ip link add mvlan0 link eth0 type macvlan mode private");
+    snprintf (str, sizeof (str), "ip link set mvlan0 netns /proc/self/fd/%d",
+              fd_netns_new);
+    system (str);
+
+    /* Setup the network inside our "container" */
+    setns (fd_netns_new, CLONE_NEWNET);
+    system ("ip link set up lo");
+    system ("ip link set up mvlan0");
+    system ("ip addr add 172.19.1.222/24 dev mvlan0");
+    system ("ip route add default via 172.19.1.1");
+
+    // pw ("nsenter me, then hit &lt;ENTER&gt; to continue...");
+
+    /* Close all references to the new NET NS but the socket  */
+    setns (fd_netns_orig, CLONE_NEWNET);
+    close (fd_netns_orig);
+    close (fd_netns_new);
+    pw ("Hit &lt;ENTER&gt; to exit...");
+
+    return 0;
+}
+-------------------------------------------------------------------------------
+
+If we run the program above, we should be able to ping the ''172.19.1.222''
+address. BUT, NOT FROM THE HOST! BECAUSE THE MACVLAN INTERFACE WAS CREATED AS
+''private''! (This behavior might be surprising, especially if you are
+encountering the macvlan interface for the first time -- refer to the diagrams
+in [ref7] to gain some intuition).
+
+NOTE: When debugging, I highly recommend replacing macvlan with a veth-pair,
+uncommenting the ''pw ("nsenter...")'' line, and entering the namespace using a
+command like ''nsenter -n -t "$(pidof socket_container)"'', and testing the
+network from there.
+
+We have a fully functional network hidden within a socket. How awesome is
+that?! Before we move on to another technique, let's briefly discuss the topic
+of detection.
+
+
+
+
+===[ Detecting a Network Namespace within a Socket ]~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When we inspect the running program, it appears innocent enough. The network
+namespace is the same as init's network namespace:
+
+  # ls -l /proc/"$(pidof socket_container)"/ns/net /proc/1/ns/net
+
+  lrwxrwxrwx 1 root root   /proc/1/ns/net      -&gt; 'net:[4026531992]'
+  lrwxrwxrwx 1 root root   /proc/194687/ns/net -&gt; 'net:[4026531992]'
+
+The only open file descriptors are stdin, stdout, stderr, and a
+totally-non-suspicious TCP socket:
+
+  # ls -l /proc/"$(pidof socket_container)"/fd/
+
+  lrwx------ 1 root root   0 -&gt; /dev/pts/12
+  lrwx------ 1 root root   1 -&gt; /dev/pts/12
+  lrwx------ 1 root root   2 -&gt; /dev/pts/12
+  lrwx------ 1 root root   4 -&gt; 'socket:[1149645]'
+
+The socket does not carry any special information, and the information we can
+gather through regular means is limited:
+
+  # cat /proc/"$(pidof socket_container)"/fdinfo/4
+
+  pos:    0
+  flags:  02
+  mnt_id: 9
+
+
+  # getfattr -d -m system.sockprotoname -e text --absolute-names \
+      /proc/"$(pidof socket_container)"/fd/4
+
+  system.sockprotoname="TCP"
+
+From the ''flags'', we can determine that the socket is ''O_RDWR'' [ref8], this
+is not helpful at all. If we try to find the ''mnt_id'' (mount identifier), for
+example, using the command ''grep '^9 ' /proc/*/mountinfo'', we will not find a
+match. Okay, on its own, this information can be helpful in some situations as
+we can deduce that it might be a hidden kernel file system. But not here, as it
+is the ''sockfs'' pseudo file system, which is used for all sockets. So, there
+is no surprise here either.
+
+If we call the ''getxattr(2)'' syscall (or use the ''getfattr'' command) on
+the ''/proc/PID/fd/SOCK_FD'' [ref9], we can retrieve that it is a TCP socket,
+which provides us with slightly more information than before, but it is still
+not particularly useful. Furthermore, if we attempt to search for the socket
+inode across all available network information in all visible network
+namespaces, for example, by running the command ''grep -r 1149645
+/proc/[0-9]*/net'', we will not find any matches. Of course, this should raise
+a red flag, as on a normally behaving system, we should be able to observe all
+network stacks.
+
+Although the socket cannot be found in the ''/proc'' directory, it can still be
+detected using ''tcpdump'' when there is active traffic. For example, by
+running ''tcpdump'' directly on the backend interface for the macvlan (e.g.,
+''eth0''), we can observe packets that originate from or are directed towards
+our network namespace. Unfortunately, we cannot pinpoint the specific process,
+especially if the process itself is not generating any traffic! (We will create
+a scenario demonstrating such behavior later on).
+
+
+
+===[ Hiding a Namespace with an Inotify Watch ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A socket can still draw attention as it indicates network communication.
+Ultimately, all we want is a reference to our network namespaces with minimal
+information about the original file descriptor. Is that too much to ask for?
+Maybe not. In fact, there is a slick way to hold such a reference using
+''inotify(7)''.
+
+Inotify provides a mechanism for monitoring file system events on a specified
+path [ref10]. It works by opening a file path and returning a special inotify
+file descriptor known as a watch descriptor. We can use this watch descriptor
+to listen for events (e.g., using the ''select(2)'' syscall).
+
+Once an inotify watch is initialized, it finds the inode number for the file
+path being watched. However, after initialization, the path name itself becomes
+unnecessary, and subsequent operations are performed on the inode. As a result,
+the path name is lost in the process [ref11].
+
+While it is generally possible to correlate the inode number obtained from the
+watch descriptor (found in ''/proc/PID/fdinfo/FD'') with the inode numbers of
+files in file systems, it is not applicable in our case. This is because both
+''sockfs'' and ''nsfs'' are in-kernel pseudo file systems that cannot be
+accessed directly.
+
+This is great news for us, as we can utilize the ''inotify_add_watch(2)''
+syscall as an obfuscator. We will provide the ''/proc/PID/fd/FD'' file path to
+it, which will create a reference to the ''FD'' file descriptor, and when we
+subsequently close the original file descriptor ''FD'', the association with
+the file path will be lost, but the file descriptor will still retain its
+reference.
+
+That sounds arousing, but can we actually use it? Let's refer to the
+''inotify(7)'' man page [ref10]:
+
+  Furthermore, various pseudo-filesystems such as /proc, /sys, and /dev/pts are
+  not monitorable with inotify.
+
+While man pages are indeed a great source of information, they can sometimes be
+misleading. "Not being monitorable" does not imply failure. The following
+experiment demonstrates that an inotify watch can create a reference to a
+''nsfs'' pseudo file (the same applies to ''sockfs'') and that it is capable of
+holding a (network) namespace:
+
+-------------------------{ inotify_nsfs_reference.c }--------------------------
+#define _GNU_SOURCE
+#include &lt;stdio.h&gt;
+#include &lt;sched.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/inotify.h&gt;
+
+#define pw(s)  printf (s); getc (stdin)
+
+int main (int argc, char *argv[])
+{
+    int fd_ino        = inotify_init1 (IN_NONBLOCK);;
+    int fd_netns_orig = open ("/proc/self/ns/net", O_RDONLY);
+
+    /* Create a new NET NS and switch to it.
+     */
+    unshare (CLONE_NEWNET);
+
+    /* Create an inotify watch descriptor to the new NET NS. It will increment
+     * the reference counter in the kernel, and it will keep the new NET NS
+     * active even after we switch to another NET NS.
+     */
+    inotify_add_watch (fd_ino, "/proc/self/ns/net", IN_MODIFY);
+
+    /* Switch to the original NET NS (and decrement the reference counter to it
+     * in the kernel).
+     */
+    setns (fd_netns_orig, CLONE_NEWNET);
+
+    close (fd_netns_orig);
+
+    pw ("@ ORIGINAL NS + INOTIFY REFERENCE. Hit &lt;ENTER&gt; to continue...");
+
+    /* Now, the only reference to the new NET NS is held by the inotify watch
+     * descriptor.
+     *
+     * When the inotify watch is closed, the new NET NS is freed.
+     */
+    close (fd_ino);
+
+    /* The new NET NS is removed. */
+
+    return 0;
+}
+-------------------------------------------------------------------------------
+
+Amazing! This technique not only increases the reference counter for the
+specific namespace or file descriptor but also effectively hides the reference
+itself.
+
+However, there is one hint that can reveal the ''nsfs'': the device number
+''sdev''. When we encounter something like ''sdev:4'', it indicates that the
+device number is ''0:4'' (major:minor) [ref12], and if we cannot find it in the
+''/proc/PID/mountinfo'' file [ref13], it stinks with an in-kernel pseudo file
+system. We can easily verify this by bind mounting some ''nsfs'' namespace
+symlink:
+
+  # touch /tmp/test
+  # mount -o bind /proc/1/ns/net /tmp/test
+  # grep /tmp/test /proc/1/mountinfo
+
+  166 26 0:4 net:[4026531992] /tmp/test rw shared:92 - nsfs nsfs rw
+         ^^^
+
+A similar approach can be applied to a socket, although not through
+bind-mounting since ''sockfs'' is not mountable in userspace [ref14]. However,
+we can still utilize the technique described earlier by using inotify on
+different types of pseudo file systems and checking their ''sdev'' vaule.
+
+
+
+
+===[ Battle of the Techniques: Socket vs Inotify ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Inotify seems like a superior option due to the difficulty of discovering the
+original file descriptor. However, a socket has a valuable property: we can
+retrieve its network namespace. Imagine a scenario where we create a backdoor
+program that hides a malicious network namespace within a socket most of the
+time. When needed, such as for network or firewall reconfiguration, the program
+can retrieve the network namespace using a simple ''ioctl()'' call:
+
+-------------------------{ retrieve_ns_from_socket.c }-------------------------
+int fd_socket, fd_netns_orig;
+
+/* Create a socket in the current (original) NET NS. */
+fd_socket = socket (AF_INET, SOCK_STREAM, 0);
+
+/* Create a new NET NS and switch to it. */
+unshare (CLONE_NEWNET);
+
+/* Get the (original) NET NS from the socket. */
+fd_netns_orig = ioctl (fd_socket, SIOCGSKNS);
+
+/* Switch to the (original) NET NS. */
+setns (fd_netns_orig, CLONE_NEWNET);
+
+/* Close the open fd reference to the (original) NET NS, so it cannot be easily
+ * seen in the /proc/PID/fd/FD.
+ */
+close (fd_netns_orig);
+
+/* ... Do stuff and switch back to another NET NS ... */
+-------------------------------------------------------------------------------
+
+On the other hand, this capability can also be used to our disadvantage. When
+some aggressor connects to our innocent backdoor process, steals the socket
+file descriptor, and uses the ''ioctl(2)'' call described above, they can
+potentially perform unholy forensics on it.
+
+(Btw, I highly doubt that someone would go to such lengths. It would be more
+practical for an investigator to create a kernel module that exports the
+''nsfs'' of all namespaces).
+
+
+
+
+===[ Honorable mention: Referring to a Namespace via Bind-Mount ]~~~~~~~~~~~~~~
+
+At first glance, there is a cool way to hold a namespace. Namely, files from
+the ''nsfs'' pseudo file system can be bind-mounted. (This technique is
+utilized by ''iproute2'' for the ''ip netns add'' command [ref15]). The
+''mount(2)'' call for this operation would look as follows:
+
+  mount("/proc/self/ns/net", "/run/netns/test_netns", "none", MS_BIND, NULL)
+
+This approach is kinda elegant, but unfortunately, it is quite easy to find
+because it has a distinct file system type called ''nsfs'':
+
+  # grep nsfs /proc/self/mountinfo
+
+  166 159 0:4 net:[4026532193] /run/netns/test_netns rw shared:92 - nsfs nsfs rw
+  167 25 0:4 net:[4026532193] /run/netns/test_netns rw shared:92 - nsfs nsfs rw
+
+If we were looking to identify such a bind-mount, we could simply search
+through every process and its corresponding ''/proc/self/mountinfo'' file for
+the presence of ''nsfs'':
+
+  find /proc -mindepth 2 -maxdepth 2 -name 'mountinfo' -exec grep netns '{}' +
+
+Dealing with bind-mounted ''nsfs'' is relatively straightforward process. We
+first switch to the mount namespace and then, from there, switch to the
+bind-mounted network namespace, giving us full access to the network.
+
+While we are at it, let's again look at some detection methodologies.
+
+
+
+
+===[ Peering into the Abyss: Userspace Information About Namespaces ]~~~~~~~~~~
+
+In general, Linux does not provide a lot of information about the kernelspace,
+and the available information about namespaces is no exception. Simply scanning
+the ''/proc/'' and ''/sys/'' directories is not sufficient, the information
+provided by syscalls is sparse, and processing ''/proc/kcore'' is challenging
+due to the complexity and evolving structure of kernel structures.
+
+(Personally, I would appreciate having a ''/proc/'' directory that provides an
+''nsfs'' entry with all active namespaces on the system. I understand that
+implementing such a feature would be hard as it could potentially compromise
+the security of the whole system. However, having this functionality would
+greatly simplify auditing the system).
+
+Active logging is a viable option. Linux offers powerful instrumentation
+capabilities, such as kprobes [ref16], which can be used to log the creation
+and cleanup of namespaces on the system. This logging mechanism can help
+identify active namespaces and determine their original parent processes.
+
+However, it is important to note that when a process forks, its child inherits
+all the namespaces from its parent. The same can be true for ''execve(2)'' when
+file descriptors have not been set with the ''O_CLOEXEC'' flag. Additionally,
+if the parent process dies, we may quickly lose the connection between PIDs
+and the associated namespaces. This can make analysis more difficult in a
+dynamic environment such as Docker or LXC.
+
+Regardless, let's explore some options that are available to us:
+
+
+1. The PID actively using a namespace can be found by dereferencing the
+''/proc/PID/ns/*'' path:
+
+  # find /proc/ -maxdepth 3 -mindepth 3 ! -type d \
+      \( -path '/proc/[0-9]*/ns/net' \) -printf '%l\n' | sort | uniq -c
+
+      108 net:[4026531992]
+        1 net:[4026532193]
+
+
+2. The opened file descriptor of the namespace can be obtained by accessing the
+''/proc/PID/fd/*'' path:
+
+  # find /proc/ -maxdepth 3 -mindepth 3 ! -type d \
+      \( -path '/proc/[0-9]*/fd/*' \) -printf '%l\n' | grep ^net: | sort \
+      | uniq -c
+
+  1 net:[4026532193]
+
+
+3. The ''nsfs'' bind-mount can be found by inspecting the
+''/proc/PID/mountinfo'' files:
+
+  # find /proc -mindepth 2 -maxdepth 2 -name 'mountinfo' \
+      -exec grep -h netns '{}' + | sort | uniq -c
+
+  101 159 25  0:22 /netns /run/netns ... shared:5           - tmpfs ...
+    1 161 242 0:22 /netns /run/netns ... shared:89 master:5 - tmpfs ...
+    1 163 113 0:22 /netns /run/netns ... shared:90 master:5 - tmpfs ...
+    1 165 66  0:22 /netns /run/netns ... shared:91 master:5 - tmpfs ...
+
+
+4. The ''tcpdump'' tool on the host can capture and view all traffic on the
+interface (even when using macvlan in private mode within our network
+namespace). Moreover, with eBPF, we may have the capability to trace the exact
+source of the traffic.
+
+
+5. Monitoring kernel functions with kprobes (e.g., using eBPF, perf, ftrace) is
+a viable approach, although it does have some flaws. One of the main challenges
+is that certain functions are inlined and cannot be directly instrumented (for
+instance, initialization and cleanup of the UTS namespace [ref17]). However,
+there are still several functions that are suitable and can be effectively
+instrumented.
+
+To identify the relevant function, use ''ftrace'' (see, for example, [ref18]).
+Look for keywords like ''ns'' and the name of the specific namespace, such as
+''uts''. (In this article I was heavily instrumenting ''net_drop_ns'',
+''__put_net'', ''cleanup_net'' and ''put_mnt_ns'' functions).
+
+
+6. Extracting data from the relevant structures within the ''/proc/kcore''
+pseudo-file can be an excellent source of truth (unless the system is
+compromised ;)). However, one significant drawback is the requirement for
+extensive knowledge about the structures specific to the current kernel
+version. Generally, obtaining a comprehensive understanding from
+''/proc/kcore'' is achievable, but it poses significant challenges.
+
+For example, in the 5.10 kernel version, a new network namespace is added
+[ref19] to the end of the linked list within the ''struct net''. This means that
+we can view all existing network namespaces by using the following ''drgn''
+[ref20] script:
+
+-----------------------------{ get_all_net_ns.py }-----------------------------
+#!/usr/bin/python3
+
+import drgn
+from drgn.helpers.linux.list import *
+
+prog = drgn.program_from_kernel ()
+init_nsproxy = prog['init_nsproxy']
+
+print ("initial net ns inode =",  init_nsproxy.net_ns.ns.inum)
+
+for i in list_for_each_entry ('struct net', init_nsproxy.net_ns.list.address_of_(), 'list'):
+    print ("net ns inode =", i.ns.inum)
+-------------------------------------------------------------------------------
+
+What we are essentially doing here is obtaining a pointer to the initial
+network namespace from the ''init_nsproxy'' global variable [ref21]. Using this
+pointer, we can iterate through the link list [ref22] that holds references to
+the other network namespaces.
+
+By performing this traversal, we gain the ability to see the existing network
+namespaces in the system.
+
+
+Logging and observing can provide invaluable insights into the current
+behavior, however they do not offer a direct solution for switching into or
+terminating the hidden namespace and disarm them. Moreover, we can make it even
+more complicated...
+
+
+
+
+===[ Side quest: Process Resiliency ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+One of the biggest flaws with the namespace hiding so far is its dependency on
+the existence of the process. And I don't know if you know this, but userspace
+processes can be killed! I know, I know, it's quite a shocking revelation.
+Anyway, this poses a significant challenge when relying on processes. Just a
+single well-aimed ''SIGKILL'' signal, and our carefully crafted backdoor can be
+swiftly eliminated.
+
+Making a process unkillable is indeed an interesting topic on its own. We can
+make our process somewhat resilient to killing by utilizing signal filtering
+with tools like AppArmor or SElinux (see [ref23] for more details).
+
+Additionally, we should not forget to forbid ptrace attach with the classic
+''ptrace (PTRACE_TRACEME, 0, 0, 0)'' and ideally on a system-wide level with
+Yama (see [ref24]).
+
+If possible, let the kernel handle all the operations you need, as it offers
+various offloading capabilities (we will explore an example in the following
+section). Moreover, kernel workers operate independently of userspace
+processes, meaning that a functional userspace process is not necessary for the
+kernel to function properly. So, in the event that an uninterpretable D is
+inadvertently created within our process, the process itself may be lost
+indefinitely, but the kernel functionalities referenced by the process will
+remain available and functional.
+
+These measures can provide an extra layer of protection and make it more
+challenging for an "attacker" to kill our process.
+
+
+
+
+===[ Good Luck, I'm Behind 7 Proxies ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+One of the notable advantages of network namespaces is that they provide a
+complete implementation of a network stack, allowing us to configure the
+netfilter firewall according to our specific needs. This is particularly
+significant because netfilter rules are primarily processed in the kernelspace,
+eliminating the requirement for a functional userspace process. Consequently,
+we can define firewall rules directly within the kernel, controlling network
+traffic without relying on userspace process.
+
+For example, we can create a simple iptables travel agency:
+
+---------------------{ iptables within socket_container }----------------------
+iptables --table nat --insert PREROUTING --protocol tcp --dport 1337 \
+    --jump DNAT --to-destination 1.1.1.1:443
+iptables --insert FORWARD --jump ACCEPT
+iptables --table nat --insert POSTROUTING --jump MASQUERADE
+sysctl net.ipv4.conf.all.forwarding=1
+-------------------------------------------------------------------------------
+
+When we apply these rules in our ''socket_container'', it can be utilized as a
+jump host. For instance, when we go to ''172.19.1.222:1337'', our traffic will
+be transparently redirected to ''1.1.1.1:443''. This can be easily tested using
+the ''curl'' command:
+
+  curl -k -H "Host: 1.1.1.1" https://172.19.1.222:1337/
+
+These rules can be chained across multiple hosts, with the last host serving as
+a SOCKS proxy (see [ref3]). It would be unstable as heck, but then we will be
+behind 7 proxies and that counts for something!
+
+
+
+
+===[ Conclusion ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We have learned a very sophisticated and big brain technique that enables us to
+hide references to any namespace using inotify. One notable advantage of this
+approach is its integration within the main functionality of the system,
+eliminating the need for potentially restricted kernel modules, especially in
+situations where the kernel is signed.
+
+However, we have barely touched upon the possibilities and applications of this
+method. One simple and useful application is a netfilter tunnel, but the
+potential extends much further. For instance, there are other network
+interfaces such as ipvlan or macvtap that can be valuable in certain scenarios.
+Proxy ARP is another interesting concept to explore. Additionally, while we
+mainly focused on network namespaces, user namespaces can also bring some joy,
+as they have very interesting relationships with other namespaces.
+
+To sum up this article, I would like to cite the bestest hacking movie of all
+time [ref25]:
+
+  To be elite, you have to do a righteous hack, not this accidental shit.
+
+Oh, wait...
+
+
+
+
+===[ References ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+&gt; [ref1] https://www.kernel.org/doc/mirror/ols2006v1.pdf
+         Proceedings of the Linux Symposium, Volume One, July 19th–22nd, 2006
+         Eric W. Biederman -- Multiple Instances of the Global Linux Namespaces
+&gt; [ref2] https://manpages.debian.org/bullseye/manpages/namespaces.7.en.html
+&gt; [ref3] https://github.com/darkk/redsocks
+&gt; [ref4] https://elixir.bootlin.com/linux/v5.10.177/source/net/core/net_namespace.c#L341
+         https://elixir.bootlin.com/linux/v5.10.177/source/include/net/net_namespace.h#L63
+&gt; [ref5] https://elixir.bootlin.com/linux/v5.10.177/source/include/net/net_namespace.h#L253
+&gt; [ref6] https://elixir.bootlin.com/linux/v5.10.177/source/net/core/sock.c#L1757
+&gt; [ref7] https://developers.redhat.com/blog/2018/10/22/introduction-to-linux-interfaces-for-virtual-networking#macvlan
+&gt; [ref8] https://elixir.bootlin.com/linux/v5.10.177/source/include/uapi/asm-generic/fcntl.h#L22
+&gt; [ref9] https://elixir.bootlin.com/linux/v5.10.177/source/net/socket.c#L315
+&gt; [ref10] https://man7.org/linux/man-pages/man7/inotify.7.html
+&gt; [ref11] https://elixir.bootlin.com/linux/v5.10.177/source/fs/notify/inotify/inotify_user.c#L753
+&gt; [ref12] https://elixir.bootlin.com/linux/v5.10.177/source/fs/notify/fdinfo.c#L86
+          https://elixir.bootlin.com/linux/v5.10.177/source/include/uapi/linux/kdev_t.h
+&gt; [ref13] https://elixir.bootlin.com/linux/v5.10.177/source/fs/proc_namespace.c#L140
+&gt; [ref14] https://elixir.bootlin.com/linux/v5.10.177/source/net/socket.c
+&gt; [ref15] https://git.kernel.org/pub/scm/network/iproute2/iproute2.git/tree/ip/ipnetns.c?h=v5.10.0&id=c9c64b8d1ebed69054f8a170d640b13c3abb1fdb#n871
+&gt; [ref16] https://www.kernel.org/doc/html/latest/trace/kprobes.html
+&gt; [ref17] https://elixir.bootlin.com/linux/v5.10.177/source/include/linux/utsname.h#L43
+&gt; [ref18] https://lwn.net/Articles/410200/ (trace-cmd: A front-end for Ftrace)
+&gt; [ref19] setup net https://elixir.bootlin.com/linux/v5.10.177/source/net/core/net_namespace.c#L356
+&gt; [ref20] drgn https://drgn.readthedocs.io/
+&gt; [ref21] init_nsproxy https://elixir.bootlin.com/linux/v5.10.177/source/kernel/nsproxy.c#L32
+&gt; [ref22] link list https://elixir.bootlin.com/linux/v5.10.177/source/include/net/net_namespace.h#L76
+&gt; [ref23] https://research.h4x.cz/html/2023/2023-02-28--linux--apparmor_signal_filter_vs_tty_signals--ctrl-z-ptrace.html
+&gt; [ref24] https://www.kernel.org/doc/html/latest/admin-guide/LSM/Yama.html
+&gt; [ref25] https://en.wikipedia.org/wiki/Hackers_(film)
+
+
+</pre></div></body>

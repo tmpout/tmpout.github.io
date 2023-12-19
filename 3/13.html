@@ -1,0 +1,313 @@
+<html>
+<head>
+<title>Weird ELFs, or a tale of breaking parsers once again</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+::                                                        ::
+::  Weird ELFs, or a tale of breaking parsers once again  ::
+::                                                        ::
+
+    g1inko
+
+
+                            :: [ 0x00: intro ] ::
+
+Some time ago i enjoyed a speedrun  of  LiveOverflow videos, and ideas from one
+of them [1] haunted  me until my  curiosity took over and  i finally started my
+own research.  The  point was simple: feed a program an ELF corrupted so that a
+parser breaks, but the kernel nevertheless successfully runs the executable.
+
+I decided to dig a bit deeper and not just get  broken-but-runnable ELF files--
+it  has been done many times before me already--but also comprehend the problem
+of parsers more entirely and widely. And here i want to share my story.
+
+
+::                                                                           ::
+::----------------------------[ C O N T E N T S ]----------------------------::
+::                                                                           ::
+
+    0x01: langsec
+          langsec+0x10: a note on polyglots
+          langsec+0x20: parse tree differentials
+    0x02: ELF parsers
+          ELF parsers+0x10: defining targets
+    0x03: finding differentials
+          finding differentials+0x10: Linux
+          finding differentials+0x20: gdb
+          finding differentials+0x30: edb and CVE-2023-27734
+          finding differentials+0x40: r2hang
+    0x04: .atexit
+    0xfe: thanks
+    0xff: references
+
+
+::                                                                           ::
+::-----------------------------[ 0x01: langsec ]-----------------------------::
+::                                                                           ::
+
+Research dedicated  to parser  problems specifically  started with the birth of
+langsec [2], and many parser bugs were discovered and discussed ever since.
+
+Langsec studies different parser problems, namely where the theory (i.e. specs)
+and implementations differ.  Be liberal in what you recieve, they say [3]. This
+is, some deviations from the standards are ok  as long as the context is enough
+to recover the meaning of the input data.  That is,  a parser can fill the gaps
+and presume  the missing  data as  it wants.  Sometimes being much more liberal
+than  the spec tells to be.  And,  sometimes,  different parsers  fill the gaps
+different ways.
+
+These lead to an interesting outcome, making funny things possible. Here we'll
+take a look at two of them: polyglot files and parse tree differentials.
+
+
+::
+ `------------------> langsec+0x10: a note on polyglots
+
+Polyglot files happen when a standard or its implementation are loose enough to
+embed another file into it,  so that two parsers  of two different  formats can
+successfully operate with such file.  As corkami mentions [4],  PDF allows much
+liberty in this sense,  and he uses PDF a lot in his own PoCs of polyglots. One
+of my favourites is a PDF that, when run, acts as a python web-server with a JS
+compiler and many more [5]. It's much fun to reverse that :D
+
+Another example i'd like to mention is an αcτµαlly pδrταblε εxεcµταblε [6]. Its
+author managed to mix PE, ELF, Mach-O, sh and bare bootsector into one, so that
+a single file is able to run in those environments.  Incredible research, may i
+say.
+
+
+::
+ `------------------> langsec+0x20: parse tree differentials
+
+This type  of parser issues  becomes  possible when  two implementations of the
+same  standard  behave  differently  in  some cases.  During  my  research,  i 
+gathered several examples i find the most demonstrative.
+
+The first one i ought to mention is bugs in x509 certificates parsers described
+in 2010 by langsec pioneers, Len Sassaman and Meredith Patterson, who wondered:
+what if put a  NULL-byte in a CN field [7]?  This  turned out to be a phisher's
+dream,  as the browsers under test showed a user only a part of domain prior to
+the NULL-byte, while the domain might be something like:
+
+    "www.bank.com\x00badguy.com"
+
+with a completely valid certificate.
+
+Another example i like  is  about XML.  XML is  an  amazing format to find bugs
+around: it's generally so simple for humans yet so hard to be parsed correctly.
+A security  researcher once asked:  `Find me two  different  XML  parsers  that
+always, for every input, result in the same output' [8]. What could possibly go
+wrong if it was used to hold entitlements info an PLIST files?  Even more, what
+could ever go wrong  if  we had four XML parsers  in  the system,  one of which 
+operated in kernel space?
+
+This bug could be used for  a  sandbox  escape  in  iOS.  And  at that time, an
+incredible solution  was  to  introduce  the  fifth  PLIST  parser,  making the
+researcher who found the bug even more  happy  [9, section 5].  Later,  however,
+they decided to move to a binary DER format [10].
+
+Yet another  amusing  parser  issue  is  named  Sophail,  after  Sophos AV, and
+relates to the fact that the AV  skipped  further checks on an ELF if it was of 
+one specific architecture [11].
+
+As for breaking analysis in  practice,  a  crash due to insufficient checks on 
+some PE header data in x64dbg was said to be used by malware in the wild [12].
+
+
+::                                                                           ::
+::---------------------------[ 0x02: ELF parsers ]---------------------------::
+::                                                                           ::
+
+Now that we've  come closer to ELF parsers,  let's see what has been done on it
+already. Back in 2012 nitr0us performed similar research [13] on how to make an
+ELF debug-resistant,  but  not by the runtime checks, as it ways for the latter
+were known already and thus not that interesting.  nitr0us managed to break gdb
+7.5.1 and IDA Pro 6.3 with an ELF that ran perfectly;  and a bug in OpenBSD ELF
+loader was also found [14].
+
+::
+ `------------------> ELF parsers+0x10: defining targets
+
+Now it's time to clarify the task.  First i wanted to get an ELF that would run
+but would fail to open in gdb, edb-debugger, radare2. Later, however, it turned
+out to be about debugging  the  debugger  (much fun, i must admit!)  and fixing 
+bugs i found since all the tools are open source.
+
+
+::                                                                           ::
+::----------------------[ 0x03: finding differentials ]----------------------::
+::                                                                           ::
+
+The easiest way  to  find  a  differential  is  by  fuzzing.  There are several
+approaches that could be used:
+
+1. 30-lines python script. This is what LiveOverflow used in his video, and 
+   just the same logic helped in finding several r2 bugs published in tmp.0ut
+   issue 1 [15].
+
+2. AFL++ or LibFuzzer. They are goot when targeting a particular software, but
+   that's not what i wanted (which was to get a bunch of corrupted ELF files to
+   analyze with all the tools in question).
+
+3. Some ELF-aware fuzzer that generates ELFs corrupted in a special way. OS is
+   known to ignore section headers info, but debuggers and disassemblers  parse
+   it to name functions, sections, or apply DWARF data if any. Section headers
+   is exactly what could be targeted to get a runnable ELF that would not
+   analyze.
+
+I found a fuzzer authored by nitr0us already familiar to us. The fuzzer proudly
+named Melkor [16]  can corrupt specific parts of ELF files which is just what i
+needed. So, i generated a hundred of ELF files with broken Section Header Table
+(SHT) out of a template ELF with the following command:
+
+    ./melkor -Sn100 templates/foo
+
+I decided to generate only 100 ELF files with broken SHT so that i have a set
+of inputs small enough to embrace if i need to manually analyze some cases.
+
+
+::
+ `------------------> finding differentials+0x10: Linux
+
+10 of the generated files segfaulted when run.  Most of this problem was due to
+requested interpreter was the same as the binary:
+
+    $ readelf -l orcs_foo/orc_0013
+
+    Elf file type is DYN (Position-Independent Executable file)
+    Entry point 0x1100
+    There are 13 program headers, starting at offset 64
+
+    Program Headers:
+    Type           Offset             VirtAddr           PhysAddr
+                    FileSiz            MemSiz              Flags  Align
+    PHDR           0x0000000000000040 0x0000000000000040 0x0000000000000040
+                    0x00000000000002d8 0x00000000000002d8  R      0x8
+    INTERP         0x0000000000000318 0x0000000000000318 0x0000000000000318
+                    0x000000000000001c 0x000000000000001c  R      0x1
+        [Requesting program interpreter: orcs_foo/orc_0013]
+    LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                    0x00000000000008b0 0x00000000000008b0  R      0x1000
+    . . .
+
+However, this was not the only  cause.  In  a  couple of ELFs  Melkor broke plt
+(procedure linkage table),  so that any call to external function from such ELF
+would segfault, because instead of jumping to .got.plt the execution would jump
+to an ASCII smiley in .rodata section.
+
+6 more files wouldn't run because their dynamic dependencies were messed up:
+
+    Testing binary: orcs_foo/orc_0050
+    orcs_foo/orc_0050: error while loading shared libraries: lib %x .6: cannot \
+                             open shared object file: No such file or directory
+
+So, i was left with 84 files that run. Do they break debuggers?
+
+
+::
+ `------------------> finding differentials+0x20: gdb
+
+gdb is your friend #1 if you want to prevent analysis.  It is a mature debugger
+that performs many sanity checks and refuses to analyze a malformed file. In 98
+cases it said:
+
+    not in executable format: file format not recognized
+
+And in one:
+
+    Can't read symbols from .../orcs_foo/orc_0063: bad value
+
+Eventually, gdb agreed to open and run only one file of the broken hundred.
+
+
+::
+ `------------> finding differentials+0x30: edb and CVE-2023-27734
+
+edb segfaulted 55 times and was killed with SIGFPE (Floating point exception) 9
+times. Both bugs originated in the code responsible for symbols parsing, namely
+the BinaryInfo edb plugin.
+
+In the first case,  the  section name string pointer (more precisely, an offset
+into the section names section, .shstrtab)  was  not  checked to lie within the
+file when looking  for specific sections.  In case of FPE,  edb tried iterating
+through symbol tables.  Prior to walking, it needed to  calculate the number of
+entries in the table.  This was done by dividing section size by its entry size
+with no check wether entry was was zero. SIGFPE, despite its name, is generated
+in case of a division by zero as well.
+
+Both bugs were fixed [17], and  for  some reason only one  of them got assigned
+CVE-2023-27734.
+
+
+::
+ `--------------> finding differentials+0x40: r2hang
+
+r2 did not crash on any file.  When  trying to debug,  it reported segfaults of
+the binaries that segfaulted when executing in Linux. But this section wouldn't
+exist if there were no problems with r2, would it? :)
+
+About a quarter of executables made r2 hang when just opening them for analysis
+with 100% CPU core usage.  Further investigation included debugging r2 and some
+binary diffing,  and revealed that r2 got tangled up in the loop when trying to
+locate  plt_addr  within .plt.got  in get_import_addr_x86_manual(), and  Melkor
+had created this section with reported size of 0x4242424258aebf0b.  In the file
+tested, r2 iterated from the start of .plt.got (0x10f0 in this case) about that
+many times:
+
+    (0x4242424258aebf0b — 0x10f0)/8 = 596806425961158083.
+
+Notably, after about an eternity or  two  r2  would happily proceed to the next
+step of binary analysis. Still, the bug is enough to prevent the analysis.
+
+Despite iterating goes beyond the file size, there were no buffer overruns that
+in the end could result in the crash when exceeding the mapping, like it was in
+the case of edb 'out-of-file' reads.  This was because the reading was done via
+r2 wrappers that are aware of the file size,  and  r2 just kept reading 0 bytes
+from the file buffer. This was also fixed and included in 5.8.4 release [18]. 
+
+
+::                                                                           ::
+::-----------------------------[ 0x04: .atexit ]-----------------------------::
+::                                                                           ::
+
+Finding bugs in parsers in fun.  Finding bugs in  ELF parsers is even more fun,
+as it's the way to learn more about the ELF itself, about its loading, and also
+contribute to opensource and make things better!
+
+
+::                                                                           ::
+::------------------------------[ 0xfe: thanks ]-----------------------------::
+::                                                                           ::
+
+my respects to liveoverflow and corkami  (and the whole researchers community!)
+for sharing the knowledge, langsec guys for opening  my eyes to see parser bugs
+from a different angle, and tmp.0ut crew for this amazing zine! :^)
+
+
+::                                                                           ::
+::----------------------------[ 0xff: references ]---------------------------::
+::                                                                           ::
+
+1. Uncrackable Program? Finding a Parser Differential in loading ELF (https://www.youtube.com/watch?v=OZvc-c1OLnM)
+2. https://langsec.org
+3. https://datatracker.ietf.org/doc/html/rfc761#section-2.10
+4. https://github.com/corkami/docs/blob/master/AbusingFileFormats/README.md#specific-examples
+5. PoC‖GTFO Issue 0x16 (https://raw.githubusercontent.com/angea/pocorgtfo/master/contents/articles/16-12.pdf)
+6. https://justine.lol/ape.html
+7. Towards a formal theory of computer insecurity: a language-theoretic approach (https://www.youtube.com/watch?v=AqZNebWoqnc)
+8. XMPP Stanza Smuggling or How I Hacked Zoom (https://youtu.be/ERaRNsvCBrw?t=467)
+9. "Psychic Paper" (https://blog.siguza.net/psychicpaper/)
+10. DER Entitlements: The (Brief) Return of the Psychic Paper (https://googleprojectzero.blogspot.com/2023/01/der-entitlements-brief-return-of.html)
+11. Sophail A Critical Analysis of Sophos Antivirus Tavis Ormandy (https://www.youtube.com/watch?v=EnotiUfBaW4&t=3078s)
+12. Malware Samples Crashing x64dbg Fixed! (https://www.youtube.com/watch?v=FNuFlhnfZQU)
+13. Striking Back GDB and IDA debuggers through malformed ELF executables (https://ioactive.com/striking-back-gdb-and-ida-debuggers-through-malformed-elf-executables/)
+14. https://ioactive.com/pdfs/IOActive_Advisory_OpenBSD_5_5_Local_Kernel_Panic.pdf
+15. Fuzzing Radare2 For 0days In About 30 Lines Of Code (https://tmpout.sh/1/5.html)
+16. https://github.com/IOActive/Melkor_ELF_Fuzzer
+17. https://github.com/eteran/edb-debugger/pull/834
+18. https://github.com/radareorg/radare2/pull/21423
+
+</pre></div></body>
