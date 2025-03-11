@@ -1,0 +1,166 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                                           ┌───────────────────────┐
+                                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                           │ █   █ █ █ █   █       │
+                                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                                           │ █   █   █ █     ▄     │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄   ▄ │
+                                                                           │                 █   █ │
+                                                                           │                 █   █ │
+                                                                           │                 █▄▄▄█ │
+                                                                           │                 ▄▄▄▄▄ │
+                                                                           │                   █   │
+PT_NOTE 清除工具                                                            │                   █   │
+~ manizzle                                                                 └───────────────────█ ──┘
+
+大家好。首先声明，我不是杀毒软件开发者。杀毒软件很糟糕，它们有bug而且通常容易被利用。
+请随意对lief和capstone进行模糊测试。我相信它们有bug。现在让我们来谈谈如何清除感染...
+
+PT_NOTE注入技术非常干净，它提供了一个现成的内存槽来填充有效载荷。但是对于所有的感染技术，
+通常都会有相应的清除技术。这就是生活的本质。
+
+我喜欢用清除的难易程度来衡量一个感染技术的好坏。清除技术中的常量越多，它就越容易被破解。
+猫鼠游戏不断进行，这也是开发越来越隐蔽的病毒的唯一方法。不断与自己较量，你的病毒就会成为
+令人疯狂和惊叹的存在。
+
+在这个清除工具中，我们利用了大多数病毒会尝试将PT_NOTE段加载到尽可能远的地方的事实，因为
+如果二进制文件很大，它们会试图确保有效载荷不会被覆盖并导致二进制文件加载问题，毕竟你得保持
+隐蔽对吧？
+
+我们使用K均值算法来开始并将PT_LOAD段聚类在一起，我们使用聚类相对于其质心的惯性来衡量K均值
+的效果。通常情况下，一个感染只会感染1个PT_NOTE，但也许sblip之后会告诉你，有时候会有2个 :)
+
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+
+一旦我们发现了哪些段似乎被映射得比平常远一些（当然，如果你想把PT_NOTE映射到有效PT_LOAD之间
+并重新定位整个镜像，我是说，谁会做这种事呢？），我们就可以开始深入研究它的代码。
+
+通常这些病毒会做更多的蠕虫式感染，感染更多的文件，但在某个时候它们需要让程序继续执行，你
+知道的，为了避免引起怀疑。我们可以假设跳转到原始入口点发生在被感染的PT_NOTE段的末尾，所以
+我们在那里寻找。
+
+有时跳转是直接的，有时是派生的。我们只需要跟踪跳转目标，直到它将OEP（原始入口点）添加到之前
+计算的基址（如果你想变得更花哨，你总可以使用use-def链，但当然病毒也可以变得更花哨，强迫你
+跨函数边界解析你的链，天啊！）
+
+  add {target}, CONST
+
+把它放回你的PHDR，你就回到正轨了。
+
+祝你下次好运，朋友！
+
+##################################################################
+
+#!/usr/bin/env python3
+
+from capstone import *
+from collections import Counter
+import lief
+import math
+import numpy as np
+from sklearn.cluster import KMeans
+import sys
+
+# 别做反逆向工程的傻瓜
+SUCKER_PUNCH = 3
+# 在一些大小二进制文件上测试过
+# 大多数正常二进制文件的值在1.0几的范围内
+# 即使是几兆字节的大文件也是如此。我相信我们能找到
+# 能打破它的东西
+INERTIA_RATIO = 1.1
+
+def find_anomalous_load_segment(segment_ranges):
+  segment_array = np.array(segment_ranges)
+  cluster_2 = KMeans(n_clusters=2, random_state=0).fit(segment_array)
+  cluster_1 = KMeans(n_clusters=1, random_state=0).fit(segment_array)
+  if (math.log(cluster_1.inertia_)/math.log(cluster_2.inertia_)) < INERTIA_RATIO:
+    print("未检测到异常")
+    return None
+  cluster_counts = {v:k for k,v in Counter(cluster_2.labels_.tolist()).items()}
+  if 1 not in cluster_counts:
+    print("未找到单一聚类")
+    return None
+  return segment_array[np.where(cluster_2.labels_ == cluster_counts[1])[0]][0]
+
+
+def find_oep(segment_bytes, segment_start):
+  # 我们目前支持x64-64，但这可以很容易地移植到
+  # 其他架构。在这里使用IR会很酷，
+  # 这样就可以跨平台了
+  md = Cs(CS_ARCH_X86, CS_MODE_64)
+  md.skipdata = True
+  oep = None
+  last_jump = None
+  early_bail = 0
+  for r in [instr for instr in md.disasm(segment_bytes, segment_start)][::-1]:
+    if last_jump:
+      # 如果我们看到形如
+      # add {target}, CONST
+      # 的指令，我们可能是在将OEP添加到基地址
+      # 我们可以通过实际构建一个真正的use-def链
+      # 并在这里解出rax的实际值来使这更通用。
+      # 这需要找到像get_rip这样的函数，
+      # 它们被用来使相对代码的跳转更容易
+      if last_jump + ", " in r.op_str and "add" == r.mnemonic.strip():
+        try:
+          oep = int(r.op_str.split(",")[1].strip(), 16)
+          break
+        except Exception as e:
+          # 继续，但现在不太可能找到它
+          # 再试几次，但不要太多
+          # 你不想被一些反逆向工程技术耍了
+          early_bail += 1
+          if early_bail == SUCKER_PUNCH:
+            break
+          continue
+    if not last_jump and r.mnemonic.strip() == "jmp":
+      target = r.op_str.strip()
+      # 尝试看看跳转是否直接发生
+      # 然后将该值作为OEP
+      try:
+        oep = int(target, 16)
+        break
+      except Exception as e:
+        # 如果不是，它可能是一个寄存器跳转
+        oep = None
+        last_jump = target
+  return oep
+
+def main():
+  l = lief.parse(sys.argv[1])
+  load_segs = [ [ll.virtual_address, ll.virtual_address + ll.virtual_size]
+        for ll in l.segments
+        if ll.type == lief.ELF.SEGMENT_TYPES.LOAD
+      ]
+  anomalous_segment_start, anomalous_segment_end = find_anomalous_load_segment(load_segs)
+  segment_bytes = l.get_content_from_virtual_address(anomalous_segment_start, anomalous_segment_end)
+  real_oep = find_oep(bytes(segment_bytes), anomalous_segment_start)
+  print("找到OEP: ", hex(real_oep))
+  l.header.entrypoint = real_oep
+  l.write(sys.argv[1] + ".cleaned")
+
+if __name__ == "__main__":
+  main()
+
+</pre></div></center></body></html> 

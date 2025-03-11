@@ -1,0 +1,163 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                         ┌───────────────────────┐
+                                                         ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                         │ █   █ █ █ █   █       │
+                                                         │ █   █ █ █ █▀▀▀▀       │
+                                                         │ █   █   █ █     ▄     │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄   ▄ │
+                                                         │                 █   █ │
+                                                         │                 █   █ │
+                                                         │                 █▄▄▄█ │
+                                                         │                 ▄▄▄▄▄ │
+                                                         │                   █   │
+用约30行代码对Radare2进行模糊测试寻找0day漏洞                 │                   █   │
+~ Architect & S01den                                     └───────────────────█ ──┘
+
+--- 摘要 ---
+
+Radare2是一个著名的开源逆向工程和二进制分析框架。
+
+这类工具在漏洞研究方面非常有趣，因为它们被用于恶意软件分析等领域。
+
+在本文中，我们将解释如何通过编写自己的"笨拙"模糊测试器并进行一些逆向工程，从零开始发现
+两个漏洞（CVE-2020-16269和CVE-2020-17487）。
+
+在第一部分，我们将解释如何对radare2进行模糊测试；在第二部分，我们将以ELF相关的漏洞
+（CVE-2020-16269）为例，说明如何使用模糊测试发现的崩溃来分析、隔离和复现漏洞。
+
+--- 模糊测试 ---
+
+为了找到这两个漏洞，我们对目标进行了简单的模糊测试。在进行简单模糊测试时，关键因素是
+拥有代码覆盖率多样化的语料库。
+
+我们选择使用Radare2的testbins仓库[0]。
+
+在模糊测试期间，我们在30分钟内就发现了崩溃，涉及多种不同的文件格式。其中，对我们来说
+最有趣的是PE和ELF，这是两种最常用的可执行文件格式。
+
+不多说了，这里是我们的模糊测试器的精简版本。
+
+----------------------------------- 分割线 -------------------------------------
+import glob;import random;import subprocess;import hashlib
+
+def harness(d):
+    tf = open("wdir/tmp", "wb")
+    tf.write(d)
+    tf.close()
+    try:
+        p = subprocess.run(['r2','-qq', '-AA','wdir/tmp'], stdin=None, timeout=10)
+    except:
+        return
+    try:
+        p.check_returncode()
+    except:
+        print(f"进程以代码{p.returncode}退出")
+        fh = hashlib.sha256(d).hexdigest()
+
+        dump = open(f'cdir/crash_{fh}', 'wb')
+        dump.write(d);dump.close()
+
+def mutate(data):
+    mutable_bytes = bytearray(data)
+    for a in range(10):
+        r = random.randint(0, len(mutable_bytes)-1)
+        mutable_bytes[r] = random.randint(0,254)
+
+    return mutable_bytes
+
+if __name__ == '__main__':
+    fs = glob.glob("corpus/*")
+    while True:
+        f = open(random.choice(fs), 'rb').read()
+        harness(mutate(f))
+----------------------------------------------------------------------------------
+
+--- 漏洞利用 ---
+
+有了几个能让Radare2崩溃的样本，让我们来看看崩溃的原因。
+
+第一个是ELF文件，是dwarftest的变异版本，dwarftest是一个包含DWARF信息的样本文件。
+
+==================================================================================
+$ file dwarftest
+---&gt; dwarftest: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically
+linked, ...,with debug_info, not stripped
+==================================================================================
+
+要找出触发漏洞的字节，我们使用调试器分析在Radare2中加载的问题样本。
+
+另外，也可以通过对比原始样本和变异样本来找到问题字节。
+
+我们可以使用radiff2轻松完成这项工作：
+==================================================================================
+$ radiff2 bins/src/dwarftest mutated_dwarftest
+0x000010e1 00 =&gt; 01 0x000010e1
+==================================================================================
+
+文件中的这个偏移是DWARF结构的一部分。这仅适用于已经附加了DWARF信息的二进制文件，但我们
+应该能够制作格式错误的DWARF信息并将其注入到任何ELF文件中。
+
+要弄清楚为什么我们的DWARF信息会让Radare2不高兴，我们可以用objdump看看：
+==================================================================================
+$ objdump --dwarf=info mutated_dwarftest
+...
+		&lt;4c&gt; DW_AT_name :objdump: WARNING: the DW_FORM_strp shift is too
+		large: 164 (indirect string, shift: 0x164): &lt;shift too large&gt;
+...
+==================================================================================
+
+好了，我们差不多完成了。
+
+现在，只需要看看如何利用它。为此，我们只需要用gdb查看崩溃的回溯，然后分析触发漏洞的
+函数的源代码（幸运的是radare2是一个开源项目）。
+
+有问题的代码行在parse_typedef函数中：
+==================================================================================
+name = strdup (value-&gt;string.content);
+==================================================================================
+
+当复制的字符串为NULL时，这会触发空指针解引用，不详细说明的话，我们通过逆向工程的禁忌
+力量发现，当DW_AT_name中的偏移太大时就会出现这种情况。
+
+现在，是时候编写一个脚本，可以修改任何ELF文件来触发这个漏洞了。在附录中，你可以找到
+完整的漏洞利用代码，其中包含PE漏洞的利用（CVE-2020-17487，它也只是让radare2无法加载
+二进制文件）。
+
+--- 结论 ---
+
+我们希望你喜欢这篇文章。
+
+现在，你知道在广泛使用的工具中找到漏洞并不那么难。所以现在，试着自己去寻找（尤其是在
+逆向工程工具中）！
+
+即使漏洞除了DoS之外无法利用，在加载二进制文件时使逆向工程工具崩溃仍然是有用的...
+
+--- 注释和参考文献 ---
+
+[0] https://github.com/radareorg/radare2-testbins
+
+--- 附录 ---
+
+- <a href="5.1.py">漏洞利用概念验证</a>
+</pre></div></center></body></html> 

