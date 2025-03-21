@@ -1,0 +1,580 @@
+<html>
+<head>
+<title>Mutable Programs - A guide to simple polymorphism</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                     ┌───────────────────────┐
+                                                     ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                     │ █   █ █ █ █   █       │
+                                                     │ █   █ █ █ █▀▀▀▀       │
+                                                     │ █   █   █ █     ▄     │
+                                                     │                 ▄▄▄▄▄ │
+                                                     │                 █   █ │
+                                                     │                 █   █ │
+                                                     │                 █▄▄▄█ │
+                                                     │                 ▄   ▄ │
+                                                     │                 █   █ │
+                                                     │                 █   █ │
+                                                     │                 █▄▄▄█ │
+                                                     │                 ▄▄▄▄▄ │
+                                                     │                   █   │
+Mutable Programs - A guide to simple polymorphism    │                   █   │
+~ gorplop                                            └───────────────────█ ──┘
+
+Wouldn't it be kewl to write a program which creates its copy, but with
+different code? Right? Read on...
+
+  .------------------,
+ / Mutable Programs .-------------------------------.
+'-------------------\ A guide to simple polymorphism \
+                     '--------------------------------'
+
+When we talk about self-modifying programs, we usually think about software
+which modifies it's own code during execution. For example, a programmer may
+choose to obfuscate a piece of code by removing a jump instruction, or placing
+some dummy instruction, and then when the program is run, an earlier piece of
+code does some operations to undo these changes. In modern operating systems
+there are some obstacles against modifying the executable memory regions
+directly, but there are ways around it.
+
+In this text I would like to explore the other kind of self-modifying
+code. Instead of programs which manipulate their own copies in memory, I would
+like to discuss programs which are prepared in such a way, that they can be
+easily (programatically) mutated to create a new copy, with different file
+contents, that does the same thing when executed. This in itself is not a
+virus, but such code can be used to create one. The code presented in this
+paper is harmless and the implementation simplified, to show the general
+idea. It is however functional and executable.
+
+.-------------------.
+ \ Polymorphic virii \
+  '-------------------'
+
+Classic polymorphism is best described in "Win32 Polymorphism" by Billy
+Belcebu/iKX [belcebu00]. The main goal of the technique is to evade detection
+by removing constant byte streams in the virus code, as an answer to pattern
+matching ("scanstring") techniques of contemporary AV software. At that point
+Win32 and DOS virii were encrypted, each copy with a different key to minimize
+the recognizable data size. The part which was not changing between the virus
+copies was the decryptor code. To solve that, some virii started transforming
+the decryptor code as well [watson92]. The new technique was called
+polymorphism. Polymorphism is rewriting the virus code, so that the underlying
+instructions are different while the code does the same thing.
+
+A number of techniques were developed and the reader is advised to read that
+work, even if it is specific to x86 or not directly related to writing UNIX
+malware.
+
+In this paper I will be focusing on instruction level polymorphy (level 3 and
+4 according to iKX). There are a few techniques which can be generalized to
+any architecture:
+
+1. Replacing a single instruction with several which do the same thing
+2. Inserting dummy instructions (nop, add/sub zero from a register, etc.)
+3. Changing the order of the instructions without changing the high level
+   program flow.
+
+Let's abstract from decryptor codes and loaders and all that stuff, instead,
+focusing just on the polymorphy part. Let's consider what would be necessary
+for a program to apply these techniques to another piece of code, to produce a
+new program which does the same thing, but is encoded differently. Then we can
+apply the program to itself to create a polymorphic program.
+
+First, the program needs to be able to distinguish the individual instructions
+from the byte stream. This is a hard task on x86, if not impossible in the
+general sense. The x86 architecture is a variable instruction length
+architecture and to make things harder there are many ways to encode the same
+instruction.
+
+The next requirements depend on the particular technique. For 1. and 2., the
+program needs to keep track of how many new bytes were inserted (or removed)
+and then correct all forward and backward references (jumps, loads,
+etc.). This is a very difficult task to do on binaries, because you need to
+recreate all the information lost during compilation. This means that at least
+in part, the mutation engine must have some functionality of an analyzing
+disassembler and track the references, then relink the code fragments
+correcting all references.
+
+Technique 3 is also difficult - assembly programming is by definition
+imperative, so in general it is not possible to rearrange the instructions and
+get the same high-level program flow. In some cases it can be done, as long as
+we do not break the dependency chains. It is done in hardware when possible,
+in processors with out-of-order execution. The problem is so complex, that we
+had at least two major security holes in the last years in a similar mechanism
+(speculative execution) on x86 alone.
+
+The following examples illustrate the idea and show when the instructions can
+be swapped:
+
+    ;; Example 1
+    ;; call open(path, flags, mode), x86_64
+    mov rax, 2
+    lea rdi, path
+    mov rsi, flags
+    mov r10, mode
+    syscall
+
+    ;; the first 4 instructions can be executed in any order, or even at
+    ;; the same time, if memory allows.
+
+
+    ;; Example 2
+    ;; on some unspecified RISC architecture
+    load rA, loc1
+    addi rA, rA, 2
+    load rB, [loc2+rA]
+    add  rA, rA, rB
+    stor loc3, rA
+
+    ;; these instructions cannot be reordered nor executed in parallel
+    ;; because of dependency chains
+    ;; nb. such code will be very slow on pipelined architectures.
+
+
+In the first example the 4 instructions before the syscall do not depend on
+each other. In the second example, every instruction depends on the result of
+the previous one, so you cannot reorder them. Changing the order of these
+instructions will result in a different program that will most likely
+crash. The dependencies between registers are explicit, as source and
+destination registers are written in the assembly code. In this case, rA is
+the destination register of the first load, and the source register of the
+first addi. rA value is also used in the source of the second load. Because of
+this, the instructions need to be executed in the order they are written in,
+because each one depends on the result of the previous.
+
+A true mutation engine also needs to keep track of the implicit dependencies
+between instructions. Implicit dependencies are the ones which result from the
+instructions themselves. Branches are one type of instructions with implicit
+dependencies. Another example of those are calls, all stack instructions, all
+test instructions, and all flag modification instructions. In x86 many general
+purpose instructions, like div, mul, loop, string instructions (stos, scas,
+lods, cmps) use an implicit register. If you are coding a polymorphism engine
+for x86, you need to take care of that as well. A good reference for these is
+in [386prm] chapter 3.
+
+In general, the program would need to do a lot of complicated things to
+implement even the simplest polymorphic techniques. It would need to
+understand the instruction encoding to divide the bytes between
+instructions. It would also need to analyze the dependency chains between
+instructions (and decode the instructions) to know which can be reordered and
+which cannot. And finally, not shown here (but it is a real problem), it would
+need to correct any references if the architecture uses PC-relative (program
+counter) addressing (because if you move the instruction, the PC value at that
+instruction changes, of course).
+
+  .---------------------.
+ / Hacking the problem /
+'---------------------'
+
+How can we simplify this problem and write a polymorphic program?
+
+In the previous paragraph I outlined 3 problems that need to be solved to
+implement a polymorphic virus engine. These are the following:
+
+1. Dividing the byte stream into instructions
+2. Modifying the code without breaking it
+3. Fixing references in the code after changes are made
+
+First off, the problem of dividing instructions. This is simple. Throw x86
+where it belongs, to the computer history museum, and use an architecture with
+a constant instruction length. There are many - in this text I chose 64-bit
+ARM, a.k.a. aarch64, because of how ubiquitous it is becoming. In aarch64 all
+instructions are 4-byte long and aligned on a 4 byte boundary, so the problem
+of dividing a stream of bytes into instructions is non-existent. I am of
+course kidding about x86, there are ways around variable instruction
+length. One of these would be to store a list of instruction lengths
+(precompute it) and then make the mutation engine update the list as it swaps
+or replaces the instructions. But let's focus on the essence of the problem,
+and choose aarch64 as the target.
+
+The second problem can be waved away too. If the source program is written in
+assembly, you can write it in such a way that a simple transform (like
+swapping even and odd instructions) never breaks the dependency chains. This
+is similar to techniques known by some experienced assembly programmers, like
+those writing for machines with delay slots. While writing the assembly, just
+make sure you can swap any pair without breaking the program flow. Let's call
+such code easily-mutable, that is, code prepared in a way can be changed with
+a simple transformation, and still work.
+
+.--------------.
+ \ Malware in C \
+  '--------------'
+
+You might ask, "Gorplop, but what if I would like to write malware in C
+instead?". That is also possible. The C compiler can generate an assembly
+listing (for gcc, it's -S), and then we can edit and assemble the output. Of
+course, when I want to program in C, I do not want to correct the generated
+assembly every time I compile the program. It is a good idea to write a tool
+which takes the resulting assembly and transforms it in a way that guarantees
+code mutability. Because this tool will be a part of the build system, and not
+the target program, the size and complexity requirements are not that strict
+like for the program itself.
+
+This leaves us with the third problem. PC-relative addressing. In assembly,
+defining read-only data the usual way will create a constant pool near the
+code. A constant pool is what it sounds like. It is a memory area where
+constant values are stored. The machine code then uses PC-relative addressing
+instructions (like ldr) to load the constant to a register. Let's see how it
+looks in practice. A simple aarch64 assembly program like this:
+
+    .text
+    .global _start
+    _start:
+        // syscall 64 = write(unsigned int fd, const char *buf, size_t count)
+        mov x0, #1          ; fd
+        ldr x1, =hello      ; buf
+        ldr x2, =hello_len  ; count
+        movz x8, #64
+        svc #0      //do the syscall
+        // syscall 93 = exit(int error_code)
+        mov x0, #0
+        movz x1, #1
+        mov x8, #93
+        svc #0
+    .data
+    hello:
+        .ascii "Hello, aarch64 world!\n"
+    hello_len =  .-hello
+
+will disassemble to this:
+
+    $ aarch64-linux-gnu-objdump -d 00_hello.elf
+    00000000004000b0 &lt;_start&gt;:
+      4000b0:   d2800020        mov     x0, #0x1                  // #1
+      4000b4:   58000121        ldr     x1, 4000d8 &lt;_start+0x28&gt;  // (*)
+      4000b8:   58000142        ldr     x2, 4000e0 &lt;_start+0x30&gt;  // (*)
+      4000bc:   d2800808        mov     x8, #0x40                 // #64
+      4000c0:   d4000001        svc     #0x0
+      4000c4:   d2800000        mov     x0, #0x0                 // #0
+      4000c8:   d2800021        mov     x1, #0x1                 // #1
+      4000cc:   d2800ba8        mov     x8, #0x5d                // #93
+      4000d0:   d4000001        svc     #0x0
+      4000d4:   00000000        udf     #0
+      4000d8:   004100e8        .word   0x004100e8   // pointer to .data
+      4000dc:   00000000        .word   0x00000000
+      4000e0:   00000016        .word   0x00000016   // constant, 0x16
+      4000e4:   00000000        .word   0x00000000
+
+The ".data" directive in the assembly code does not create a .data section,
+instead it makes a small constant pool. If the exit syscall was not there, the
+CPU would run into that constant pool and start executing the data. The two
+ldr instructions marked with a (*) use PC-relative addressing to load a value
+into a register. The register number is encoded in the lowest 5 bits, the next
+19 bits encode the immediate value:
+
+    aarch64: LDR: Load register (literal) - instruction encoding
+
+    32       24 23                 5 4   0
+    0 x 011000   kkkkkkkkkkkkkkkkkkk rrrrr
+
+    x = 0 (32 bit) or 1 (64 bit)
+    k = immediate[19:2] is extended by appending 00 to the right end
+    r = register
+
+In the code above we have
+    58000121: 0x58 (ldr 64bit opcode), immediate +9,  to register 1
+    58000142: 0x58 (ldr 64bit opcode), immediate +10, to register 2
+
+To get the target address, the immediate is added to Program Counter (PC). The
+first ldr is at 4000b4, 0x4000b4 + 4*9 = 0x4000d8 which is the pointer to our
+string. Similarly, the second ldr points to 10 words later, which is where the
+string length of 0x16 lives. On x86 the same technique is called RIP-relative
+addressing, because the program counter is called Instruction Pointer (register
+rip or eip) on x86.
+
+Notice also how the data section is aligned on an 8-byte boundary and an empty
+"udf #0" instruction is shown by objdump at 4000d4. How does objdump know the
+constant pool starts one instruction later and disassembles it as data instead
+of instructions? This will be explained at the end of the text, so stay tuned!
+
+On the other hand, programs generated from C code will use data section for
+constants, so no PC-relative addressing is used for fetching constants (unless
+PIC). However, there is another important bunch of instructions that uses
+PC-relative addressing, these are jumps (or branches, as ARM architecture
+calls them). It is possible to write branchless code. Conditional instructions
+exist on ARM (ITTT instruction), and x86 has cmov extension, used by
+movfuscator, but compilers usually emit branch instructions. This means that
+our mutation engine needs to know where the branch instructions are. It can
+detect them, by implementing a very simple analyzing disassembler (this theme
+will repeat a few times in the text). Another way is to, again, store a
+precomputed table of these, which will then have to be updated as instructions
+get modified. In case of aarch64 the first way seems like a smaller and
+simpler solution.
+
+  .----------------.
+ / Implementation /
+'----------------'
+
+The implementation needs to solve the three problems we earlier
+identified. The first one we waived away for now, by limiting ourselves to
+constant instruction length architectures. This leaves us with RISC: ARM,
+MIPS, RISC-V, SPARC to name a few in current use. The second problem was moved
+to the toolchain. Our program will deal only with mutable binaries, that is,
+binaries prepared so that pairs of instructions can be swapped. This is done
+either by carefully writing the assembly, or automatically patching the
+assembly generated from C to fulfill this requirement.
+
+I want us to stop here for a moment. Let's think about how we can make sure
+the input program will be mutable by a simple pair swapping algorithm. There
+are a few ways to do this.
+
+We can move part of the complexity to the toolchain and write what essentially
+is a special analyzing disassembler. This program would need to parse the
+generated assembly (or disassemble an existing ELF file), trace the explicit
+and implicit dependencies, then insert dummy instructions in places where
+swapping instruction pair would break the dependencies. To keep the reader
+busy, this example will be shown in x86_64, but again, this works for any
+architecture.
+
+   // if((fd = open(file_path, O_RDWR | O_CREAT, S_IRWXU)) == -1)
+   //   goto error;
+
+   mov edx, 0x1c0      ; mode_t mode
+   mov esi, 0x42       ; int flags
+   lea rdi, file_path  ; char *pathname
+   call open           ; open(char* pathname, int flags, mode_t mode)
+   cmp eax, -1
+   je error
+
+Here the first three instructions can be executed in any order. The next
+instructions cannot. The program which transforms this assembly sequence into
+a mutable program must detect these dependencies remove them. One of the
+possible outputs of such program is shown below:
+
+   mov edx, 0x1c0      ; even
+   mov esi, 0x42       ; odd - can swap, no change
+
+   lea rdi, file_path  ; even
+   add rdi, 0          ; odd - inserted dummy
+
+   call open           ; even
+   sub eax, 0          ; odd - inserted dummy
+
+   cmp eax, -1         ; even
+   jge .+2             ; odd - dummy, but cannot affect flags for jump
+
+   je error            ; even
+   xchg rcx, rcx       ; odd - inserted dummy
+
+Inserting dummy instructions is only one of the answers to this problem. Some
+other ways to do this are described in other polymorphic papers (see at the
+end of the text).
+
+The last problem is easy to solve. We just have to find the PC-relative
+instructions. Then we can adjust the offset in the instruction. If the
+instruction was odd, it will now be even, so we add 1 word to the offset. If
+the instruction was even, it will now be odd, so we subtract 1 word from the
+offset. If you noticed that the destination instruction will also be a pair
+that may or may not be swapped, bear in mind that one of the instructions will
+be a no-operation, so we will either jump into the target instruction, or the
+empty instruction before the target.
+
+                              ;; Branch is adjusted by +1 word
+      0x4080  dummy              .-- 0x4080 bl .+0x14
+  .-- 0x4084  bl .+0x10          :   0x4084 dummy
+  :   ...                        :
+  '-&gt; 0x4094  insn               '-&gt; 0x4094 insn    or   dummy
+      0x4098  dummy                  0x4098 dummy   or   insn
+
+  ;; If using dummy no-op instructions, swapping a pair with a branch only
+  ;; requires to adjust the branch offset. The jump will reach the target
+  ;; instruction in either case
+
+.----------------.
+ \ The nopstuffer \
+  '----------------'
+
+mut1 source package comes with a script called nopstuffer, which is used to
+convert an assembly listing to an easily-mutable program. This version of the
+script is extremely simple, to not say naive. All it does is insert a nop
+instruction between every instruction in the source assembly listing. The only
+use for it is for testing and converting gcc assembly output to an easily
+mutable ("stuffed with nops") program. Despite that, mut1 with nopstuffer can
+create and mutate working executables from C or assembly code.
+
+The code will look obviously suspicious to anyone with a disassembler, and it
+makes the text size grow twice. But this is a base on which a more
+complicated, analyzing nopstuffer can be written on. We are doing this in the
+build stage, so there are no code size requirements. We could analyze the
+assembly, trace the dependencies, and replace the instructions or insert empty
+ones accordingly. Let's say improving the nopstuffer is left as an exercise
+for the adept. There is more than one way to do this. Show me something good!
+
+
+  .-------------------------------.
+ / Putting it all together: mut1 /
+'-------------------------------'
+
+The implemented program, mut1, takes a mutable source ELF file and outputs a
+mutated ELF file in which the entire text section has even and odd
+instructions swapped with a random probability. This creates a lot of possible
+combinations of bytestreams that all result in the same program.  The tools
+are released with this zine, look for the github link at the end of this file.
+
+By using nopstuffer you can write the code in C as well. The toolchain starts
+with a C file, which is compiled to an assembly listing. Then, nopstuffer is
+ran to "stuff" the listing with empty instructions between each real one. The
+resulting file is compiled to an ELF called "stuffed". The stuffed ELF is a
+regular executable and it should work the same as the original program.
+
+You can also use mut1 on executables assembled from any assembly listing which
+satisfies the dependency requirements we described earlier.
+
+The next step is to run the mutation program, mut1. mut1 loads the stuffed
+ELF, parses it and finds the text section. The parser is very simple and will
+break bad if you feed it an unusual ELF file. Then, mutate_xrefs is called on
+the text section. This function is the heart of the mutation engine. The
+simplified main() looks like this:
+
+    int fd = open(filename, O_RDONLY);
+    uint8_t* elf = mmap(fd, ...);
+    mutate_xrefs(elf);
+    // mutfile = filename + ".mut"
+    int mutfile_fd = open(mutfile, O_RDWR | O_CREAT, 0600);
+    write(mutfile_fd, elf, file_stat.st_size);
+
+mutate_xrefs iterates over the text section, swapping each instruction pair
+with a random probability. As mentioned before, it implements a very minimal
+piece of logic which could be called an analyzing disassembler. The swapped
+instructions are compared against common compiler-emitted PC-relative
+instructions and the encoded offsets are swapped accordingly. Below is a code
+fragment that deals with branches:
+
+    #define B_MASK     0xfc000000
+    #define BL_OPCODE  0x94000000
+    #define B_OPCODE   0x14000000
+
+    // inside loop that iterates over text section of the ELF
+    // bool swap - true if the pair is to be swapped (random)
+    // bool second - true if the instruction is second in pair
+
+    uint32_t insn = code[i];
+
+    // Detect and adjust branch instructions
+    if((insn & B_MASK) == BL_OPCODE || (insn & B_MASK) == B_OPCODE) {
+      offset = (insn & (~B_MASK)) &lt;&lt; 2;
+      DEBUG(" b/bl imm26: ofs=%08x ", offset);
+      if(swap) { // patch the instruction
+        offset += second ? 4 : -4;
+        DEBUG("new ofs=%08x", offset);
+        // encode new offset
+        insn &= B_MASK;
+        insn |= offset &gt;&gt; 2;
+        DEBUG(" in=%08x", insn);
+      }
+    }
+
+    code[i] = insn;
+
+If the instruction pair is to be swapped, the code adjusts the 26-bit
+immediate value in the instruction. The offset is adjusted plus or minus 1
+machine word (4 bytes). ARM often encodes the immediates without the lower 2
+bits (code is always 4-byte aligned), which is why the offset is shifted right
+by 2 before being encoded back in the instruction. Other instructions are
+dealt with in a similar way.
+
+The resulting ELF file gets written to disk with a ".mut" extension
+appended. This file is executable and should work the same way as the original
+program, despite having different code. The checksum of the .text section and
+of the entire file is different. If the swap bool is hardcoded to true, then
+running mut1 on the mutated code again restores the original executable.
+
+The target architecture of the program is aarch64, but my development machine
+is still x86. Yours probably too. Because of that, the programs are
+cross-compiled, and the source package that goes along with this text contains
+a script for setting up a Debian 12 aarch64 virtual machine in QEMU. This is
+what I was using during development. You can test must1 by compiling the
+examples and then copying them over scp into the aarch64 VM, or setting up
+cross-platform emulation around qemu-user-static.
+
+.---------------------------.
+ \ Summary and afterthoughts \
+  '---------------------------'
+
+The adept is advised to study other polymorphism papers [belcebu00, watson92,
+flush99], keeping in mind that the ideas in them (especially older ones) are
+based on x86 Win32 virii, but they can be extended to any other
+architecture. RISC load-store architectures are simpler to write polymorphic
+malware for because of their design. There are little implicit dependencies,
+unlike on x86 or other CISC architectures. The verbosity of RISC assemblers
+should allow for easier dependency tracing without having to use complicated
+code analysis engines. In this group, RISC-V deserves a special shoutout,
+because it has a very simple instruction encoding scheme, with only 6 base
+instruction formats. This simplifies parsing and analysis, which should help
+writing a compact polymorphic engine.
+
+While writing this tool, at first I relied on detecting constant pools using
+the hidden symbols "$d" and "$x" left by GNU Assembler (you can see them by
+passing --show-all-symbols to objdump). Initially this worked and relying on
+these symbols let me process the text section almost statelessly. It however
+broke for assembly emitted from GCC and I had to implement the linked list to
+store used constant pool locations. These hidden ELF symbols are also the
+answer to how objdump can distinguish constant pools from instructions. The
+example shown before, this time with --show-all-symbols, looks like this:
+
+$ aarch64-linux-gnu-objdump -d 00_hello.elf --show-all-symbols
+
+00_hello.elf:     file format elf64-littleaarch64
+
+Disassembly of section .text:
+
+00000000004000b0 &lt;_start&gt;:
+  4000b0:       d2800020        mov     x0, #0x1                  // #1
+  4000b4:       58000121        ldr     x1, 4000d8 &lt;_start+0x28&gt;
+  4000b8:       58000142        ldr     x2, 4000e0 &lt;_start+0x30&gt;
+  4000bc:       d2800808        mov     x8, #0x40                 // #64
+  4000c0:       d4000001        svc     #0x0
+  4000c4:       d2800000        mov     x0, #0x0                  // #0
+  4000c8:       d2800021        mov     x1, #0x1                  // #1
+  4000cc:       d2800ba8        mov     x8, #0x5d                 // #93
+  4000d0:       d4000001        svc     #0x0
+  4000d4:       00000000        udf     #0
+
+00000000004000d8 &lt;$d&gt;:
+  4000d8:       004100e8        .word   0x004100e8
+  4000dc:       00000000        .word   0x00000000
+  4000e0:       00000016        .word   0x00000016
+  4000e4:       00000000        .word   0x00000000
+
+More experimenting with the assembly source file will reveal that code segment
+is marked with an $x symbol. This symbol exists only in GNU Assembler and not
+in code emitted by GCC. The current version of mut1 does not use these
+symbols, but they might prove useful in some other project.
+
+As a closing thought, I would like to tell you that writing malware is like
+walking up a large mountain. There are many paths to take and not all lead to
+the top. Sometimes one path contains an obstacle which is too hard to go
+through. Taking another path to find out it does not lead anywhere might give
+you just enough experience to come back and pass the first one. It is a good
+idea to try various things and be wary of fixating on one specific solution or
+way of doing things. Stay cool, write code and hack all the things.
+
+Congratulations for making it through this text. I hope you liked it. If you
+have any q's or just want to say hi, email me at gorplop@sdf.org
+
+The mut1 code and other tools are available on github, at
+https://github.com/gorplop/mut1
+
+Greetz to: netspooky, smelly of vxug, deluks, all tmp.0ut staff and all those
+before me.
+
+
+ .--------------.
+  &gt; References &lt;
+ '--------------'
+
+belcebu00:  Section 12 in "Billy Belcebu Virus Writing Guide 1.00 for
+            Win32", 29A4#4
+watson92:   "A Discussion of Polymorphism", Gary Watson,
+            https://cryptohub.nl/zines/vxheavens/lib/agw00.html
+flush99:    "Other techniques of polymorphism", flush/MGL, Asterix #2
+            http://gbppr.net/cracking/vtc/vdat/epothpol.htm
+386prm:     Intel 80386 programmer's reference manual,
+            https://css.csail.mit.edu/6.858/2014/readings/i386.pdf
+
+--[ <a href="12.html">PREV</a> | <a href="index.html">HOME</a> | <a href="14.html">NEXT</a> ]--
+
+</pre></div></body>

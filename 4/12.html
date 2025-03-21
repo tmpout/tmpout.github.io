@@ -1,0 +1,166 @@
+<html>
+<head>
+<title>Introduction to ELF program headers</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+┌─────────────────────────────────────────────────────┬─────────────────────┐
+│ DELUKS                                              │ PROGRAM_HEADERS.TXT │
+└─────────────────────────────────────────────────────┴─────────────────────┘
+
+  INTRO:
+  As beginners on our little journey of understanding the ELF file format,
+  it is important to understand the program headers, as they are essential
+  for how the OS loads and executes a program. Without understanding these
+  concepts it would be far more challenging to analyze, modify, or exploit
+  ELF binaries effectively.
+
+─ SEGMENT I: WHAT IS A PROGRAM HEADER? ──────────────────────────────────────
+
+  A program or segment header tells our beloved operating system how to
+  create a process image during the program execution. It describes how
+  to map the segments and what permissions to set for that region. Each
+  entry in the program header contains the following info:
+
+  - segment type
+  - location in the file and memory
+  - permissions
+  - segment size
+
+  So by now you may be wondering:
+
+  &gt; That's cool and all, but what even is this thing called a "segment"???
+
+  Well allow me to clarify: A segment in an ELF is just a part of the
+  program that the operating system loads into memory for execution. Each
+  segment contains code, data, or some other important data required for
+  the program to run.
+
+─ SEGMENT II: WHERE DO I FIND THE PROGRAM HEADERS? ──────────────────────────
+
+  At this point, you may be wondering where can you find these program
+  headers. Do not worry, I'm here to help, if we take another look at our
+  ELF header, we can see 3 important members: ──┬─┬─┐
+                                                │ │ │
+    typedef struct {                            │ │ │
+      unsigned char     e_ident[EI_NIDENT];     │ │ │
+      uint16_t          e_type;                 │ │ │
+      uint16_t          e_machine;              │ │ │
+      uint32_t          e_version;              │ │ │
+      Elf64_Addr        e_entry;                │ │ │
+      Elf64_Off         e_phoff;     &lt;──────────┘ │ │
+      Elf64_Off         e_shoff;                  │ │
+      uint32_t          e_flags;                  │ │
+      uint16_t          e_ehsize;                 │ │
+      uint16_t          e_phentsize; &lt;────────────┘ │
+      uint16_t          e_phnum;     &lt;──────────────┘
+      uint16_t          e_shentsize;
+      uint16_t          e_shnum;
+      uint16_t          e_shstrndx;
+    } Elf64_Ehdr;
+
+  The three little members stand for the following:
+
+    e_phoff     - program header offset
+    e_phentsize - size of one program header entry
+    e_phnum     - the number of program headers
+
+  With those entries we can find the first program header using the e_phoff
+  and then we can loop trough the program headers by going from 1 to
+  e_phnum, calculating the address of each program header by adding
+  e_phentsize to e_phoff.
+
+─ SEGMENT III: WHAT DOES THE PROGRAM HEADER CONSIST OF? ─────────────────────
+
+  Moving on, let us take a closer look at the definition of the program
+  header:
+
+    typedef struct {
+       uint32_t   p_type;
+       uint32_t   p_flags;
+       Elf64_Off  p_offset;
+       Elf64_Addr p_vaddr;
+       Elf64_Addr p_paddr;
+       uint64_t   p_filesz;
+       uint64_t   p_memsz;
+       uint64_t   p_align;
+   } Elf64_Phdr;
+
+  The first member describes the segment type. There are, of course, many
+  segment types, including architecture-specific types. To get started,
+  we only need to know the 8 most common ones:
+
+    PT_NULL         - 0 - PLACE HOLDER
+    PT_LOAD         - 1 - LOADABLE SEGMENT
+    PT_DYNAMIC      - 2 - INFO FOR DYNAMIC LINKING
+    PT_INTERP       - 3 - LOCATION OF INTERPRETER
+    PT_NOTE         - 4 - METADATA
+    PT_PHDR         - 6 - LOCATION OF PROGRAM HEADER TABLE IN MEMORY
+    PT_TLS          - 7 - THREAD LOCAL STORAGE INFORMATION
+
+  The p_flags member defines the permissions for the region in a bit field
+  like so:
+                          ┌──────┬───────┬──────┐
+                          │ READ │ WRITE │ EXEC │
+                          ├──────┼───────┼──────┤
+                          │   4  │   2   │  1   │
+                          └──────┴───────┴──────┘
+
+  Neeext up, p_offset, which defines the offset of the section from the
+  start of the file. Right after that we have p_vaddr and p_paddr. The
+  p_vaddr gives us the virtual address at which the first byte of the
+  segment is located in memory and the p_paddr defines the same thing
+  just for the physical address, although the p_paddr is rarely used.
+
+  Finally, we have p_filesz and p_memsz, so as you could probably assume,
+  p_filesz and p_memsz define the size of the segment in the binary and in
+  memory respectively. Note that sometimes the p_memsz may be larger than
+  p_filesz. A huge difference between the two could mean the segment is
+  packed (commonly seen in malware).
+
+  Now all that is left is the p_align member. It makes sure all our
+  segments are properly aligned in memory and on disk. To ensure this it
+  has 3 rules:
+
+    1. The p_vaddr and p_offset must be aligned based on the systems
+       page size.
+
+    2. If p_align is 0 or 1, no alignment is needed.
+
+    3. If p_align is larger than 1, it must be a power of 2, and
+       p_vaddr and p_offset should match when divided by this alignment
+       value.
+
+  So to summarize it makes sure it's just loaded in the correct boundaries.
+
+─ SEGMENT IV: CONCLUSION ───────────────────────────────────────────────────
+
+  Well that is all for this time, I hope you enjoyed the read and hope that
+  the article has helped you in understanding the ELF program headers in
+  some way. Now go out there and have fun with the newly learned knowledge!
+
+  I'm also a very big fan of utilizing the knowledge that I learned directly
+  so as a suggestion, you can try to parse the program headers now!
+
+  ~ DeLuks
+
+─ EXTRA SEGMENT V: VISUALISATION OF PT_NOTE TO PT_LOAD INFECTION ───────────
+
+  Here's a little extra part for ya. If you ever wondered what changes
+  in the program header during the PT_NOTE to PT_LOAD infection:
+
+    BEFORE:                           AFTER:
+    Elf64_Phdr.p_type   = 0x4         Elf64_Phdr.p_type   = 0x1
+    Elf64_Phdr.p_flags  = 0x4         Elf64_Phdr.p_flags  = 0x5
+    Elf64_Phdr.p_vaddr  = 0x0000      Elf64_Phdr.p_vaddr  = 0xc000000 + F_sz
+    Elf64_Phdr.p_filesz = 0x0000      Elf64_Phdr.p_filesz = V-Body
+    Elf64_Phdr.p_memsz  = 0x0000      Elf64_Phdr.p_memsz  = V-Body
+    Elf64_Phdr.p_offset = 0x0000      Elf64_Phdr.p_offset = F_sz
+
+    F_sz = file size,   V-Body = virus body,  0x0000 = some unknown value
+
+--[ <a href="11.html">PREV</a> | <a href="index.html">HOME</a> | <a href="13.html">NEXT</a> ]--
+
+</pre></div></body>
