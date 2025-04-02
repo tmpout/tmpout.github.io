@@ -1,0 +1,273 @@
+<html>
+<head>
+<title>BGGP5 Recap</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+BGGP5 Recap                                            │                   █   │
+~ Binary Golf Association                              └───────────────────█ ──┘
+
+─── BGGP5 Wrapped ──────────────────────────────────────────────────────────\\──
+
+Wow! Another year, another BGGP. The theme this year was <a href="https://binary.golf/5">"Download"</a>. The goal 
+was to download a file from the Binary Golf website (https://binary.golf/5/5) 
+and display it in some way.
+
+We got over 120 entries and 50 file formats! We had a number of new file 
+formats, including Adobe ExtendScript, Erlang BEAM Bytecode, LaTeX, and 
+LLVM-IR.
+
+Let's get into what happened!
+
+::: Approaches To The Challenge ::::::::::::::::::::::::::::::::::::::::::::::::
+
+This was our example entry:
+
+    #!/bin/sh
+    wget https://binary.golf/5/5
+    cat 5
+
+And expected output:
+
+    $ ./bggp5.sh
+    Another #BGGP5 download!! @binarygolf https://binary.golf
+
+Downloading a file seems simple enough right? You do this every day, and it Just 
+Works. When you think about it, there is actually a lot more work going on.
+
+A classic <a href="https://github.com/alex/what-happens-when">interview question</a> is "What happens when you type google.com into your 
+browser and press enter?". You can go infinitely into the weeds on this, from 
+the prefrontal and parietal cortex planning the movement of your fingers, to 
+the premotor and motor cortex sequencing and sending commands to move your 
+fingers, to even more low level biological and atomic actions involved in your 
+brain and the CPU you are interfacing with. For our purposes, we want to know 
+what you need from a computer's perspective to download a file.
+
+The basic steps are:
+
+- Resolve the domain with a <a href="https://datatracker.ietf.org/doc/html/rfc1035">DNS query</a>
+- Create a <a href="https://datatracker.ietf.org/doc/html/rfc9293">TCP Socket</a> using the system's socket APIs.
+- Perform a <a href="https://tls13.xargs.org/">TLS Handshake</a> with the host
+- Send an <a href="https://datatracker.ietf.org/doc/html/rfc9110">HTTP GET Request</a>
+- Read the response
+- Display the contents
+
+Depending on your target system and file format, some of these steps many be 
+handled for you.
+
+The file to download in this challenge was hosted on the Binary Golf website, 
+which uses TLS and is served via Github. This was one of the more significant 
+hurdles for BGGP5, as <a href="https://github.com/gh2o/bash_tls">code</a> that can negotiate TLS or other cryptographic APIs 
+can add a non-trivial amount of bytes and complexity to a given entry.
+
+Let's take a look at how golfers approached this and other aspects of the 
+challenge!
+
+::: Living Off The Land ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+While many programming languages and libraries offer APIs to download content 
+from the internet, many golfers opted to use binaries or features that are 
+usually already on a given target system.
+
+<a href="https://curl.se">Curl</a> seemed to be the most popular choice for this, as it is common on Linux, 
+MacOS, and even Windows, and has been compiled for <a href="https://curl.se/docs/features.html">101 operating systems and 
+28 CPU architectures</a> and counting. Since it can handle all the TLS negotiation 
+for you, and the default behavior is to display the content from the host, it 
+was an obvious choice for many.
+
+Others went with <a href="https://www.openssl.org">OpenSSL</a>, which can be used to establish TLS connections and 
+allow users to send/receive HTTP requests and responses. An impressive example 
+was neuschaefer's <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/neuschaefer/neuschaefer.elf-ARMv5-J.txt">ELF</a> written in ARM Jazelle DBX, using OpenSSL to get the file.
+
+bah's <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/bah/bah.elf64.txt">entry</a> implemented a wild dynamic linking idea that patched /bin/bash in 
+memory and overwrote main() with code to dlopen() libssl, then call it to 
+download the file.
+
+retr0id used <a href="https://www.kernel.org/doc/html/latest/networking/tls.html">KTLS</a> and <a href="https://www.kernel.org/doc/html/latest/crypto/userspace-if.html">Linux Kernel Crypto APIs</a> to make a <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/retr0id/retr0id.elf64.txt">static aarch64 
+userland curl</a> implementation that calls these APIs. While the file itself was 
+3043 bytes, it demonstrated interesting use of cryptography in the kernel.
+
+::: To Arg Or Not To Arg? ::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+One of the key distinctions for this and other BGGP challenges was whether or 
+not an entry uses command line arguments. Environment variables can also be used 
+to hold data and code. For each file format, entries that used arguments or 
+environment variables were scored separately from entries that were a standalone 
+file. The URL for file to download was 23 bytes, so using arguments or env vars 
+made sense to make an entry even smaller.
+
+::: URL Shorteners :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+We didn't explicitly ban URL shorteners or small domain names because we didn't 
+want to limit how small people could go, or limit people targeting systems and 
+formats that predate SSL/TLS and required a proxy. Many people flexed their 5 or 
+6 byte domain names.
+
+::: File Name Hax ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+Another approach that helped people save space this year was to use the filename 
+as code.
+
+continue won <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/continue/continue.py.txt">python without args</a> (and <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/continue/continue.pyc.txt">pyc</a>), by executing the entire filename as
+a script.
+
+<a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/mebeim/mebeim.php.txt">mebeim</a> and <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/Digoguenes/Digoguenes.php.15.txt">Digoguenes</a> used the filesystem itself to store the URL with their PHP
+entries, by creating directories that pointed to binary.golf/5/5
+
+gremlinbeet's 3 byte <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/gremlinbeet/gremlinbeet.bat.txt">batch file</a> entry ran a powershell script from the filename, 
+which caused the system to reboot and display the contents from a text file on 
+next boot.
+
+Luna Hart's 2 byte <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/Luna%20Hart/Luna%20Hart.sh.txt">shell script</a> stored the entire command in the filename, and 
+executed with a simple $0.
+
+jbo also did a 2 byte <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.sh.txt">shell script</a> with arguments that executed $1.
+
+::: 0 Bytes ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+In previous years, we have explicitly states that 0 byte files weren't allowed. 
+This year, we forgot to put that in the challenge, and as a result, got some 
+cool "0 byte" files that achieved the goal. In future BGGP challenges, we can 
+make a one liner category to collect some of these cool tricks!
+
+─── AWARDS ─────────────────────────────────────────────────────────────────\\──
+
+::: Most Popular File Format :::::::::::::::::::::::::::::::::::::::::::::::::::
+
+ELF had 12 entries across all the subdivisions.
+
+::: Smallest Entry :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+Tie between Luna Hart (2 byte <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/Luna%20Hart/Luna%20Hart.sh.txt">shell script</a> no args) and JBO (2 byte <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.sh.txt">shell script</a> 
+with args).
+
+::: Most Entries :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+The top 3 golfers with the most entries were:
+- <a href="https://github.com/binarygolf/BGGP/tree/main/2024/entries/mattpass">mattpass</a> - 9
+- <a href="https://github.com/binarygolf/BGGP/tree/main/2024/entries/jbo">jbo</a> - 8
+- tied for third: <a href="https://github.com/binarygolf/BGGP/tree/main/2024/entries/caioluders">caioluders</a>, <a href="https://github.com/binarygolf/BGGP/tree/main/2024/entries/mebeim">mebeim</a>, and <a href="https://github.com/binarygolf/BGGP/tree/main/2024/entries/vvx7">vvx7</a> with 6 each
+
+::: 4x Category Winners ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+4 golfers had wins in 4 categories.
+
+caioluders
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/caioluders/caioluders.burp-settings-json.txt">Burp Suite Settings JSON</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/caioluders/caioluders.nuclei.txt">Nuclei Template</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/caioluders/caioluders.r2.txt">Radare2</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/caioluders/caioluders.svg.txt">SVG</a>
+
+jbo
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.java-macos-only.txt">java class</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.shellcode.txt">shellcode</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.sh.txt">shell script</a> (with args)
+- shell script / shellcode <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/jbo/jbo.sh.shellcode.txt">polyglot</a>
+
+Krishean
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/krishean/krishean.awk.txt">awk</a> (no args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/Krishean/Krishean.Makefile.txt">Makefile</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/krishean/krishean.php.txt">PHP</a> (with args)
+- Batch / PHP <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/Krishean/Krishean.bat-php.txt">polyglot</a> (with args)
+
+qkumba
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/qkumba/qkumba.com.txt">COM</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/qkumba/qkumba.pe32-winxp.txt">PE 32</a> for Windows XP and earlier
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/qkumba/qkumba.32pe.txt">PE 32</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/qkumba/qkumba.64pe.txt">PE 64</a>
+
+::: 3x Category Winners ::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+6 golfers had wins in 3 categories
+
+bah
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/bah/bah.ll.txt">llvm-ir</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/bah/bah.awk.txt">Awk</a> (with args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/bah/bah.m3u.txt">m3u</a>
+
+continue
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/continue/continue.http.txt">HTTP</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/continue/continue.py.txt">Python</a> (no args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/continue/continue.pyc.txt">Python pyc</a> (no args)
+
+luskabol
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/luskabol/luskabol.jl.txt">Julia</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/luskabol/luskabol.tex.txt">LaTeX</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/luskabol/luskabol.js.txt">NodeJS</a> (no args)
+
+mebeim
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/mebeim/mebeim.go-cli-args.txt">Go</a> (with args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/mebeim/mebeim.pe-uefi.txt">UEFI</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/mebeim/mebeim.elf32-cli-args.txt">ELF 32</a> (with args)
+
+theXappy
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/theXappy/theXappy.adobe-jsx.txt">Adobe ExtendScript</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/theXappy/theXappy.nupkg.txt">NuGet Package</a>
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/theXappy/theXappy.vscode-workspace.txt">VSCode Workspace</a>
+
+VINSERTF128
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/VINSERTF128/VINSERTF128.elf32.txt">ELF 32</a> (no args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/VINSERTF128/VINSERTF128.elf64-cli-args.txt">ELF 64</a> (with args)
+- <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/VINSERTF128/VINSERTF128.elf64.txt">ELF 64</a> (no args)
+
+::: Wildest Entry ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+qkumba wins the award for "Wildest Entry" with his absolutely mad <a href="https://github.com/binarygolf/BGGP/blob/main/2024/entries/qkumba/qkumba.com.txt">COM</a> file 
+written in 16 bit x86 assembly. The submission itself is a base64 string, 
+with a base64 decoder in the code, that you can paste into notepad and 
+execute. Golf claps for qkumba all around.
+
+─── Looking Forward ────────────────────────────────────────────────────────\\──
+
+We made a few changes this year to our process to try to make things easier for 
+both golfers and verifiers. This year we started using git issues on the BGGP 
+repo to track entries, verification, and discussion around them. It also makes 
+it easier for verifiers to track the status of an entry or any changes/updates 
+to it.
+
+Verifying the entries this year took a bit longer than expected for a variety of 
+reasons. There will be a follow up blog to this about ways we plan to improve, 
+and ways you can get involved and tell us what you would like to see in the 
+future. Follow the Binary Golf Association on socials for more info!
+
+We also have a new experimental tool to process BGGPx entry files. Feel free to 
+play with it and help us improve! <a href="https://github.com/binarygolf/bggp-tools">https://github.com/binarygolf/bggp-tools</a>
+
+BGGP is becoming a lot more well known, with entries being cited in papers, used 
+for testing by organizations and companies, and increasing coverage in media 
+outlets. The more accessible we can make our data set, the better.
+
+─── Thank Yous ─────────────────────────────────────────────────────────────\\──
+
+Thank you to our wonderful verifier team! This would not have been possible 
+without you all! 0xNinja, ackmage, ic3qu33n, ifygecko, lenartlola, m33ls, 
+netspooky, qkumba, retr0id, riesha, rqu, samwcyo, VVX7, XfavataX
+
+Thank you to all the people who submitted entries this year.
+
+Thanks to YOU for supporting Binary Golf and the Binary Golf Grand Prix. 
+
+Weird &amp; Tiny Files Forever!!!
+
+~ netspooky / Binary Golf Association
+
+--[ <a href="16.html">PREV</a> | <a href="index.html">HOME</a> | <a href="18.html">NEXT</a> ]--
+
+</pre></div></body>

