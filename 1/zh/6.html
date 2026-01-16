@@ -1,0 +1,229 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                            ┌───────────────────────┐
+                                                            ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                            │ █   █ █ █ █   █       │
+                                                            │ █   █ █ █ █▀▀▀▀       │
+                                                            │ █   █   █ █     ▄     │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄   ▄ │
+                                                            │                 █   █ │
+                                                            │                 █   █ │
+                                                            │                 █▄▄▄█ │
+                                                            │                 ▄▄▄▄▄ │
+                                                            │                   █   │
+多态假反汇编技术                                              │                   █   │
+~ S01den                                                    └───────────────────█ ──┘
+
+由S01den（来自tmp.out团队）用爱创作！
+邮箱：S01den@protonmail.com
+
+--- 引言 ---
+
+当我在编写Lin32.Bakunin[0]时，我在思考如何让它比仅仅是一个用MIPS汇编编写的打印无聊内容的
+病毒更有趣。我只是想让逆向工程师感到烦恼。于是，我想起了我在一些crackme中实现的假反汇编
+技术。
+
+因为多态性很酷，我想弄清楚是否可以通过某种方式将它与假反汇编结合起来创造出有趣的东西。
+
+答案是肯定的，我称这个技巧为"多态假反汇编"或简称"假多态"（我不知道这是否是一个新技术）。
+
+--- 假反汇编是如何工作的？ ---
+
+这个技术在理解和实现上都非常直接。
+我是在Silvio Cesare[1]关于Linux反调试和逆向技术的著名论文中发现它的。
+你只需要在你的汇编代码前放置一些通常会开始一条指令的字节，像这样：
+
+-------------------- 分割线 --------------------
+hey:                      hey:
+   xor %rbx, %rbx             .ascii "\x48\x31"
+   jmp yo            ====&gt;     xor %rbx, %rbx
+                               jmp yo
+---------------------------------------------------
+
+现在，如果我们看这两段代码的反汇编结果，会看到类似这样的内容（使用radare2）：
+
+-------------------- 分割线 --------------------
+;-- hey:
+0x00401002      4831db         xor rbx, rbx
+0x00401005      eb02           jmp 0x401009
+
+                     ||
+                     \/
+;-- hey:
+0x00401002      48314831       xor qword [rax + 0x31], rcx
+0x00401006      dbeb           fucomi st(3)
+0x00401008      026631         add ah, byte [rsi + 0x31]
+
+---------------------------------------------------
+
+为什么反汇编器会这样表现？
+
+好吧，\x48\x31通常会开始一个xor指令[2]，后面的字节通常定义我们操作的寄存器。
+
+所以这些"初始化"字节会粘附到后面的字节，而这些后续字节本身也是"初始化"字节，反汇编器
+会将它们解释为"寄存器"字节，并显示垃圾内容而不是我们想要的指令！
+
+因此，要能够执行这样的代码，你必须跳过你刚刚放置的字节。
+你应该得到类似这样的结果：
+
+-------------------- 分割线 --------------------
+_start:
+jmp hey+2
+
+hey:
+   .ascii "\x48\x31"
+   xor %rbx, %rbx
+   jmp yo
+---------------------------------------------------
+
+--- 完整代码 ---
+
+现在，想象一下，如果你可以在每次执行或感染时随机改变造成假反汇编的字节，反汇编的代码也会
+改变，逆向工程师会认为代码是多态的，而实际上只有几个字节在真正改变...
+
+现在，不多说了，这是完整的代码。
+
+----------- 分割线 -----------
+# 构建命令: as Linux.FakePolymorphism.asm -o fakePoly.o ; ld fakePoly.o -o fakePoly
+
+# 这段代码是一个假多态的示例，随意尝试/使用/随便做什么！
+# 它获取自己的代码，修改假反汇编字节并将结果放在栈上。
+
+.text
+  .global _start
+
+_start:
+jmp true_start+2 # 跳过假反汇编字节
+
+true_start:
+.ascii "\x48\x31"  # 假反汇编字节
+xor %rbx, %rbx
+jmp get_code+2 # 跳过假反汇编字节
+
+get_code:
+  .ascii "\x66\x31"  # 假反汇编字节
+  call get_rip
+  sub $0x10 ,%rax # 0x10是_start和这条指令之间的字节数
+  movb (%rax,%rbx), %al
+  movb %al, (%rsp,%rbx)
+  inc %rbx
+  cmp $0x54, %rbx  # 0x54是这段代码的总大小
+  jne get_code+2
+
+  # 使用时间戳计数器的伪随机数生成
+  rdtsc
+  xor $0xdead, %rax
+  mov %ax, 2(%rsp)
+  xor $0xbeef, %rdx
+  mov %ax, 9(%rsp)
+
+  mov $60, %rax
+  mov $0, %rdi
+  syscall # sys_exit
+
+get_rip:
+  mov (%rsp), %rax
+  ret
+----------------------------
+
+-- 结论 --
+
+我希望你喜欢这篇文章，并且会尝试在你的crackme或病毒中实现这个技术！
+
+我和sblip写了一个使用这个技术来混淆其解密器的多态病毒（Lin64.Eng3ls，查看论文和代码！）。
+
+解密器的代码：
+------- 分割线 -------
+  pop rcx
+  jmp jmp_over+2
+  jmp_over:
+    db `\x48\x31` ; 假反汇编
+    mov al,0x00
+    xor rdx, rdx
+
+  decoder:
+    jmp jmp_over2+2
+
+    jmp_over2:
+      db `\xb8\xd9` ; 假反汇编
+      mov dl, byte [r12+rdi]
+      cmp rdi, STUB_SIZE-1
+      jna no_decrypt
+
+      jmp jmp_over3+2
+      jmp_over3:
+        db `\x48\x81` ; 假反汇编
+        xor dl, al
+
+  no_decrypt:
+    mov byte [rbx+rdi], dl
+    inc rdi
+  loop decoder
+-------------------------
+
+这里是一些被感染二进制文件中反汇编[3]的解密器，让我们看看这个技巧的效果：
+
+1. 
+  0x0c003f46      59             pop rcx                 
+  0x0c003f47      eb02           jmp 0xc003f4b           
+  0x0c003f49      00d6           add dh, dl              
+  0x0c003f4b      b06d           mov al, 0x6d            
+  0x0c003f4d      4831d2         xor rdx, rdx            
+  0x0c003f50      eb02           jmp 0xc003f54           
+  0x0c003f52      1aca           sbb cl, dl              
+  0x0c003f54      418a143c       mov dl, byte [r12 + rdi]
+  0x0c003f58      4881ff870000.  cmp rdi, 0x87           
+  0x0c003f5f      7606           jbe 0xc003f67           
+  0x0c003f61      eb02           jmp 0xc003f65           
+  0x0c003f63      c0d630         rcl dh, 0x30            
+  0x0c003f66      c28814         ret 0x1488              
+  0x0c003f69      3b48ff         cmp ecx, dword [rax - 1]
+  0x0c003f6c      c7             invalid                 
+  0x0c003f6d      e2e1           loop 0xc003f50          
+
+2.
+  0x0c003fe6      59             pop rcx
+  0x0c003fe7      eb02           jmp 0xc003feb
+  0x0c003fe9      ce             invalid
+  0x0c003fea      0ab0a34831d2   or dh, byte [rax - 0x2dceb75d]
+  0x0c003ff0      eb02           jmp 0xc003ff4
+  0x0c003ff2      39cb           cmp ebx, ecx
+  0x0c003ff4      418a143c       mov dl, byte [r12 + rdi]
+  0x0c003ff8      4881ff870000.  cmp rdi, 0x87
+  0x0c003fff      7606           jbe 0xc004007
+  0x0c004003      0e             invalid
+  0x0c004004      0a30           or dh, byte [rax]
+  0x0c004006      c28814         ret 0x1488
+  0x0c004009      3b48ff         cmp ecx, dword [rax - 1]
+  0x0c00400c      c7             invalid
+  0x0c00400d      e2e1           loop 0xc003ff0
+
+结果与原始代码有很大的不同。
+
+--- 注释和参考文献 ---
+[0] https://vx-underground.org/papers/VXUG
+      /Exclusive/Bakounin/Writing_virus_in_MIPS_assembly_for_fun.txt
+[1] http://www.ouah.org/linux-anti-debugging.txt // Silvio的论文
+[2] https://www.felixcloutier.com/x86/xor
+[3] 使用radare2
+</pre></div></center></body></html> 
