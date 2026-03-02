@@ -1,0 +1,38 @@
+Linux Rootkit Competition — tmp.out #5
+
+We’re having a Linux Rootkit Competition for tmp.out #5! This time it will be for rootkits targeting kernel 6.18 LTS.
+easylkb will be used for dynamic analysis by our amazing judges, Peter Ferrie, Travis Goodspeed, and Matheuz.
+Some of the core structs are extended in different minor versions, so we decided to target this one specifically,
+leaving the possibility for future competitions on different versions (Or maybe even "how many versions can your rootkit work on?")
+
+While this is structured as a competition, the primary goal is a showcase of techniques and approaches for Linux rootkit technologies.
+We’re interested in seeing how problems are approached just as much as what the final product does.
+
+
+Submissions:
+
+  Entries should include any required compilation instructions, dependencies, or configuration notes.
+
+  Dynamic testing will be performed in containerized environments with easylkb.
+
+  Rootkits may target userland, kernel space, or use hybrid approaches.
+
+Evaluation Criteria:
+
+Each submission will be scored from 1–5 in the following categories:
+
+* Stealth / Detection Evasion
+* Persistence
+* Complexity
+* Obfuscation
+* Novelty / Ingenuity
+
+Showcase First
+
+Although a grading system exists, this is not a winner-takes-all event.
+Many (or all, depending on the number of submissions) will be described,
+with an emphasis on highlighting different design philosophies, tradeoffs, and techniques used.
+
+The intent is to create a snapshot of Linux rootkit technologies and methodologies,
+past and present—educational, comparative, and exploratory in nature. Let's go!
+
