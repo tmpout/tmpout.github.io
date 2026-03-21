@@ -1,3 +1,8 @@
+---
+permalink: /rootkitcomp.txt
+redirect_to: /blog/vol5-rootkit-competition.html
+---
+
 Linux Rootkit Competition — tmp.out #5
 
 We’re having a Linux Rootkit Competition for tmp.out #5! This time it will be for rootkits targeting kernel 6.18 LTS.

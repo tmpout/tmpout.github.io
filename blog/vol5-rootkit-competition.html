@@ -1,0 +1,65 @@
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+    }
+@font-face { font-family: "liberation"; src: url("./LiberationMono-Regular.ttf") format('truetype'); }
+       pre { font-family: "liberation", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+         y { color: #d793ff; }
+         t { color: #ffd793; }
+</style>
+</head>
+<body><center>
+<div style="display: inline-block; text-align: left;"><pre>
+<center>Linux Rootkit Competition <br><br>tmp.0ut #5</center>
+
+We're having a Linux Rootkit Competition for tmp.0ut #5! This time it will be
+for rootkits targeting kernel <b>6.18 LTS</b> and <a href="https://github.com/deepseagirl/easylkb">easylkb</a> will be used for dynamic
+analysis by our amazing judges, <b>Peter Ferrie</b>, <b>Travis Goodspeed</b>, and <b>Matheuz</b>.
+
+Some of the core structs are extended in different minor versions, so we decided
+to target this one specifically, leaving the possibility for future competitions
+on different versions (or maybe even <i>"how many versions can your rootkit work
+on?"</i>)
+
+While this is structured as a competition, the primary goal is a showcase of
+techniques and approaches for Linux rootkit technologies. We're interested in
+seeing how problems are approached just as much as what the final product does.
+
+<t><center>Submissions</center></t>
+  <y>~</y> Entries should include any required compilation instructions, dependencies, or
+    configuration notes.
+  <y>~</y> Dynamic testing will be performed in containerized environments with <b>easylkb</b>.
+  <y>~</y> Rootkits may target userland, kernel space, or use hybrid approaches.
+
+<t><center>Evaluation Criteria</center></t>
+Each submission will be scored from 1–5 in the following categories:
+
+  <y>~</y> Stealth / Detection Evasion
+  <y>~</y> Persistence
+  <y>~</y> Complexity
+  <y>~</y> Obfuscation
+  <y>~</y> Novelty / Ingenuity
+
+<t><center>Showcase First</center></t>
+Although a grading system exists, this is not a winner-takes-all event. Many (or
+all, depending on the number of submissions) will be described, with an emphasis
+on highlighting different design philosophies, tradeoffs, and techniques used.
+
+The intent is to create a snapshot of Linux rootkit technologies and
+methodologies, past and present—educational, comparative, and exploratory in
+nature. Let's go!
+
+  <y>~</y> Email your paper to <a href="mailto:stdin@tmpout.sh">stdin@tmpout.sh</a>
+  <y>~</y> Be sure to include <t>[CFP 5]</t> in your email subject.
+  <y>~</y> Please submit your paper by no later than <t>June 31st 2026</t>.
+
+If you have any questions regarding submissions, contact us through X (<a href="https://twitter.com/tmpout">@tmpout</a>),
+<a href="https://discord.gg/qbMZN5QbQb">Discord</a>, <a href="https://haunted.computer/@tmpout">Mastodon</a>, or via the email address mentioned above.
+
+</pre></div></center></body></html>
