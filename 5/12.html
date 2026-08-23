@@ -1,0 +1,1055 @@
+<html>
+<head>
+<title></title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                    ┌───────────────────────┐
+                                                    ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                    │ █   █ █ █ █   █       │
+                                                    │ █   █ █ █ █▀▀▀▀       │
+                                                    │ █   █   █ █     ▄     │
+                                                    │                 ▄▄▄▄▄ │
+                                                    │                 █   █ │
+                                                    │                 █   █ │
+                                                    │                 █▄▄▄█ │
+                                                    │                 ▄   ▄ │
+                                                    │                 █   █ │
+                                                    │                 █   █ │
+                                                    │                 █▄▄▄█ │
+                                                    │                 ▄▄▄▄▄ │
+                                                    │                   █   │
+Overview of code virtualization                     │                   █   │
+~ patate &lt; camille@patate.dev &gt;                     └───────────────────█ ──┘
+
+[ s/o uwu, zorm, jit, blank ]
+
+- --[ Table of contents
+
+0. A word from the author
+1. Introduction
+2. State of the art
+    2.1 Software Protection Techniques
+        2.1.1 Code obfuscation
+        2.1.2 Limitations of traditional obfuscation
+    2.2 Virtualization-based obfuscation
+        2.2.1 Concepts and architecture
+        2.2.2 Virtualization is the key
+    2.3 Existing solutions
+3. Reverse engineering virtualization based protection, the usual way
+    3.1 Understanding the structure of the VM
+    3.2 Reversing the handlers
+    3.3 Writing a bytecode disassembler
+    3.4 Making sense of the bytecode
+4. Other techniques
+    4.1 Defeating obfuscation using taint analysis
+    4.2 LLVM IR
+5. Conclusion
+6. Acknowledgements
+7. References
+8. Appendix
+
+- --[ 0. A word from the author
+
+Hello dear reader, this is my first submission to tmpout and any zines of the
+sort! I tried my best to write a comprehensive overview of virtualization-
+based code obfuscation, hope you'll like it! Most of what's in here isn't new 
+per se, it is the result of my hours of reading and I wanted to share what I 
+learned. If you're curious, I linked everything I reference at the end of the 
+paper.English isn't my native language so you might see some mistakes, 
+apologies. This paper is aimed at people with an already deep understanding 
+of C and assembly programming.
+
+Don't hesitate to email me if you find a technical error or oversight in
+here, I am nowhere near an absolute expert in the domain, but I'm always
+learning.
+
+- --[ 1. Introduction
+
+Ever since the first line of commercial code was written, piracy has been the
+elephant in the server room.
+For us, the warez scene wasn't just about freebies; it was the only way to
+get our hands on the latest AAA titles and overpriced dev tools.
+Obviously, big-budget companies started sweating, desperately trying to find
+new ways to keep their binaries from getting nuked by a crack within hours of
+release.
+At the same time, virus authors needed to find a way to make reverse
+engineering harder to stay undetected for as long as possible.
+I'm not going to "edge" you more, the answer was and is binary obfuscation!
+
+- --[ 2. State of the art
+
+- --[ 2.1 Software Protection Techniques
+
+In this section we will see the traditional way we use code obfuscation to
+protect software and the limitations of these techniques, it is crucial for
+understanding more complex subjects like virtualization.
+
+- --[ 2.1.1 Code obfuscation
+
+The goal of obfuscation is to make code harder to read for people that try to
+reverse engineer or crack it.
+In this section I will demonstrate how code mutation, constant expansion and
+control flow flattening work.
+Code mutation is the action of taking a simple instruction and turning it
+into multiple instructions that are semantically the same, but artificially
+increase the complexity of the program.
+Here is an example using the "add" assembly instruction :
+
+                             +------------+
+                             |add rcx, rax|
+                             +------+-----+
+                                    |
+                                    |
+                                    | Code mutation happens...
+                                   /
+                                   |
+                                   v
+                             +------------+
+                             |push rax    |
+                             |not rax     |
+                             |sub rcx, rax|
+                             |pop rax     |
+                             |sub rcx, 1  |
+                             +------------+
+
+We successfully made the code harder to understand without sacrificing its
+original behaviour!
+We can also make use of constant expansion which is a way to obfuscate
+constant values in our code :
+
+                            +-------------------+
+                            |mov eax, 0xdeadbeef|
+                            +---------+---------+
+                                      |
+                                      |
+                                      |
+                                      v
+                            +-------------------+
+                            |pushfg             |
+                            |mov eax, 0x1cbd0f9 |
+                            |add eax, 0x12345678|
+                            |shl eax, 0x00000001|
+                            |xor eax, 0xf6adf00d|
+                            |popfd              |
+                            +-------------------+
+
+Perfect, now pattern matching for a specific value/address is way harder.
+Great, we've made the code look like garbage but retain its original
+behaviour, that's cool but we can go further, we can modify its control flow
+to create additional complexity!
+This example will be in C for ease of understanding.
+
+                        +---------------------------------+
+                        |#include &lt;stdlib.h&gt;              |
+                        |int main(int argc, char** argv) {|
+                        |  int a = atoi(argv[1]);         |
+                        |  if(a == 0)                     |
+                        |    return 1;                    |
+                        |  else                           |
+                        |    return 10;                   |
+                        |  return 0;                      |
+                        |}                                |
+                        +----------------+----------------+
+                                         |
+                                         |
+                                         |
+                                         |
+                                         |
+                                         v
+                        +---------------------------------+
+                        |#include &lt;stdlib.h&gt;              |
+                        |int main(int argc, char** argv) {|
+                        |  int a = atoi(argv[1]);         |
+                        |  int b = 0;                     |
+                        |  while(1) {                     |
+                        |    switch(b) {                  |
+                        |      case 0:                    |
+                        |        if(a == 0)               |
+                        |          b = 1;                 |
+                        |        else                     |
+                        |          b = 2;                 |
+                        |        break;                   |
+                        |      case 1:                    |
+                        |        return 1;                |
+                        |      case 2:                    |
+                        |        return 10;               |
+                        |      default:                   |
+                        |        break;                   |
+                        |    }                            |
+                        |  }                              |
+                        |  return 0;                      |
+                        |}                                |
+                        +---------------------------------+
+
+As we can see, all basic blocks are split and put into an infinite loop, and
+the program flow is controlled by a switch and the variable b. (quote from
+obfuscator-llvm control flow flattening wiki page, see the references
+section). This is the usual way CFF is implemented and this has proven to be
+quite effective.
+
+- --[ 2.1.2 Limitations of traditional obfuscation
+
+The obfuscation methods I showed in the previous section are by far the most
+commonly used. They work reliably and are widely understood. They will slow
+down reverse engineering attempts and probably discourage novice analysists
+but they can be easily defeated (to a certain extent).
+
+In my example, as in many engines, code mutation follows very strict rules.
+These rules can be exploited by heuristic algorithms to recover the original
+instructions. It can be as simple as pattern matching, then byte patching. 
+Any experienced analysist will be able to spot the patterns and write a 
+custom script to undo the protection.
+
+We can also use this method to defeat constant expansion quite reliably.
+However, many engines introduce randomness at this stage, so a more
+comprehensive approach would be to use symbolic execution (outside of the
+scope of this paper) to determine the result of the instruction block.
+
+Control flow flattening on the other hand is harder to defeat and under the
+right conditions "can render the determining of the precise control flow
+NP-hard" (quote from "OBFUSCATING C++ PROGRAMS VIA CONTROL FLOW FLATTENING"
+by T. Laszlo and A. Kiss). It can still be undone using heuristics, I'll
+leave a few papers in the references section if you're curious but this is
+besides the scope of this paper.
+
+More generally, these techniques can be defeated using optimization
+algorithms and some decompilers (IDA Pro mainly) already have that feature
+baked in, so you might not even see that these protections are present.*
+
+* it's a bit of an overstatement but it greatly diminishes the complexity of
+  the protected program.
+
+- --[ 2.2 Virtualization-based obfuscation
+
+To me, virtualization-based obfuscation is a very elegant and effective way
+to solve these issues.
+
+- --[ 2.2.1 Concepts and architecture
+
+The idea behind this protection is to translate the opcodes of a function
+from its original instruction set (here Intel x64) to a new and custom set.
+If you followed what I just said you might be wondering how we're supposed 
+to execute this new code that isn't in any way compatible with our CPU. The
+solution is to create a virtual machine. In its most simplistic form, it is 
+an interpreter for our custom opcodes.
+Here is a high level example :
+
+                        Function before
+                        +------------+
+                        |add rcx, rax|
+                        +------------+
+
+                        Function after
+                          +--------+             +--------+
+                          |VM Magic|&lt;+           |load r1 |
+                          +--------+ |           |load r2 |
+                                     +---------&gt; |add     |
+                                    Loading &    |store r1|
+                                    interpreting +--------+
+                                    custom opcodes
+
+We translated the original instructions to a new bytecode and replaced the
+function with an interpreter. This way the original code is no longer present
+in the function.
+The "VM Magic" part is actually more complex than it seems, here is a basic
+implementation of it :
+
+                          push offset VMBytecode
+                          jmp VMEntry
+
+                                     |
+                                     v
+                            +------------------+
+                            |Pre-Initialization|
+                            +--------+---------+
+                                     |
+                                     v
+                              +--------------+
+                              |Initialization|
+                              +------+-------+
+                                     |
+                                     v
+                                  +-----+
+                                  |Fetch|&lt;----+
+                                  +--+--+     |xx
+                                     |           xxxx
+                                     v               xxxx
+                                  +------+               xxxx
+                                  |Decode|                  xxx
+                                  +--+---+                     xxx
+                                     |                           xx
+                                     v                             x
+                               +----------+                        xx
+                               |Dispatcher|                         xx
+          +-------------+------+-----+----+------+--------------+    x
+          |             |            |           |              |    xx
+          |             |            |           |              |     x
+          v             v            v           v              v      x
+    +----------+  +----------+  +----------+  +----------+  +-------+  xx
+    |Handler #1|  |Handler #2|  |Handler #3|  |Handler #4|  |VM Exit|   x
+    +-----+----+  +-----+----+  +---+------+  +-----+----+  +---+---+   x
+          |             |           |               |           |       x
+          |             |           |               |           |       x
+          |             |           v               |           |       x
+          |             |         +----+            |           |       x
+          +-------------+-------&gt; |Next|&lt;-----------+-----------+      xx
+                                  +----+                            xxxx
+                                     xxx                     xxxxxxxx
+                                        xxxxxxxxxxxxxxxxxxxxxx
+
+In the plan above, the pre-initialization and initialization phases are
+responsible for allocating what we need to setup the VM context. Typically it
+is a struct composed of :
+    - The VM stack
+    - The different VM registers
+    - The instruction pointer
+    - The internal flags of the VM
+    
+Next we save the original registers and flags of the program to re-apply them
+after the VM ran, this way we avoid any unwanted new behaviour due to the VM
+logic. Here is an example of this from the VM initialization of the
+"guardian-rs" project (link in resources) :
+
+<pre><code class="language-x86asm">
+                        ; saving the registers in the VM ctx structure
+                        mov [rax+10h], rax
+                        mov [rax+18h], rcx
+                        mov [rax+20h], rdx
+                        mov [rax+28h], rbx
+                        mov [rax+30h], rsp
+                        mov [rax+38h], rbp
+                        mov [rax+40h], rsi
+                        mov [rax+48h], rdi
+                        mov [rax+50h], r8
+                        mov [rax+58h], r9
+                        mov [rax+60h], r10
+                        mov [rax+68h], r11
+                        mov [rax+70h], r12
+                        mov [rax+78h], r13
+                        mov [rax+80h], r14
+                        mov [rax+88h], r15
+                        sub rsp, 10h
+                        pop rcx             ; pop flags into rcx
+                        mov [rax+210h], rcx ; save flags into VM ctx struct
+                        mov rcx, rax
+                        call fxsave         ; save xmm registers
+</code></pre>
+
+Then we fetch the opcodes to execute (generally the address the offset pushed
+before going into the VMEntry), we decode them (below is a table describing
+how Intel x64 instructions are structured) :
+
+                        +-----------------+------------------+
+                        |    Component    |   Size (Bytes)   |
+                        +-----------------+------------------+
+                        | Legacy Prefixes | 0-4              |
+                        | REX Prefix      | 0-1              |
+                        | Opcode          | 1-3              |
+                        | ModR/M          | 0-1              |
+                        | SIB             | 0-1              |
+                        | Displacement    | 0, 1, 2, or 4    |
+                        | Immediate       | 0, 1, 2, 4, or 8 |
+                        +-----------------+------------------+
+
+The VM bytecode might be simpler, but this table is good for understanding why
+we need this decoding phase.
+After decoding we enter -in the simpler implementations- a big "switch case"
+(the Dispatcher) that figures which function is responsible for handling the
+current instruction. These functions are called "handlers".
+Below are the Dispatcher and one Handler I used for my "pasm" interpreter
+(see references):
+<pre><code class="language-c">
+        const command_t *dispatcher(const command_t *commands, char *func)
+        {
+            if (func == NULL)
+                return NULL;
+            for (int index = 0; commands[index].fptr != NULL; index += 1) {
+                if (strcmp__(func, commands[index].command) == 0) {
+                    return &commands[index];
+                }
+            }
+            return NULL;
+        }
+
+        void cmp_handler() {
+            if (!check_args(state-&gt;args, 1, 2)) {
+                state-&gt;last_cmp_code = CMP_ERROR;
+                return;
+            }
+
+            long long a1_ = get_value(state-&gt;args-&gt;arg1, state-&gt;args-&gt;arg1);
+            long long a2_ = get_value(state-&gt;args-&gt;arg2, state-&gt;args-&gt;arg2);
+
+            if (a1_ == a2_) state-&gt;last_cmp_code = CMP_EQUAL;
+            else if (a1_ &gt; a2_) state-&gt;last_cmp_code = CMP_ABOVE;
+            else if (a2_ &gt; a1_) state-&gt;last_cmp_code = CMP_BELOW;
+            return;
+        }
+</code></pre>
+As you can see, nothing very special is happening here, this is all very
+standard. Please note that this is a simplified example, a real world VM
+will have more things going on.
+Once we executed the instruction in our VM context, we fetch the next one and
+do everything again. When the function is done executing, we copy the
+original values for registers and flags we saved before and continue with the
+execution of the program.
+
+We successfully managed to replace entirely the original code of the function
+with our own custom bytecode and added our VM on top. This greatly improved
+the protection of the program.
+
+- --[ 2.2.2 Virtualization is the key
+
+Looking at what we did in the previous section we can easily affirm that we
+managed to obfuscate the program to a whole new extent, if we were to do this
+for every single function in our binary file using custom opcodes every time,
+we would create a very strong protection.
+
+VM-based code obfuscation is often use alongside standard code mutation and
+obfuscation we saw in chapter 2.1.1, for the VM internal functions AND the
+bytecode. This makes the analysis of the program tedious and time consuming.
+
+- --[ 2.3 Existing solutions
+
+Virtualization has been the norm for DRM software for quite a long time now,
+and a few companies started selling this type of protection, mainly :
+- - -The infamous- Denuvo
+- - VMProtect
+- - Themida
+
+These are nowhere cheap but they use all the methods I described earlier
+alongside anti-debug, anti-VM, JIT interpreters and self modifying code.
+A proper implementation of this can be very interesting for a company wanting
+to secure their software, Denuvo for example has not seen a proper crack
+since 2023 (date of writing this is 2026!).
+
+- --[ 3. Reverse engineering virtualization based protection, the usual way
+
+Now that we have an understanding of this whole mess we can start by looking
+at some actual programs. I will be using IDA Pro 9.3 on Linux for this.
+You can find the source code of the program used for this example in
+the appendix (see chapter 9).
+
+- --[ 3.1 Understanding the structure of the VM
+
+We start by loading our executable into IDA :
+<pre><code class="language-x86asm">
+.text:0000000000401000                 public start
+.text:0000000000401000 start           proc near
+.text:0000000000401000
+.text:0000000000401000                 mov     edi, 0Ah
+.text:0000000000401005                 call    sub_401014
+.text:000000000040100A                 mov     rdi, rax        ; error_code
+.text:000000000040100D                 mov     eax, 3Ch
+.text:0000000000401012                 syscall                 ; sys_exit
+.text:0000000000401012 start           endp
+</code></pre>
+Great, our start function does nothing interesting, calls a function,
+then exits.
+sub_401014 takes one argument in edi, here 0xA (or 10 in base 10).
+We can note that the exit code of the program is the exit code of
+this function.
+
+Following this trail we then find :
+<pre><code class="language-x86asm">
+.text:0000000000401014                 pushfq
+.text:0000000000401015                 push    rax
+.text:0000000000401016                 push    rcx
+.text:0000000000401017                 push    rdx
+.text:0000000000401018                 push    rbx
+.text:0000000000401019                 push    rbp
+.text:000000000040101A                 push    rsi
+.text:000000000040101B                 push    rdi
+.text:000000000040101C                 push    r8
+.text:000000000040101E                 push    r9
+.text:0000000000401020                 push    r10
+.text:0000000000401022                 push    r11
+.text:0000000000401024                 push    r12
+.text:0000000000401026                 push    r13
+.text:0000000000401028                 push    r14
+.text:000000000040102A                 push    r15
+</code></pre>
+
+This is the program saving the registers and EFLAGS in the stack to restore
+them later.
+We saw something like this in 2.2.1, we are in "VM initialization" !
+
+Continuing we find these 3 lines :
+<pre><code class="language-x86asm">
+.text:000000000040102C                 mov     ds:qword_402018, rdi
+.text:0000000000401034                 mov     rax, offset unk_402000
+.text:000000000040103E                 mov     ds:qword_402008, rax
+</code></pre>
+Saving the function's argument into qword_402018 (which i'll rename func_arg)
+Copying the address of unk_402000 into rax. What is at unk_402000 anyway ?
+<pre><code class="language-x86asm">
+.data:0000000000402000 unk_402000      db    1
+.data:0000000000402001                 db    2
+.data:0000000000402002                 db    5
+.data:0000000000402003                 db    3
+.data:0000000000402004                 db    3
+.data:0000000000402005                 db 0FFh
+</code></pre>
+It looks like a blob of data, it's probably the pointer to the start of
+our bytecode. I'll rename unk_402000 to "vm_bytecode".
+Going back to 0x40103E, we move the address of the bytecode into
+qword_402008. This could be our instruction pointer, I'll rename this symbol
+to "vm_ip". Continuing.
+<pre><code class="language-x86asm">
+.text:0000000000401046                 mov     rsi, ds:vm_ip
+.text:000000000040104E                 xor     rax, rax
+.text:0000000000401051                 mov     al, [rsi]
+.text:0000000000401053                 inc     rsi
+.text:0000000000401056                 mov     ds:vm_ip, rsi
+</code></pre>
+In order we :
+- - copy the IP into rsi
+- - set rax to 0
+- - fetch 1 byte from rsi
+- - increment rsi
+- - copy rsi back into "vm_ip"
+
+This looks like we're in the "Fetch" function, we fetch one byte of the
+bytecode, then we update the IP to step over it.
+
+The next part of the code confirms our hypothesis :
+<pre><code class="language-x86asm">
+.text:000000000040105E                 cmp     al, 1
+.text:0000000000401060                 jz      short loc_401070
+.text:0000000000401062                 cmp     al, 2
+.text:0000000000401064                 jz      short loc_401082
+.text:0000000000401066                 cmp     al, 3
+.text:0000000000401068                 jz      short loc_4010AF
+.text:000000000040106A                 cmp     al, 0FFh
+.text:000000000040106C                 jz      short loc_4010E0
+.text:000000000040106E                 ud2
+</code></pre>
+The code compares the byte we fetched with the values 1-2-3-0xFF, jumps
+somewhere if it matches and crashes if this byte doesn't correspond
+to anything.
+We are looking at our "Dispatch" function !
+We can safely assume that the "loc_*" functions correspond to VM Handlers.
+We have successfully indentified all the key elements of this VM, we can then
+try to make sense of the handlers.
+
+- --[ 3.2 Reversing the handlers
+
+As we don't know in which order the handlers will be accessed, we will put a
+breakpoint at the start of each of them then debug the program.
+First, we're going to create a table with the handlers, their function and
+the bytecode value needed to trigger them. This will become very useful in
+chapter 3.3 :
+
++--------+------------+-----------+
+| Opcode |  Handler   | Behaviour |
++--------+------------+-----------+
+| 0x1    | loc_401070 | ?         |
+| 0x2    | loc_401082 | ?         |
+| 0x3    | loc_4010AF | ?         |
+| 0xff   | loc_4010E0 | ?         |
++--------+------------+-----------+
+
+Good, we can now start our debugger.
+
+We first break on loc_401070, let's examine its code :
+<pre><code class="language-x86asm">
+.text:0000000000401070 mov     rax, ds:func_arg
+.text:0000000000401078 mov     ds:qword_402010, rax
+.text:0000000000401080 jmp     short loc_401046
+</code></pre>
+This handler takes the original function argument and copies it to
+qword_402010 (renaming it to vm_arg). Let's update our table :
+
++--------+------------+--------------------+
+| Opcode |  Handler   |     Behaviour      |
++--------+------------+--------------------+
+| 0x1    | loc_401070 | loads an argument  |
+| 0x2    | loc_401082 | ?                  |
+| 0x3    | loc_4010AF | ?                  |
+| 0xff   | loc_4010E0 | ?                  |
++--------+------------+--------------------+
+
+Continuing the execution we then break on loc_401082 :
+<pre><code class="language-x86asm">
+.text:0000000000401082 mov     rsi, ds:vm_ip
+.text:000000000040108A xor     rbx, rbx
+.text:000000000040108D mov     bl, [rsi]
+.text:000000000040108F inc     rsi
+.text:0000000000401092 mov     ds:vm_ip, rsi
+.text:000000000040109A mov     rax, ds:vm_arg
+.text:00000000004010A2 add     rax, rbx
+.text:00000000004010A5 mov     ds:vm_arg, rax
+.text:00000000004010AD jmp     short loc_401046
+</code></pre>
+There is a bit more code here. The function starts by loading the vm_ip
+into rsi, then loading the next byte of the vm_bytecode (pointed at
+by "rsi") into "bl". It then increments "rsi" and saves it back into vm_ip.
+This part basically saves the next byte in the bytecode, then increments the
+instruction pointer.
+Then it loads the vm argument saved earlier in vm_arg by loc_401070 and adds
+it to "rbx" (basically "bl" as it's the lower 8 bits of rbx).
+It then saves back rax into vm_arg.
+We can conclude that this handler adds add immediate to the vm argument.
+Let's update our table :
+
++--------+------------+------------------------------+
+| Opcode |  Handler   |          Behaviour           |
++--------+------------+------------------------------+
+| 0x1    | loc_401070 | loads an argument            |
+| 0x2    | loc_401082 | adds an immediate to vm_arg  |
+| 0x3    | loc_4010AF | ?                            |
+| 0xff   | loc_4010E0 | ?                            |
++--------+------------+------------------------------+
+
+Continuing the execution we break on loc_4010AF :
+<pre><code class="language-x86asm">
+.text:00000000004010AF mov     rsi, ds:vm_ip
+.text:00000000004010B7 xor     rbx, rbx
+.text:00000000004010BA mov     bl, [rsi]
+.text:00000000004010BC inc     rsi
+.text:00000000004010BF mov     ds:vm_ip, rsi
+.text:00000000004010C7 mov     rax, ds:vm_arg
+.text:00000000004010CF imul    rax, rbx
+.text:00000000004010D3 mov     ds:vm_arg, rax
+.text:00000000004010DB jmp     loc_401046
+</code></pre>
+If you've been paying attention you've already detected that this is -almost-
+the same code as our previour handler except that we now multiply vm_arg with
+an immediate. Table update required :
+
++--------+------------+--------------------------------------+
+| Opcode |  Handler   |              Behaviour               |
++--------+------------+--------------------------------------+
+| 0x1    | loc_401070 | loads an argument                    |
+| 0x2    | loc_401082 | adds an immediate to vm_arg          |
+| 0x3    | loc_4010AF | multiplies an immediate with vm_arg  |
+| 0xff   | loc_4010E0 | ?                                    |
++--------+------------+--------------------------------------+
+
+Continuing the execution, we break on loc_4010E0 :
+<pre><code class="language-x86asm">
+.text:00000000004010E0 mov     rax, ds:vm_arg
+.text:00000000004010E8 mov     [rsp+70h], rax
+.text:00000000004010ED pop     r15
+.text:00000000004010EF pop     r14
+.text:00000000004010F1 pop     r13
+.text:00000000004010F3 pop     r12
+.text:00000000004010F5 pop     r11
+.text:00000000004010F7 pop     r10
+.text:00000000004010F9 pop     r9
+.text:00000000004010FB pop     r8
+.text:00000000004010FD pop     rdi
+.text:00000000004010FE pop     rsi
+.text:00000000004010FF pop     rbp
+.text:0000000000401100 pop     rbx
+.text:0000000000401101 pop     rdx
+.text:0000000000401102 pop     rcx
+.text:0000000000401103 pop     rax
+.text:0000000000401104 popfq
+.text:0000000000401105 retn
+</code></pre>
+This is interesting, at the very end we see a "retn" instead of our usual
+"jmp loc_401046" that jumps back to "Fetch". Maybe VM_EXIT ?
+This function saves the vm_arg into rax then puts rax at rsp+0x70.
+Then it proceeds to pop all the registers and ELFAGS.
+It looks like a cleanup routine to restore the saved registers and flags
+saved in "VM Initialization".
+We can confirm this because rsp+0x70 is at (14 registers * 8 bytes) =
+112 bytes (or 0x70), which corresponds to the saved rax on the stack.
+This means that we exit the function and use vm_arg as a return value.
+This is most probably VM_EXIT.
+
+We have successfully reversed all the handlers for this function,
+let's update our table :
+
++--------+----------+-------------------------------------------------+
+| Opcode | Handler  |                    Behaviour                    |
++--------+----------+-------------------------------------------------+
+| 0x1    | LOAD_ARG | loads an argument                               |
+| 0x2    | ADD_IMM  | adds an immediate to vm_arg                     |
+| 0x3    | MUL_IMM  | multiplies an immediate with vm_arg             |
+| 0xff   | VM_EXIT  | exits the function with vm_arg as return value  |
++--------+----------+-------------------------------------------------+
+
+Great! We have a table with our opcodes, which handler is used to execute
+them, the behaviour of said handler and the address of the vm_bytecode !
+This will come very handy foooor....
+
+- --[ 3.3 Writing a bytecode disassembler
+
+..writing a bytecode disassembler ! Yeah ok you read the title..
+
+I will be doing this in Python because it's easy but your "C Chad" co-worker
+can probably do it in a few less CPU cycles.
+
+First let's define our opcodes values, names and size :
+<pre><code class="language-python">
+        OPCODES = {
+            0x01: ("LOAD_ARG", 0),
+            0x02: ("ADD_IMM", 1),
+            0x03: ("MUL_IMM", 1),
+            0xFF: ("VM_EXIT", 0),
+        }
+</code></pre>
+The default size here is 1, the last number in the tuple is the "extra size"
+(here 1 for ADD_IMM and MUL_IMM as we read a 1 byte number after the
+instruction).
+
+We then paste our extracted bytecode :
+<pre><code class="language-python">
+bytecode = [0x01, 0x02, 0x05, 0x03, 0x03, 0xFF]
+</code></pre>
+We want to iterate over our bytecode and extract its name and extra size :
+<pre><code class="language-python">
+        i = 0
+        while i &lt; len(bytecode):
+            ins = bytecode[i]
+            
+            if ins not in OPCODES:
+                print(f"0x{ins:02x} is not a valid opcode.")
+                break
+            
+            name, extra_size = OPCODES[ins]
+</code></pre>
+Then we check if the exression needs an extra byte, if so, we extract it,
+print it and increment "i" accordingly :
+<pre><code class="language-python">
+        if extra_size != 0:
+            if len(bytecode) &lt;= (i + extra_size):
+                print(f"{i:04x}: {name} &lt;missing imm&gt;")
+                break
+            
+            print(f"{i:04x}: {name} {bytecode[i + extra_size]:01x}")
+            i += 1 + extra_size
+        else:
+            print(f"{i:04x}: {name}")
+            i += 1
+</code></pre>
+Aaaand, we're done, we have our disassembler, it was easy, wasn't it ?
+The output is :
+
+                                0000: LOAD_ARG
+                                0001: ADD_IMM 5
+                                0003: MUL_IMM 3
+                                0005: VM_EXIT
+
+- --[ 3.4 Making sense of the bytecode
+
+Now that we have a readable bytecode, we can start to re-write this function
+as it was before virtualization.
+This example is very minimal so we can just do it by hand.
+Looking at the disassembly we can safely assume that this function adds 5 to
+the argument, then multiplies this total by 3, then returns the result.
+
+In x64 assembly this would look like this :
+<pre><code class="language-x86asm">
+                            mov rax, rdi    ; load argument x
+                            add rax, 5      ; x + 5
+                            imul rax, 3     ; (x + 5) * 3
+                            ret
+</code></pre>
+And in C :
+<pre><code class="language-c">
+                            long vm_func(long x) {
+                                return (x + 5) * 3;
+                            }
+</code></pre>
+Hell yeah.
+We got back the original code of a virtualized function, using an unknown
+VM in an unknown program.
+
+I call this a success.
+I'm proud of you, good girl ~
+
+- --[ 4. Other techniques
+
+In the previous section we saw how devirtualization was possible using
+"standard" analysis and tools, but this is very time consuming and not
+necessarily adequate. We need to up our game.
+This section will focus more on theory than the one before, mainly because
+this paper is starting to get quite long and also because i'm not skilled
+enough to pull these types of tricks in real life lol.
+This will be mostly based on the research paper "Symbolic deobfuscation: from
+virtualized code back to the original" by Jonathan Salwan, Sebastien Bardin,
+and Marie-Laure Potet (see references).
+
+- --[ 4.1 Defeating obfuscation using taint analysis
+
+Taint analysis is a technique where we mark user input (the "taint") and
+track which instructions are influenced by it as it propagates through the
+program. By doing this, we can isolate the instructions that actually matter
+for the program's core logic.
+In practice, we usually generate an execution trace of the program to analyze
+this data flow. A great tool for this is the project "TheCodexRebirth"
+by AntoineBlaud (see references).
+Once we've identified the tainted path, we can deal with the untainted
+instructions. Since these untainted instructions don't depend on user input,
+their outputs are inherently static. We can evaluate them and replace them
+with their concrete, static results using a compiler optimization technique
+known as "Constant Folding".
+After we've concretized those values, we can simply discard the leftover,
+useless instructions using Dead Code Elimination (DCE). It works because we
+are stripping away the artificial complexity the VM added, leaving only the
+bare-bones logic (not true if the program interacts with the OS or anything
+external that we don't control and from which we can get a non-static output,
+this is a limitation).
+
+Here is an example of taint analysis :
+
+                           Before             After
+                            [ * ]             [ * ]
+                           /     \           /     \
+                         [+]     [+]       (3)     [x]
+                        /   \   /   \             /   \
+                      (1)   (2)[x]  [^]         [x]    (5)
+                              /       \
+                            (6)       (3)
+
+First we made a list of all the instructions that had a direct impact on
+the user input, so only the top multiplication, then the addition on the
+right. Everything else is constant, so we can simplify!
+After this we can have our result, which is way easier to read.
+
+This is how, using taint analysis we can simplify obfuscated code. When
+you apply this to a VM, reversing the handlers is no longer necessary, we
+only need to know what's touching the user input directly, the rest we can
+replace with the result as it's always the same!
+
+- --[ 4.2 LLVM IR
+
+Using the previous step (and other complicated things I omitted because
+the goal here is to get an overview, not a PhD), we can reconstruct the
+code we got into LLVM IR.
+
+For those who don't know, LLVM IR (or Intermediate Representation,
+or "bitcode") is a language used by LLVM (no shit) between the parsing
+of the language and the compiling into assembly phase.
+
+            +-----------+      +-------+       +--------+
+            |Source code+-----&gt;|LLVM IR+------&gt;|Assembly|
+            +-----------+      +-------+       +--------+
+
+This means that if we get LLVM IR, we can recompile the code to any
+architecture while still getting the optimizations of the LLVM compiler!
+
+Usually we use "binary lifters" such as McSema or Remill for this job.
+
+At this stage you've most certainly de-virtualized the whole program.
+
+- --[ 5. Conclusion
+
+If you made it this far you now have a basic understanding of
+virtualization-based code obfuscation and how to analyze it.
+This type of protection is currently being used more and more, this is
+something any analyst should be familiar with.
+My goal with this paper was to give you all the keys you need to go
+experiment by yourself, of course things are missing, of course I could've
+done a few things better, but at least you -hopefully- know a bit more
+than when you started reading &lt;3
+
+- --[ 6. Acknowledgements
+
+I want to thank "uwu" who has been my mentor for quite some time and that
+sparked my interest in writing obfuscation software. You were very patient
+even when I had stupid questions !
+Special thanks to xss.is where I learned a lot about niche W*ndows
+exploitation and malware engineering.
+vx-underground & phrack for giving me access to tons of papers !
+And of course to tmpout (thanks netspooky &lt;3)
+
+- --[ 7. References
+
+ [1]  Valdemar Caroe.
+      Attacking virtualization-based obfuscation
+      https://github.com/67-6f-64/AntiOreans-CodeDevirtualizer/blob/main/
+      Masters%20Thesis.pdf
+ [2]  myself.
+      Reverse engineering Guardian-rs's virtualization
+      https://patate.dev/pages/reversing_guardianrs1.html
+ [3]  Jonathan Salwan, Sebastien Bardin, and Marie-Laure Potet.
+      Symbolic deobfuscation:
+              from virtualized code back to the original
+      http://sebastien.bardin.free.fr/2018-final-dimva.pdf
+ [4]  Sebastien Bardin, Robin David, and Jean-Yves Marion.
+      Backward-Bounded DSE:
+              Targeting Infeasibility Questions on Obfuscated Codes
+      https://www.ieee-security.org/TC/SP2017/papers/220.pdf
+ [5]  weak1337.
+      Alcatraz.
+      https://github.com/weak1337/Alcatraz
+ [6]  obfuscator-llvm wiki
+      https://github.com/obfuscator-llvm/obfuscator/wiki/Control-Flow-
+      Flattening
+ [7]  T. Laszlo and A. Kiss
+      OBFUSCATING C++ PROGRAMS VIA CONTROL FLOW FLATTENING
+      https://www.inf.u-szeged.hu/~akiss/pub/fulltext/
+      laszlo2009obfuscating.pdf
+ [8]  Zerotistic
+      Breaking Control Flow Flattening: A Deep Technical Analysis
+      https://zerotistic.blog/posts/cff-remover/
+ [9]  Andreas Klopsch
+      Attacking Emotet's Control Flow Flattening
+      https://www.sophos.com/en-us/blog/attacking-emotets-control-flow-
+      flattening
+ [10] Geri Revay
+      Don't flatten yourself: restoring malware with Control-Flow
+      Flattening obfuscation
+      https://www.virusbulletin.com/conference/vb2023/abstracts/dont-
+      flatten-yourself-deobfuscating-malware-control-flow-flattening/
+ [11] Branko Spasojevic
+      Using optimization algorithms for malware deobfuscation
+      http://sigurnost.zemris.fer.hr/ns/malware/2010_spasojevic/
+      Diplomski_Spasojevic.pdf
+ [12] meowette
+      guardian-rs
+      https://github.com/meowette/guardian-rs/
+ [13] myself.
+      pasm
+      https://git.patate.dev/patate/pasm
+ [14] AntoineBlaud
+      TheCodexRebirth
+      https://github.com/AntoineBlaud/TheCodexRebirth
+
+- --[ 8. Appendix
+
+Source code for the program used for the example in section 3.
+Compile with:
+<pre><code class="language-sh">
+nasm -f elf64 vm_demo.asm -o vm_demo.o
+ld vm_demo.o -o vm_demo
+</code></pre>
+
+code:
+<pre><code class="language-x86asm">
+section .data
+    ; the bytecode for out virtualized function
+    vm_bytecode:
+        db 0x01
+        db 0x02, 0x05
+        db 0x03, 0x03
+        db 0xFF
+
+section .bss
+    ; VM context structure
+    vip resq 1          ; Virtual Instruction Pointer
+    vr0 resq 1          ; Virtual Register 0
+    saved_rdi resq 1    ; function argument
+
+section .text
+    global _start
+
+_start:
+    mov rdi, 10                 ; x = 10
+    call vm_entry               ; vm_entry(x)
+
+    mov rdi, rax                ; save return value of virtualized function
+    mov rax, 60                 ; exit
+    syscall
+
+vm_entry:
+    ; save original registers and EFLAGS
+    pushfq
+    push rax
+    push rcx
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov [saved_rdi], rdi        ; save the function argument
+    mov rax, vm_bytecode
+    mov [vip], rax              ; copy the address of the bytecode to our VIP
+
+vm_loop:
+    mov rsi, [vip]      ; load VIP into rsi 
+    xor rax, rax
+    mov al, byte [rsi]  ; fetch 1 byte opcode
+    inc rsi             ; vip++ (we just read an opcode)
+    mov [vip], rsi      ; save vip
+
+    ; compare our opcode to the vm instructions to see what handler to call
+    cmp al, 0x01                ; LOAD_ARG
+    je handler_load_arg
+    cmp al, 0x02                ; ADD_IMM8
+    je handler_add_imm
+    cmp al, 0x03                ; MUL_IMM8
+    je handler_mul_imm
+    cmp al, 0xFF                ; VM_EXIT
+    je handler_vm_exit
+
+    ud2                 ; crash on unknown opcode
+
+handler_load_arg:
+    mov rax, [saved_rdi]        ; load function argument
+    mov [vr0], rax              ; copy it to vr0
+    jmp vm_loop                 ; go back to "fetch"
+
+handler_add_imm:
+    mov rsi, [vip]              ; load vip
+    xor rbx, rbx
+    mov bl, byte [rsi]          ; get 1 byte immediate
+    inc rsi                     ; increment vip (we just loaded 1 byte)
+    mov [vip], rsi              ; update vip
+
+    mov rax, [vr0]              ; load function argument
+    add rax, rbx                ; add argument with immediate
+    mov [vr0], rax              ; update function argument
+    jmp vm_loop                 ; go back to "fetch"
+
+handler_mul_imm:
+    mov rsi, [vip]              ; load vip
+    xor rbx, rbx
+    mov bl, byte [rsi]          ; get 1 byte immediate
+    inc rsi                     ; increment vip (we just loaded 1 byte)
+    mov [vip], rsi              ; update vip
+
+    mov rax, [vr0]              ; load function argument
+    imul rax, rbx               ; multiply argument with immediate
+    mov [vr0], rax              ; update function argument
+    jmp vm_loop                 ; go back to "fetch"
+
+handler_vm_exit:
+    mov rax, [vr0]              ; save vm function register
+                                ; (function's return value)
+    mov [rsp + 112], rax        ; we pushed all registers on the stack so
+                                ; rsp + 112 is rax on the stack, we then can
+                                ; pop it back into rax 
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax                     ; pop vr0 into rax
+    popfq
+    ret
+</code></pre>
+
+--[ <a href="11.html">PREV</a> | <a href="index.html">HOME</a> | <a href="13.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

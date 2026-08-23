@@ -1,0 +1,1129 @@
+<html>
+<head>
+<title></title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+    ▄▀████▀▄      A 57-byte x86-64 ELF                 │ █   █ █ █ █   █       │
+   ██▄▀██▀▄██     is a fully functional                │ █   █ █ █ █▀▀▀▀       │
+   █▀▀▀▀▀▀▀▀█     executable on Linux.                 │ █   █   █ █     ▄     │
+ ▀▄█ █▀██▀█ █▄▀                                        │                 ▄▄▄▄▄ │
+  ▀█ █▄██▄█ █▀                                         │                 █   █ │
+   ██▄▄▀▀▄▄██                                          │                 █   █ │
+    █▀▄▀▀▄▀█                    Those are pretty       │                 █▄▄▄█ │
+   █▀▄▀▀▀▀▄▀█                   strong words for       │                 ▄   ▄ │
+  ▀ ██▀██▀██ ▀                  a 7-year-old girl!     │                 █   █ │
+  ██▀▄█▀▀█▄▀██                                         │                 █   █ │
+   ▀██▄██▄██▀                                          │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Inside and Outside a 57-Byte x86-64 Linux ELF          │                   █   │
+~ Fanda Uchytil (h4x.cz)                               └───────────────────█ ──┘
+
+
+
+
+
+
+===[ INTRO ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Linux ELF loader is willing to put up with a surprising amount of abuse.
+Enough, in fact, that a 57-byte x86-64 ELF can still make it through
+'execve(2)' and become a real process.
+
+In this article, we'll look at some implementation details of the Linux ELF
+loader and what the ELF structure must provide for it to function properly.
+We'll construct valid 57-byte and 60-byte ELF64 executables and explain why
+they work.
+
+With ELF binaries this small, the main problem eventually becomes code
+execution. We'll look at a technique for using a filename as storage for
+instructions when there is (almost) nothing else to execute.
+
+So, let's put on our delving suit and delve into the depths of delving.
+
+
+
+
+                                                        SEGFAULT   /\\        
+                       ELF                                        |;;||   ILL 
+                                ELF     a_ _d       FAIL    _____||__|||_____ 
+ELF          _ ELF                l      \~/      r       /'+ + + +  + + +  /|
+  ELF       (o/                   (\  o /---\ e  /)     /' + + /~~\ + + + /'/'
+ELF ELF ELF--|                    `\`--/ ELF \--'/'     ######[]~~[]######/'  
+  ELF ELF   / \                     `-/__| |__\-'                             
+ELF ELF                                   \ _ _ _ _ _ _ _ _ _  ~~(,,'&gt;  LOADED
+
+
+
+
+
+===[ Officer, I Swear It Is a Working Example ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Let's start with a "working" example (using a very loose definition of
+working) and build our understanding from there.
+
+The following hexdump is the annotated 'xxd' output of a 57-byte x86-64 ELF
+binary that is considered a legit executable by the Linux ELF loader:
+
+----------------------------[ 57-byte_elf64.xxd ]-----------------------------
+00000000: 7f45 4c46 0000 0000 0000 0000 0000 0000  .ELF............
+;         ^-------^                e_entry
+;      e_ident[EI_MAG]        v-----------------v
+00000010: 0200 3e00 0000 0000 0000 0000 0000 0000  ..&gt;.............
+;         ^.-^ ^-.^
+;          |     '--- e_machine = x86-64
+;      e_type = ET_EXEC
+00000020: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000030: 0000 0000 0000 3800 01                   ......8..
+;                        ^.-^ ^^
+;          e_phentsize ---'    '--- e_phnum
+------------------------------------------------------------------------------
+
+Convert it into a real binary:
+
+  grep -v '^;' 57-byte_elf64.xxd | xxd -r &gt; 57-byte_elf64
+  chmod 755 57-byte_elf64
+
+And test it by running it (in a virtual machine, of course, because we are not
+animals):
+
+  $ ./57-byte_elf64
+  Segmentation fault (core dumped)
+
+Pretty good, right?! I'm actually proud of it.
+
+It's not just an ordinary segfault -- it's a good one (unlike those in
+[ref1]), because this one didn't crash the 'execve(2)' syscall... Don't look
+at me like that! Fully working examples are for normies who are slaves to the
+system! So, let's see how it works...
+
+
+
+
+
+===[ ELF Structure ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+How can a 57-byte ELF64 work when the ELF64 header itself is 64 bytes? That
+should be the minimum, correct?
+
+When shrinking anything down, the main questions are always: how is it
+implemented? Which fields are really needed? What are the dependencies between
+them, and which ones can be removed?
+
+In the case of an ELF executable, we need to look at two places:
+
+  - the ELF64 structure [ref2], and
+  - the Linux ELF loader [ref3].
+
+Let's start with ELF headers. The structure of an executable is defined using
+two headers: the ELF header and the program header. All ELF binaries must have
+exactly one ELF header (= 'Elf64_Ehdr' in our case). It's the only header that
+must start at offset 0, and it defines the most basic characteristics of the
+binary (e.g., ELF type, architecture, entry point, offset of the first program
+header, ...).
+
+Here is an annotated structure of the main ELF64 header:
+<pre><code class="language-c">
+  typedef struct {
+      unsigned char e_ident[16];    // the first 4 bytes are the ELF magic
+      uint16_t      e_type;         // e.g., is this an executable?
+      uint16_t      e_machine;      // the architecture -- e.g., x86-64
+      uint32_t      e_version;
+      Elf64_Addr    e_entry;        // the code's start address
+      Elf64_Off     e_phoff;        // the program header offset
+      Elf64_Off     e_shoff;
+      uint32_t      e_flags;
+      uint16_t      e_ehsize;
+      uint16_t      e_phentsize;    // size of the program header structure
+      uint16_t      e_phnum;        // number of entries in the program header
+      uint16_t      e_shentsize;
+      uint16_t      e_shnum;
+      uint16_t      e_shstrndx;
+  } Elf64_Ehdr;
+</code></pre>
+The fields annotated with comments are needed for the 57-byte binary to work.
+Some are required by the Linux loader for an ELF binary to run. Others are
+required by what the binary is supposed to do. For example, 'e_machine'
+defines the x86-64 architecture. More on that in the following chapter.
+
+For our purposes, we'll focus only on the executable part of ELF64. 'e_type'
+must be either 'ET_EXEC' (= static executable) or 'ET_DYN' (= shared/dynamic
+executable) because only these types are relevant for the Linux ELF loader.
+When we set 'e_type' to one of those types, the loader requires one more data
+structure -- the program header:
+<pre><code class="language-c">
+  typedef struct {
+      uint32_t   p_type;
+      uint32_t   p_flags;
+      Elf64_Off  p_offset;
+      Elf64_Addr p_vaddr;
+      Elf64_Addr p_paddr;
+      uint64_t   p_filesz;
+      uint64_t   p_memsz;
+      uint64_t   p_align;
+  } Elf64_Phdr;
+</code></pre>
+The program header tells the kernel how to load a binary into memory. For
+example, the ELF loader in Linux 6.12 [ref3] recognizes the following types:
+
+  PHDR TYPE               DESCRIPTION
+  --------------------------------------------------------------------------
+  PT_LOAD                 how to map a binary into memory
+  PT_GNU_STACK            enables an executable userspace stack
+  PT_GNU_PROPERTY         special GNU properties (hardening, ISA specs, ...)
+  PT_INTERP               indicates the dynamic linker (the ELF interpreter)
+  PT_LOPROC...PT_HIPROC   range for processor-specific segment types
+
+NOTE: To execute code from a binary, it must be loaded into main memory. The
+type that does exactly that is 'PT_LOAD', which describes how the binary
+should be mapped into memory.
+
+Now we have some idea of how an executable ELF is structured and that, at
+least in theory, it needs the ELF header and the program header.
+
+
+
+
+
+===[ Trim it! Trim it harder! ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Now, which fields can we remove and still have the Linux ELF loader accept the
+binary as a valid ELF64 executable?
+
+The ELF loader is mostly defined in the 'load_elf_binary' function [ref3],
+and the first thing it does is check whether the 'e_ident' field has the
+4-byte ELF magic (= '\x7fELF'):
+<pre><code class="language-c">
+  if (memcmp(elf_ex-&gt;e_ident, ELFMAG, SELFMAG) != 0)   // e_ident == "\177ELF"
+      goto out;
+</code></pre>
+'e_ident' is an array of 16 bytes (= 'unsigned char e_ident[16]'), but
+only the first 4 bytes are important for the loader. The remaining 12 bytes
+can be used for whatever (wink wink, nudge nudge, say no more).
+
+Then the loader checks whether the binary is executable, and if not, it GTFOs:
+<pre><code class="language-c">
+  if (elf_ex-&gt;e_type != ET_EXEC && elf_ex-&gt;e_type != ET_DYN)
+      goto out;
+</code></pre>
+That means the 'e_type' field is also mandatory.
+
+Next, the loader checks the architecture ('e_machine'), which in our case
+must be equal to '0x003e' (= 'EM_X86_64'), defining the x86-64
+architecture:
+<pre><code class="language-c">
+  if (!elf_check_arch(elf_ex))      // e_machine == EM_X86_64
+      goto out;
+</code></pre>
+NOTE: We can ignore some checks, such as 'elf_check_fdpic', as they don't
+apply to the x86 architecture (but they may apply to other architectures,
+where 'e_ident[EI_OSABI]' can be checked, so be cautious).
+
+Finally (in the context of the ELF header), the loader calls 'load_elf_phdrs',
+which takes 'ehdr-&gt;e_phoff' and loads the whole program header
+(= 'sizeof (Elf64_Phdr) * e_phnum') into memory for later processing in
+'load_elf_binary'.
+<pre><code class="language-c">
+  elf_phdata = load_elf_phdrs(elf_ex, bprm-&gt;file);
+  if (!elf_phdata)
+      goto out;
+</code></pre>
+We need to be extra careful here: if this call fails, the whole loading
+process fails! (This makes the program header mandatory.)
+
+Looking at the 'load_elf_phdrs' function, it becomes obvious that we need at
+least one program-header record:
+<pre><code class="language-c">
+  if (elf_ex-&gt;e_phentsize != sizeof(struct elf_phdr))
+      goto out;
+
+  /* Sanity check the number of program headers and their total size. */
+  size = sizeof(struct elf_phdr) * elf_ex-&gt;e_phnum;
+  if (size == 0 || size &gt; 65536 || size &gt; ELF_MIN_ALIGN)
+      goto out;
+</code></pre>
+When the checks pass, it reads the entire program header from the file =&gt; it
+does NOT read the header from the same buffer that was used to read the ELF
+header (this might be a problem, because we cannot use the memory trick
+mentioned later in "One Byte Less", since the phdr is not taken from
+already mapped memory):
+<pre><code class="language-c">
+  /* Read in the program headers */
+  retval = elf_read(elf_file, elf_phdata, size, elf_ex-&gt;e_phoff);
+</code></pre>
+Let's go back to the ELF header and assess where we are. From the conditions
+above, we can see that the loader requires a correct 'e_phentsize' (which must
+be exactly 56 bytes = 'sizeof (struct elf_phdr)') and a nonzero 'e_phnum' (it
+must also be below the relevant limits, but we can ignore that since we want
+the bare minimum):
+<pre><code class="language-c">
+  typedef struct {
+      unsigned char e_ident[16];      // 16
+      uint16_t      e_type;           // 2
+      uint16_t      e_machine;        // 2
+      uint32_t      e_version;        // 4
+      Elf64_Addr    e_entry;          // 8
+      Elf64_Off     e_phoff;          // 8
+      Elf64_Off     e_shoff;          // 8
+      uint32_t      e_flags;          // 4
+      uint16_t      e_ehsize;         // 2
+      uint16_t      e_phentsize;      // 2
+      uint16_t      e_phnum;          // 2    &lt;--- WE ARE HERE
+      uint16_t      e_shentsize;
+      uint16_t      e_shnum;
+      uint16_t      e_shstrndx;
+  } Elf64_Ehdr;
+</code></pre>
+
+None of the following fields are currently read by the kernel loader, so we're
+at 58 bytes for the ELF header. This is further supported by the fact that the
+loader doesn't check the ELF header size (we'll kinda see why in the next
+chapter).
+
+That said, what about the program header? We already saw that at least one
+'sizeof (struct elf_phdr)' entry is required, which is 56 bytes for a 64-bit
+executable. Does that bring the total to '58 + 56 = 114'? Well, nobody said
+that we cannot overlay the ELF and program headers [ref4][ref11]. Moreover, we
+don't even need a valid program-header entry type, because the kernel fails
+only on some broken record types, such as 'PT_LOAD' or 'PT_GNU_PROPERTY' (see
+the 'p_type' conditions in [ref3]). Therefore, we can set 'e_phoff' to zero,
+where the ELF header begins, and "recycle" it as the program header:
+<pre><code class="language-txt">
+  ELF HEADER                  &lt;---  PROGRAM HEADER
+  -----------------------------------------------------
+  uint8_t   e_ident[0..3]     &lt;---  uint32_t  p_type
+  uint8_t   e_ident[4..7]     &lt;---  uint32_t  p_flags
+  uint8_t   e_ident[8..15]    &lt;---  uint64_t  p_offset
+  uint16_t  e_type            &lt;-+-  uint64_t  p_vaddr:2
+  uint16_t  e_machine           |             p_vaddr:2
+  uint32_t  e_version         &lt;-'             p_vaddr:4
+  uint64_t  e_entry           &lt;---  uint64_t  p_paddr
+  uint64_t  e_phoff           &lt;---  uint64_t  p_filesz
+  uint64_t  e_shoff           &lt;---  uint64_t  p_memsz
+  uint32_t  e_flags           &lt;-+-  uint64_t  p_align:4
+  uint16_t  e_ehsize            |             p_align:2
+  uint16_t  e_phentsize       &lt;-'             p_align:2
+  uint16_t  e_phnum
+</code></pre>
+At this moment, 'phdr-&gt;p_type' is '0x464c457f' (= '\x7fELF'), which is
+not recognizable by the loader and is thus ignored. This simple trick reduces
+the total number of bytes back to 58.
+
+The key takeaway is that the Linux loader expects at least one program-header
+record, which means 'e_phnum' in the ELF header must be non-zero. Anything
+beyond 'e_phnum' is not checked and can be removed. If the loader does not
+recognize a program-header entry type, it ignores it, which means we can
+safely overlay the ELF header and the program header.
+
+
+
+
+
+===[ One Byte Less ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+So far, we have a 58-byte binary, but the binary at the beginning is only
+57 bytes long. What gives?
+
+We can trim one more byte. For this, we'll leverage two tricks: little-endian
+encoding on x86 and the way Linux reads the executable's main header.
+
+One of the advantages of little-endian encoding is that it makes type casting
+straightforward. Let's say we have 'uint32_t x = 1'. Its hex representation
+is '01 00 00 00', and when we cast it to 'uint16_t', we get '01 00', which
+still represents the same value, '1' (but with a different type width).
+
+You probably see where this is going. 'e_phnum' is the last field in the ELF
+header that we know is required. It's a two-byte integer (= 'uint16_t') with
+the value 1. So, in principle, we could use the little-endian trick and drop
+the zero byte from the binary. For that to work, we need confirmation that the
+ELF header is stored in a larger, pre-zeroed buffer. Luckily, it is -- look at
+the beginning of the ELF loader: [ref5]
+<pre><code class="language-c">
+  static int load_elf_binary(struct linux_binprm *bprm)
+  {
+      struct elfhdr *elf_ex = (struct elfhdr *) bprm-&gt;buf;
+  ...
+</code></pre>
+We already saw the 'elf_ex' variable in "Trim it! Trim it harder!". It's a
+pointer to the ELF header data, which resides in the 'bprm-&gt;buf' buffer.
+The buffer is declared as follows: [ref6] [ref7]
+<pre><code class="language-c">
+  struct linux_binprm {
+      ...
+      char buf[BINPRM_BUF_SIZE];      // BINPRM_BUF_SIZE = 256  [ref7]
+  }
+</code></pre>
+When a process calls 'execve(2)', the kernel must prepare several structures
+before the loader even runs. (Note that this happens way before it is even
+decided what type of loader will be used. The ELF loader is only one type of
+loader.) 'struct linux_binprm' is the common structure that a loader gets
+when it is called [ref3], and it is initialized here [ref8]:
+<pre><code class="language-c">
+  static int prepare_binprm(struct linux_binprm *bprm)
+  {
+      loff_t pos = 0;
+      memset(bprm-&gt;buf, 0, BINPRM_BUF_SIZE);
+      return kernel_read(bprm-&gt;file, bprm-&gt;buf, BINPRM_BUF_SIZE, &pos);
+  }
+</code></pre>
+This has two implications. First, the whole 256-byte buffer is zeroed. Then,
+the kernel reads up to 256 bytes from the file being executed.
+
+That's great, because we can safely remove the second byte from 'e_phnum' --
+there are plenty more zeros waiting for us in the buffer.
+
+Unfortunately, we cannot use the same trick for the program header, because
+the ELF loader reads it directly from the file (as already mentioned in
+"Trim it! Trim it harder!"). Therefore, if the structure is trimmed in the
+file, the loader will fail to read the required size. Bummer.
+
+
+
+
+
+===[ Summary of the 57-byte ELF64 ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Now, we've arrived back at the beginning. We have everything we need to
+construct a 57-byte ELF64 executable. Let's do it:
+
+The following is NASM [ref9] "source", and it's easy to read. The notation is
+'db = 1 byte', 'dw = 2 bytes', 'dd = 4 bytes', and 'dq = 8 bytes'. In effect,
+it is structured binary data, and the meanings are explained in the comments.
+The 'REQUIRED' column tells us whether that field is required by the Linux ELF
+loader (= 'yes') or not, and whether it can be used for whatever data we want
+(= '-').
+
+----------------------------[ 57-byte_elf64.nasm ]----------------------------<pre><code class="language-x86asm">BITS 64                    ; EHDR                        PHDR         REQUIRED
+phdr:                      ; -------------------------------------------------
+    db  0x7F, "ELF"        ; e_ident[EI_MAG]             p_type       yes
+    dd  0x00000000         ; e_ident[4..7]               p_flags      -
+    dq  0x0000000000000000 ; e_ident[8..15]              p_offset     -
+    dw  0x0002             ; e_type      = ET_EXEC       p_vaddr:2    yes
+    dw  0x003e             ; e_machine   = x86-64        p_vaddr:2    yes
+    dd  0x00000000         ; e_version                   p_vaddr:4    -
+    dq  0x0000000000000000 ; e_entry     = 0             p_paddr      -
+    dq  phdr               ; e_phoff     = 0             p_filesz     -
+    dq  0x0000000000000000 ; e_shoff                     p_memsz      -
+    dd  0x00000000         ; e_flags                     p_align:4    -
+    dw  0x0000             ; e_ehsize                    p_align:2    -
+    dw  0x0038             ; e_phentsize = sizeof(phdr)  p_align:2    yes
+    db  0x01               ; e_phnum     = 1 entry                    yes
+</code></pre>------------------------------------------------------------------------------
+
+Build:
+<pre><code class="language-sh">
+  nasm -f bin 57-byte_elf64.nasm -o 57-byte_elf64
+  chmod 755 57-byte_elf64
+</code></pre>
+NOTE: The hexdump and basic execution are shown in the first chapter:
+"Officer, I Swear It Is a Working Example".
+
+So far, we haven't shown that it loads correctly. Based on the loader
+conditions, we expect it to load correctly. In practice, though, there is
+still a problem: it appears to fail, even though I said it didn't. Let's
+see it then:
+<pre><code class="language-txt">
+  $ strace ./57-byte_elf64
+
+  execve("./57-byte_elf64", ["./57-byte_elf64"], ...) = 0
+  --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=NULL} ---
+</code></pre>
+Nice! Did you see it? 'execve(2)' returned zero. That means the binary was
+successfully loaded!
+
+If we stopped here, we would have a 57-byte ELF64 that the Linux kernel loads
+correctly... except that it segfaults! I know it's a minor detail, but some
+people might be put off by that. So, what can we do with it?
+
+
+
+
+                                                              _              
+         .------------------------------.      .-------------|'|-.           
+        /  Get out and don't come back   \    /              |_|  \          
+        \  until you have code to run!   /   /        /~~~\        \         
+         '-------------------------------\\ '--------'     '--------'        
+.    . ..                                  \  | .--.   PUB   .--. |          
+))  /|\|\\                                    | |  |  .---.  | 0| |          
+})) /|\|\\ .                                  | |__|  |\0 |  |/|| |     60-by
+})   | || /|\         (*)@)%}   ._._._._._._._|       | |\|  '--' |_._._._._.
+|    | ||  |           | | |    |=|=|=|=|=|=|=|_______|/ \|_______|=|=|=|=|=|
+^^^^^^^^^^^^^\      \^^^^^^^^^^^^^^^^^^^^^^^^^                     ^^^^^^^^^^
+                                            57-byte_ELF64                    
+
+
+
+
+
+===[ Good, Bad... I'm the Guy with the Segfault ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There are multiple types of segmentation faults [ref1] [ref10]. We can roughly
+split them into two categories: those that fail right in the kernel (e.g., by
+failing the 'execve(2)' syscall) and those that are triggered from user space
+(e.g., access to unmapped memory). From our point of view, the latter are the
+"good" ones, as they mean that the binary was successfully loaded and the
+code execution then failed in user space -- which gives us something we can
+actually work with.
+
+The following strace output is an example of such a "good" segfault, occurring
+in the 57-byte binary from the beginning:
+<pre><code class="language-txt">
+  $ strace -i ./57-byte_elf64
+  [00007ffff7e7fad7] execve("./57-byte_elf64", ["./57-byte_elf64"], ...) = 0
+  [0000000000000000] --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR,
+                         si_addr=NULL} ---
+  [????????????????] +++ killed by SIGSEGV (core dumped) +++
+</code></pre>
+The 'execve()' succeeds (returns 0), and then it fails at address 0 because
+there is nothing mapped there. Why does it jump to 0? Because 'e_entry' is
+exactly that -- zero.
+
+This is good because the binary is successfully running as a process and
+trying to execute user-space instructions, but then it fails -- it is unable
+to execute anything because nothing is mapped there.
+
+So, why is this useful? Well, now we at least have the theoretical possibility
+to jump somewhere else in process memory that might be executable -- and if we
+wish hard enough, there will be such a place...
+
+
+
+
+
+===[ Code-Doo, Where Are You! ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+First things first: what do we have at our disposal?
+<pre><code class="language-txt">
+  $ gdb -ex 'file ./execve_wrapper' -ex 'catch exec' -ex "run ./57-byte_elf64"
+  ...
+  (gdb) info proc map
+           Start Addr           End Addr       Size     Offset  Perms  objfile
+       0x7ffff7ff9000     0x7ffff7ffd000     0x4000        0x0  r--p   [vvar]
+       0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0  r-xp   [vdso]
+       0x7ffffffde000     0x7ffffffff000    0x21000        0x0  rw-p   [stack]
+</code></pre>
+Eh, not much. Not surprising, since we "intentionally" didn't load anything
+into memory. We have no 'PT_LOAD' because 'e_phoff' points right at the
+beginning of the binary and there is no valid program-header record.
+
+We either need to somehow make a 'PT_LOAD' record that will load our code,
+or we need to use regions that are mapped by the kernel.
+
+
+
+
+
+===[ The Cursed PT_LOAD ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+I've been fighting 'PT_LOAD' for a long time, and so far, I'm losing. I wasn't
+able to get below a 73-byte ELF64, and that one already exists (see the
+tmp.out article by lm978 [ref11] -- btw, this is superb work: lm978 also
+showed a fully valid 77-byte ELF64 "Hello, world!" That's pretty impressive!)
+
+So what other options are there?
+
+We already know that 'PT_LOAD' is only needed when we want to load any part
+of the binary into memory (which is usually the case). But we are under no
+obligation to load anything from the program. Actually, let's double down!
+We're edgy kids -- we rebel against such oppressive doctrines as 'PT_LOAD'!
+It's just so...so crypto-fascist.
+
+The memory mapping in the previous chapter shows one executable region:
+'vdso'...
+
+
+
+
+
+===[ vDSO and ROP...NOPE ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+No! Just NO! There are too many problems with it. (I like vdso, but not in
+this case.)
+
+vDSO [ref12] is a virtual ELF file (that's good). The kernel maps it (that's
+good), and there is intentionally executable code there (that's good). Unlike
+its predecessor 'vsyscall', however, it was built with address randomization
+in mind (that's bad).
+
+And I don't just mean that it changes when ASLR is enabled. That's today's
+standard. What I mean is that we should not even assume the same base address
+across different kernels when ASLR is disabled! That's a very big problem if
+we want to have at least the illusion of portability.
+
+On top of that, the vDSO structure and code may also change between major
+kernel versions, and they "often" do. This makes it difficult to use the vDSO
+as a reliable entry point across kernel versions.
+
+Well, that sucks! What other techniques can we use?
+
+
+
+
+
+===[ Sacrifice to the Stack God ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is one technique that could solve our problem, but it requires some
+outsourcing.
+
+What other regions are mapped?
+<pre><code class="language-txt">
+      Start Addr           End Addr       Size     Offset  Perms  objfile
+  0x7ffff7ff9000     0x7ffff7ffd000     0x4000        0x0  r--p   [vvar]
+  0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0  r-xp   [vdso]
+  0x7ffffffde000     0x7ffffffff000    0x21000        0x0  rw-p   [stack]
+</code></pre>
+Well, well, well. Isn't that the legendary stack?! It is! But it comes at a
+price -- there are two problems. The first one is that the x86 stack has not
+been executable by default since Linux kernel version 5.8. Fortunately, this
+is not a big issue, as we can define 'PT_GNU_STACK' [ref13] in the program
+header. It demands a sacrifice, but it's doable. The second problem, which is
+more serious, is ASLR.
+
+Let's start with 'PT_GNU_STACK'. On kernels &lt; 5.8, the x86 stack is executable
+by default, and we don't need to do anything to execute code from the stack.
+We can point the first program header to the beginning of the file and be done
+with it ('phdr-&gt;p_type' is "nonsense", so the kernel ignores it, and the stack
+remains executable). That's nice, as it gives us a 57-byte binary (see
+"Summary of the 57-byte ELF64").
+
+(Un)fortunately, Kees Cook said: "no fun allowed" in 2020 [ref14], and since
+Linux kernel version 5.8 [ref15], the x86 stack has been non-executable by
+default. Therefore, we need to set 'PT_GNU_STACK' with the correct permission
+flags explicitly:
+
+First, we want to set 'phdr-&gt;p_type' to 'PT_GNU_STACK'. It's defined as
+'0x6474e551' in the kernel source code [ref16].
+
+Second, we need to set the executable bit, 'PF_X', in 'phdr-&gt;p_flags'
+('PF_X' is defined as 1 [ref17]).
+
+No more fields are required for 'PT_GNU_STACK'.
+
+Finally, we have to place it somewhere in the binary. The first eligible place
+is at offset 4, right after the ELF magic '\x7fELF'. There is enough space
+for both 'phdr-&gt;p_type' (4 bytes) and 'phdr-&gt;p_flags' (4 bytes), and those
+'e_ident' ELF header fields are not read by the kernel (see the 'REQUIRED'
+column):
+
+-------------------[ prototype_of_60-byte_elf_x86-64.nasm ]-------------------<pre><code class="language-x86asm">BITS 64                    ;                                  REQUIRED
+    db  0x7F, "ELF"        ; e_ident[EI_MAG]                  yes
+phdr:
+    dd  0x6474e551         ;   phdr-&gt;p_type = PT_GNU_STACK    -   &lt;-- reusing
+    dd  0x00000001         ;   phdr-&gt;p_flags = PF_X           -       e_ident
+    db  0x00               ; e_ident[EI_PAD]                  -
+    db  0x00               ; e_ident[EI_PAD]                  -
+    db  0x00               ; e_ident[EI_PAD]                  -
+    db  0x00               ; e_ident[EI_PAD]                  -
+    dw  0x0002             ; e_type      = ET_EXEC            yes
+    dw  0x003e             ; e_machine   = x86-64             yes
+    dd  0x00000000         ; e_version                        -
+    dq  0x0000000000000000 ; e_entry     = stack              yes
+    dq  phdr - $$          ; e_phoff     = 4                  yes
+    dq  0x0000000000000000 ; e_shoff                          -
+    dd  0x00000000         ; e_flags                          -
+    dw  0x0000             ; e_ehsize                         -
+    dw  0x0038             ; e_phentsize = sizeof(phdr)       yes
+    dw  0x0001             ; e_phnum     = 1 entry            yes &lt;-. padding
+    dw  0x0000             ; e_shentsize =&gt; padding           yes &lt;-' needed
+</code></pre>------------------------------------------------------------------------------
+
+This will add 3 bytes to our binary (see "One Byte Less" for the reason),
+but it's still a 60-byte binary.
+
+Right! But it still doesn't work, because ASLR randomizes the address of the
+stack, so the loader jumps into an unmapped memory region and segfaults.
+
+
+
+
+
+===[ The ASLR and Personality Problem ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ASLR is a pain (and I didn't figure out how to solve it). When we look at
+the kernel source code, we can see that there are two ways to disable ASLR
+[ref18]:
+
+- One is global for the whole system through the variable 'randomize_va_space'
+  (this variable is set when we write to '/proc/sys/kernel/randomize_va_space'
+  [ref19]. The same variable is also set at boot by the 'norandmaps' kernel
+  parameter [ref20]).
+
+- And the other option is through the 'personality(2)' [ref21] of a process.
+  The problem here is that the 'ADDR_NO_RANDOMIZE' flag must be set before
+  'execve(2)'.
+
+Both are problematic, because they require an action outside of the binary.
+Regrettably, I have no choice but to impose one rule: ASLR must be disabled
+either via 'personality(2)' or globally. (Shame? Such a mundane thought never
+crossed my mind!)
+
+
+
+
+
+===[ Outsourcing Code to the Stack ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We've prepared the stack to be executable and to have a known address, but
+that's not enough. How do we reach executable instructions when nothing has
+been loaded in the first place? That is, how do we put data onto the stack
+without interacting with another process? (The chicken-and-egg problem.)
+
+We actually need two things:
+  - a way to push our code onto the stack, and
+  - the address of that code, so we can execute it.
+
+There are several options we can use to get our data onto the user stack:
+
+  1. number of arguments (= 'argc'),
+  2. program name and its arguments (= 'argv'),
+  3. environment variables (= 'env'),
+  4. filename (= 'auxv[AT_EXECFN]').
+
+Most of them require external setup, such as special environment variables or
+arguments. I don't want any more unnecessary "user interaction" (I still have
+trauma caused by ASLR). Fortunately, the kernel is kind enough to grant my
+wish.
+
+Option 4, 'filename', fulfills everything I want. It's part of the program
+(without a name, we cannot execute it) and it occupies a strategic position on
+the stack.
+
+'filename' differs from 'argv[0]' and is created during program execution
+(way before the ELF loader starts). "Currently" (Linux 6.12), it is one of
+the first records put on the user stack of a process and is taken from
+'bprm-&gt;filename' [ref22]. It is the path used to execute the program (e.g.,
+'/bin/cat', './cat', ...).
+
+The kernel puts it on the stack for 'auxv[AT_EXECFN]' [ref23], which points
+to it [ref24]. Unlike argc, argv, and envp, it is not a stable ABI, so it
+might be at a different position or disappear completely. But so far, I have
+not encountered a kernel that does not store it like that (the oldest kernel I
+have tested was 2.6.32, and the newest was 6.12.73).
+
+Here is a simplified layout of the x86-64 stack as set up by the kernel
+(before ASLR is applied):
+<pre><code class="language-txt">
+  &lt;STACK-TOP&gt;                 (lower memory address than &lt;STACK-BOTTOM&gt;)
+  ...
+  auxv                        AT_EXECFN = ptr @ ----.       [ref24]
+  argc                                              |
+  argv                                              |
+  env                                               |
+  filename\0                  bprm-&gt;filename &lt;------'       [ref22]
+  0x0000000000000000          8 bytes (sizeof (void *))     [ref25]
+  &lt;STACK-BOTTOM&gt;              0x7FFFFFFFF000                [ref26] [ref27]
+</code></pre>
+From the layout, we can see that the most control we have is through the
+filename because, so far, it ends at a predictable position -- 8 bytes from
+the bottom of the stack.
+
+This is perfect, because it gives us an address that is fixed enough for our
+purposes. And the bonus is that when we use a negative offset (= from a higher
+address to a lower one), it automatically strips any path prefix =&gt; only the
+last part of the filename is relevant. E.g., it doesn't matter if we run
+'/bin/cat' or './cat', the 'cat' string will always be at position:
+'STACK-BOTTOM - sizeof (void *) - strlen ("cat") -1'  (-1 because the filename
+string is NUL-terminated).
+
+Okay, the remaining stack ingredient is the address of STACK-BOTTOM without
+ASLR. When the user stack is allocated for a process, it uses 'STACK_TOP_MAX'
+[ref28] as the stack bottom [ref29].
+
+The base address of the stack bottom on x86 depends on how many page levels a
+CPU supports and how many the system enables [ref30]. (For our purposes, we'll
+assume 4-level paging, as it's currently still more approachable. When 5-level
+paging is enabled, the shift is 56 instead.) The address of the user-stack
+bottom (without ASLR) is:
+<pre><code class="language-txt">
+  STACK_BOTTOM = (1 &lt;&lt; MASK_SHIFT) - PAGE_SIZE =
+               = (1 &lt;&lt; 47) - 4096 =
+               =  0x7FFFFFFFF000
+</code></pre>
+Now we need to craft the code.
+
+
+
+
+
+===[ The Printable Code ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We still have nothing to execute, and we would really like to execute
+something! (Otherwise, the executable is more or less useless.)
+
+We're writing shellcode that will live in the filename. Let's (not)
+overcomplicate our lives and just create a simple program that exits with
+value '66'.
+
+On typical Un*x file systems (e.g., ext4, xfs, zfs, tmpfs, ...), there are
+two basic rules for a filename we must obey:
+
+  1. no NUL character ('\0'), and
+  2. no forward slash ('/').
+
+Those are reserved for paths ('/') and string termination ('\0'). (There
+are other constraints, such as reserved names like '.' and '..' and the
+filename size limit 'NAME_MAX', but none of them matter here.)
+
+A proof of concept could look like this:
+
+----------------------------[ poc_shellcode.nasm ]----------------------------<pre><code class="language-x86asm">BITS 64       ;   MEANING           C hex string
+              ;   ------------------------------
+mov dil,0x42  ;   arg = 66          \x40\xb7\x42
+mov al, 0x3c  ;   syscall exit      \xB0\x3C
+syscall       ;   exit (66)         \x0F\x05
+</code></pre>------------------------------------------------------------------------------
+
+We can use the output of the compiled 'poc_shellcode' (= C hex string) as
+the name of our executable, or better yet, we can create a symlink with this
+name pointing to it:
+
+  ln -s 60-byte_elf_x86-64  $'\x40\xb7\x42\xB0\x3C\x0F\x05'
+
+The shellcode is 7 bytes long, so we need to appropriately set
+'ehdr-&gt;e_entry' to '0x7FFFFFFFF000 - 8 - 7 - 1 = 0x7FFFFFFFEFF0', and we can
+run it:
+
+  echo 0 &gt; /proc/sys/kernel/randomize_va_space
+  ./$'\x40\xb7\x42\xB0\x3C\x0F\x05'
+  echo $?                             # =&gt; 66
+
+It correctly exits with '66'.
+
+But binary characters in a filename are kinda lame, and we can do better!
+
+Well, sir, would you care for a small portion of printable characters in your
+filename, with a hint of self-modifying code before the main course?
+
+Why, yes, my good sir, I most certainly would:
+
+-------------------------[ printable_shellcode.nasm ]-------------------------<pre><code class="language-x86asm">BITS 64
+
+; constructing instruction 'syscall' (= 0F 05)
+sub ax, 0x7270                  ; 0x0000 - 0x7270 = 0x8d90
+sub ax, 0x474f                  ; 0x8d90 - 0x474f = 0x4641
+sub ax, 0x4132                  ; 0x4641 - 0x4132 = 0x050f  =&gt; 0F 05
+push rax
+pop rsi                         ; rsi = 0F 05
+
+; constructing syscall value for 'exit'
+push byte 0x54
+pop rax
+xor al, 0x68                    ; eax = 0x3c =&gt; syscall exit
+
+push byte 66                    ; return value
+pop rdi
+
+; modify the next instruction so it becomes 'syscall'
+xor word [rel _syscall], si
+
+_syscall: dd 0                  ; a placeholder
+</code></pre>------------------------------------------------------------------------------
+<pre><code class="sh">
+  $ nasm -f bin printable_shellcode.nasm -o printable_shellcode
+  $ cat printable_shellcode
+  f-prf-OGf-2AP^jTX4hjB_f15
+</code></pre>
+How does it work? We are very constrained by the number of instructions we can
+use. Printable ASCII codes range from 0x20 (space) to 0x7e (tilde), and
+anything outside this range is considered a non-printable/special character.
+We want to use only instruction opcodes in the printable range, so the
+shellcode can be typed directly on a keyboard.
+
+The number of eligible instructions on x86-64 is small, but the set of fully
+usable instructions with arguments and registers is even smaller. This is not
+a comprehensive analysis, but you can see for yourself which opcodes fall in
+the range from '0x20' to '0x7e' in [ref31]. See also [ref32].
+
+For example, as far as I know, there is no printable 'mov', so we have to be
+creative and use multiple 'sub ax' instructions (they result in printable
+opcodes 'f-') to get the value we want. In the code above, we want to get
+'0x050f' (= the 'syscall' instruction). Both bytes are unprintable. Also, when
+we use 'sub', we go backward from zero and underflow to our desired value, and
+we must use values whose bytes result in printable characters:
+<pre><code class="language-x86asm">
+  ; ax = 0
+  sub ax, 0x7270                  ; f-pr
+  sub ax, 0x474f                  ; f-OG
+  sub ax, 0x4132                  ; f-2A
+  ; ax = 0x050f
+</code></pre>
+Then we load it into 'rsi', because we need it there for the last instruction:
+'xor word [rel _syscall], si'. This instruction is a real treat. It modifies
+the code that follows it, but it's not that simple. Look at what the
+instruction really looks like:
+<pre><code class="language-x86asm">
+  xor WORD PTR [rip+0x0], si      ; 66 31 35 00 00 00 00
+</code></pre>
+Yeah, correct! Those are the infamous NUL bytes -- the forbidden ones! And
+there are four of them! How do we get out of this mess?
+
+Let's recall the stack layout from "Outsourcing Code to the Stack". It
+looks like this:
+<pre><code class="language-txt">
+  ...
+  filename\0
+  0x0000000000000000              8 bytes (sizeof (void *))
+  &lt;STACK-BOTTOM&gt;                  0x7FFFFFFFF000
+</code></pre>
+We have 8 NUL bytes from 'sizeof (void *)', plus 1 NUL byte from the filename
+termination at our disposal. It would be a waste not to use them... We can
+trim the trailing NUL bytes from the 'xor' instruction, because they will
+already be there when the code executes.
+
+And if you're wondering why I used 'push 0x54; pop rax; xor al, 0x68'
+instead of the simpler 'push 0x3c' (as '0x3c' is a printable and valid
+filename character), it's a cosmetic modification. '0x3c' is the '&lt;'
+character, which is used for file descriptor 0 redirection in the shell.
+We could run it in quotes or escape it ('\&lt;'), and it would run fine,
+but why not make it prettier when we have the chance?
+
+The final shellcode consists of these 25 printable characters:
+<pre><code class="language-txt">
+  f-prf-OGf-2AP^jTX4hjB_f15
+</code></pre>
+This can be used as a filename without any extra escaping or quoting (and it
+looks sufficiently eldritch).
+
+
+
+
+
+===[ 60-byte Frankenstein's Monster ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Now we've got every part we need:
+
+  - the trimmed ELF structure,
+  - the executable stack for kernel versions &gt;= 5.8,
+  - the address of the stack,
+  - the code we want to run,
+  - the place to store the code,
+  - the printable filename.
+
+At last, let's put it all together.
+
+We'll take the prototype from "Sacrifice to the Stack God" and fill in the
+entry point ('ehdr-&gt;e_entry'). To compute it, we take the filename,
+'f-prf-OGf-2AP^jTX4hjB_f15', get its length, '25', and then compute its
+address using the equation from "Outsourcing Code to the Stack":
+<pre><code class="language-c">
+  e_entry = STACK-BOTTOM - sizeof (void *) - strlen (filename) - 1 =
+          = 0x7FFFFFFFF000 - 8 - 1 - 25 =
+          = 0X7FFFFFFFEFF7 - 25 =
+          = 0X7FFFFFFFEFDE
+</code></pre>
+NOTE: NASM allows for simple equations, so I just rearranged the second line
+and left the expression that way. It can be edited easily without having to
+recalculate it.
+
+The final code will look like this:
+
+-------------------------[ 60-byte_elf_x86-64.nasm ]--------------------------<pre><code class="language-x86asm">BITS 64                        ; EHDR                                 REQUIRED
+    db  0x7F, "ELF"            ; e_ident[EI_MAG]                      yes
+phdr:
+    dd  0x6474e551             ;   phdr-&gt;p_type  = PT_GNU_STACK       -
+    dd  0x00000001             ;   phdr-&gt;p_flags = PF_X               -
+    db  0x00                   ; e_ident[EI_PAD]                      -
+    db  0x00                   ; e_ident[EI_PAD]                      -
+    db  0x00                   ; e_ident[EI_PAD]                      -
+    db  0x00                   ; e_ident[EI_PAD]                      -
+    dw  0x0002                 ; e_type          = ET_EXEC            yes
+    dw  0x003e                 ; e_machine       = x86-64             yes
+    dd  0x00000000             ; e_version                            -
+    dq  0x7FFFFFFFF000-8-1 -25 ; e_entry         = filename on stack  yes
+    dq  phdr - $$              ; e_phoff         = 4                  yes
+    dq  0x0000000000000000     ; e_shoff                              -
+    dd  0x00000000             ; e_flags                              -
+    dw  0x0000                 ; e_ehsize                             -
+    dw  0x0038                 ; e_phentsize     = sizeof (phdr)      yes
+    dw  0x0001                 ; e_phnum         = 1 entry            yes
+    dw  0x0000                 ; e_shentsize =&gt; padding               yes
+</code></pre>------------------------------------------------------------------------------
+
+Build it, make it executable, and marvel at our glorious hexdump:
+
+  nasm -f bin 60-byte_elf_x86-64.nasm -o 60-byte_elf_x86-64
+  chmod 755 60-byte_elf_x86-64
+  xxd 60-byte_elf_x86-64
+
+--------------------------[ 60-byte_elf_x86-64.xxd ]--------------------------<pre><code class="language-txt">00000000: 7f45 4c46 51e5 7464 0100 0000 0000 0000  .ELFQ.td........
+00000010: 0200 3e00 0000 0000 deef ffff ff7f 0000  ..&gt;.............
+00000020: 0400 0000 0000 0000 0000 0000 0000 0000  ................
+00000030: 0000 0000 0000 3800 0100 0000            ......8.....
+</code></pre>------------------------------------------------------------------------------
+
+Conversion from xxd hexdump to binary:
+<pre><code class="language-sh">
+  xxd -r 60-byte_elf_x86-64.xxd &gt; 60-byte_elf_x86-64
+</code></pre>
+Now, let's "implant" the code into the filename. It's a filename, so we'll
+once again use a symlink -- the result will be the same:
+<pre><code class="language-sh">
+  ln -s 60-byte_elf_x86-64  f-prf-OGf-2AP^jTX4hjB_f15
+</code></pre>
+Disable ASLR and run it:
+<pre><code class="language-sh">
+  echo 0 &gt; /proc/sys/kernel/randomize_va_space
+  ./f-prf-OGf-2AP^jTX4hjB_f15
+  echo $?                                       # =&gt; exits with 66
+</code></pre>
+We're done.
+
+NOTE: If you don't want to disable ASLR for the whole system, it can be
+disabled per program via 'personality(2)' using a tool from util-linux
+[ref33]: 'setarch "$(uname -m)" -R -- ./f-prf-OGf-2AP^jTX4hjB_f15' (the
+'-R' parameter sets the 'ADDR_NO_RANDOMIZE' personality flag).
+
+NOTE: If we run a kernel older than 5.8, we could instead use the
+'57-byte_elf64' binary from "Summary of the 57-byte ELF64", fill in the
+correct 'e_entry' (the same as we computed above), and then it would run in
+the same way as the 60-byte binary above.
+
+
+
+
+
+===[ OUTRO ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+So, kids, what have we learned?
+
+We found out that the current Linux ELF loader implementation requires two
+headers for normal execution: the ELF header and the program header.
+
+We figured out that the (non-zero) number of program-header records
+('ehdr-&gt;e_phnum') in the ELF header likely sets the base limit of 58 bytes
+for an executable binary. We were able to trim it down to 57 bytes using two
+tricks: little-endian encoding and the pre-zeroed buffer where the ELF header
+is stored. That allows us to store only one of the two bytes of 'e_phnum'.
+The second one is implicitly zero.
+
+The program header needs to exist for the loader to operate properly, but it
+doesn't need to contain a valid type. That means the Linux ELF loader does not
+need 'PT_LOAD' to correctly create a process image. Also, because the program
+header is read separately from the ELF header, the file must be large enough
+to contain a full program-header record. This limits the file size to
+'ehdr-&gt;e_phoff + sizeof (Elf64_Phdr)'.
+
+On the other hand, missing 'PT_LOAD' means that there is no executable code
+from the binary mapped into process memory. Fortunately, we found out that the
+filename is one of the first values put on the user stack. So we created
+printable instructions and named our binary accordingly, made the stack
+executable directly from the ELF binary (and, with great shame, disabled ASLR
+externally), and used the address of the filename as the entry point
+('ehdr-&gt;e_entry').
+
+So, is 57 bytes the smallest possible x86-64 ELF executable? Well, yes, but
+actually no :). The fundamental flaw is that it is not a self-contained
+binary: it depends entirely on ASLR being disabled. I also did not prove
+minimality. I only constructed a working example. Maybe there is a way to load
+an ELF binary as a process without the program header (using the default Linux
+ELF loader, of course). That would greatly reduce the size of the binary. I
+didn't find a way to do that, but that doesn't mean someone else won't.
+
+And that's all I have, folks. Be good, and HACK THE PLANET! They're trashing
+our rights, man! They're trashing the flow of data!
+
+
+
+
+                .---------------------------------.                     ,,-.  
+               /                                   \                ..(     \ 
+              |    Marge, I'm confused. Is this     |              (        / 
+              |   a happy ending or a sad ending?   |             (        )  
+              /                                    /             (         )  
+             //'----------------------------------'             (         /   
+   _//\_    /                                                  (         )    
+  /     \             .------------------------------.         (        (     
+ |       |           /                                \        ( ~ ~ .. )     
+ |  (.)(.)          |  It's an ending, that's enough.  |       (.)(.) (  )    
+ C   _---_)          \                                 \      _-       C)     
+  | |  __|            '-------------------------------'\\    (__       |      
+  |  \__/                                                \      '---   |      
+  /___ |                                                           \   |      
+ /____\ /                                                          OoooO      
+|       \                                                         /     \     
+
+
+
+
+
+===[ References ]~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+&gt; [ref1] https://research.h4x.cz/html/2025/2025-10-06--touching_small_elfs-p2-segfaults_everywhere.html
+
+&gt; [ref2] https://www.man7.org/linux/man-pages/man5/elf.5.html
+
+&gt; [ref3] https://elixir.bootlin.com/linux/v6.12.57/source/fs/binfmt_elf.c#L819
+
+&gt; [ref4] https://research.h4x.cz/html/2025/2025-09-11--touching_small_elfs-p1-broken_tools.html
+
+&gt; [ref5] https://elixir.bootlin.com/linux/v6.12.57/source/fs/binfmt_elf.c#L836
+
+&gt; [ref6] https://elixir.bootlin.com/linux/v6.12.57/source/include/linux/binfmts.h#L66
+
+&gt; [ref7] https://elixir.bootlin.com/linux/v6.12.57/source/include/uapi/linux/binfmts.h#L19
+
+&gt; [ref8] https://elixir.bootlin.com/linux/v6.12.57/source/fs/exec.c#L1716
+
+&gt; [ref9] https://www.nasm.us/doc/nasmdoci.html
+
+&gt; [ref10] https://research.h4x.cz/html/2025/2025-10-24--touching_small_elfs-p3-broken_time-machine.html#bug_4_chefs_kiss
+
+&gt; [ref11] https://tmpout.sh/3/22.html
+
+&gt; [ref12] https://www.man7.org/linux/man-pages/man7/vdso.7.html
+
+&gt; [ref13] https://www.kernel.org/doc/Documentation/userspace-api/ELF.rst
+
+&gt; [ref14] https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/arch/x86/include/asm/elf.h?h=v5.8&id=122306117afe4ba202b5e57c61dfbeffc5c41387
+
+&gt; [ref15] https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/elf.h?h=v5.8#n282
+
+&gt; [ref16] https://elixir.bootlin.com/linux/v6.12.57/source/include/uapi/linux/elf.h#L39
+
+&gt; [ref17] https://elixir.bootlin.com/linux/v6.12.57/source/include/uapi/linux/elf.h#L247
+
+&gt; [ref18] https://elixir.bootlin.com/linux/v6.12.57/source/fs/binfmt_elf.c#L1008
+
+&gt; [ref19] https://elixir.bootlin.com/linux/v6.12.57/source/kernel/sysctl.c#L1904
+
+&gt; [ref20] https://elixir.bootlin.com/linux/v6.12.57/source/mm/memory.c#L163
+
+&gt; [ref21] https://www.man7.org/linux/man-pages/man2/personality.2.html
+
+&gt; [ref22] https://elixir.bootlin.com/linux/v6.12.57/source/fs/exec.c#L1959
+
+&gt; [ref23] https://www.man7.org/linux/man-pages/man3/getauxval.3.html
+
+&gt; [ref24] https://elixir.bootlin.com/linux/v6.12.57/source/fs/binfmt_elf.c#L261
+
+&gt; [ref25] https://elixir.bootlin.com/linux/v6.12.57/source/fs/exec.c#L295
+
+&gt; [ref26] https://elixir.bootlin.com/linux/v6.12.57/source/fs/binfmt_elf.c#L1015
+
+&gt; [ref27] https://elixir.bootlin.com/linux/v6.12.57/source/arch/x86/include/asm/page_64_types.h#L80
+
+&gt; [ref28] https://elixir.bootlin.com/linux/v6.12.57/source/arch/x86/include/asm/page_64_types.h#L81
+
+&gt; [ref29] https://elixir.bootlin.com/linux/v6.12.57/source/fs/exec.c#L284
+
+&gt; [ref30] https://elixir.bootlin.com/linux/v6.12.57/source/arch/x86/include/asm/page_64_types.h#L56
+
+&gt; [ref31] http://ref.x86asm.net/geek64.html
+
+&gt; [ref32] https://dl.packetstormsecurity.net/papers/shellcode/alpha.pdf
+
+&gt; [ref33] https://git.kernel.org/pub/scm/utils/util-linux/util-linux.git/tree/sys-utils/setarch.c
+
+--[ <a href="2.html">PREV</a> | <a href="index.html">HOME</a> | <a href="3.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

@@ -1,0 +1,464 @@
+<html>
+<head>
+<title>phork: Packing SHELF Back Into One ELF</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+  <center>
+    <div class="txtdiv">
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                   █   │
+phork: Packing SHELF Back Into One ELF                           │                   █   │
+~ TMZ                                                            └───────────────────█ ──┘
+
+
+phork
+ │
+ ├── phork.asm
+ ├── utils.inc
+ ├── Makefile
+ │
+ ├── utils
+ │   │
+ │   ├── mkpack.asm
+ │   ├── spack_tool.asm
+ │   └── tools.inc
+ │
+ ├── test
+ │   │
+ │   ├── test.c
+ │   ├── test_argv_tls.c
+ │   ├── payload_asm.asm
+ │   └── static-pie.ld
+ │
+ └── loader
+     │
+     ├── reloc.inc
+     ├── stack.inc
+     ├── rwdata.inc
+     └── rodata.inc
+
+ Download <a href="static/15/phork.tgz">phork.tgz</a>
+
+<y>-= The Half-Loader Series: 3/3</y>
+
+This article is the third and final part of a three part series for tmp.0ut volume 5:
+
+1. <a href="13.html">halfexec</a>
+   A broad userspace ELF loader and the baseline runtime machinery.
+2. <a href="14.html">halfshelf</a>
+   A one <t>PT_LOAD</t> structure and a detached headless representation.
+3. <t>phork</t> (you are here)
+   A normal stub ELF carrying that metadata and stripped representation. Arguably
+   the most interesting article of the bunch.
+
+<y>-= Introduction</y>
+
+<t>phork</t> is my attempt at a (overcomplicated?) SHELF packer. It takes a SHELF
+payload, removes its ELF header and Program Header Table from the stored body,
+packs the missing facts beside it, then glues the whole thing to a small FASM loader.
+
+The output is still one normal executable. Linux starts the loader at the front.
+The loader opens its own file, fishes the payload out of the tail, rebuilds the
+runtime image and jumps into it.
+
+In short: it's a self extracting/self loading executable packer. It packs a
+binary, and the stub unpacks and runs it in-memory at execution time with no
+temp files.
+
+<y>-= The Payload</y>
+
+The packer is strict, so a payload must be:
+
+- x64 and little-endian
+- <t>ET_DYN</t>
+- statically linked with no <t>PT_INTERP</t>
+- exactly one <t>PT_LOAD</t>
+- <t>PT_LOAD.p_offset == 0</t>
+- <t>PT_LOAD.p_vaddr == 0</t>
+- optionally described by <t>PT_DYNAMIC</t>
+- optionally described by <t>PT_TLS</t>
+
+The zero offset and zero virtual address rules make the chosen mapping base the
+load bias. Every payload virtual address becomes a simple addition and there is no
+segment placement puzzle hiding in the loader.
+
+One segment also means one final protection mask. This is not the prettiest
+<t>W^X</t> story because merged code and data can require broad permissions. It is a
+trade made for a loader that stays small enough to understand without incense.
+
+<y>-= Pack Time, Where The Head Goes</y>
+
+The builder parses the source ELF and calculates:
+
+    header_span = e_phoff + e_phnum * e_phentsize
+
+That span covers the ELF header area through the final Program Header entry.
+The stored payload starts at <t>header_span</t> and ends at the original
+<t>PT_LOAD.p_filesz</t>.
+
+Nothing after the Program Header Table is shifted inside the logical image.
+Those bytes are only sliced out for storage. At runtime they go back to:
+
+    mapped_base + header_span
+
+This is why addresses inside the payload do not need a second adjustment.
+Their image offsets remain exactly where the linker placed them.
+
+The bytes that were removed are replaced by a compact record named
+<t>SHELFBN1</t>. It stores the fields required to recreate the image and a raw
+copy of the original Program Header Table.
+
+<y>-= Two Formats, Two Jobs</y>
+
+The final file is:
+
+    [stub ELF][SHELFBN1 metadata][stripped payload][SPACK01! footer]
+
+The two format layers are:
+
+- <t>SPACK01!</t> says where the embedded objects are in this file
+- <t>SHELFBN1</t> says how the payload must look in memory
+
+The outer footer knows storage offsets while the inner record knows ELF semantics.
+
+<y>-= The SPACK Footer</y>
+
+The last 48 bytes are always plain and fixed size:
+
+    offset  size  field
+    0x00      8   "SPACK01!"
+    0x08      8   meta_off
+    0x10      8   meta_len
+    0x18      8   payload_off
+    0x20      8   payload_len
+    0x28      8   flags
+
+All integers are little-endian unsigned 64 bit values. Starting at EOF makes
+discovery cheap. The loader only needs the file size and one <t>pread64</t> to
+find everything else.
+
+Current flags are:
+
+- <t>0x01</t> XOR the metadata with <t>0xA5</t>
+- <t>0x02</t> XOR the payload with <t>0xA5</t>
+- <t>0x04</t> RLE encode the payload
+
+The stub's runtime side understands all three: it will de-XOR either blob and
+run the RLE decoder before touching anything else. <t>mkpack</t> can set the
+first two on request, with <t>--xor-meta</t> and <t>--xor-payload</t>, applied
+in any order after the three required paths. The XOR itself buys nothing
+against a motivated individual, it is a fixed single byte key, but it does
+exercise the exact same flag bit and decode path a real transform would use.
+
+RLE stays decode only for now. Writing a correct encoder against the token
+format described below felt like its own small project, so it is a candidate
+for a later revision.
+
+<y>-= Inside SHELFBN1</y>
+
+The record starts with <t>SHELFBN1</t>, then 17 little-endian 64 bit
+fields, then the original Program Header bytes:
+
+    entry               original e_entry
+    phoff               original e_phoff
+    phnum               number of Program Headers
+    phentsize           size of one Program Header
+    header_span         byte count removed from the front
+    load_offset         required to be zero
+    load_vaddr          required to be zero
+    load_filesz         file size of PT_LOAD
+    load_memsz          full in-memory size of PT_LOAD
+    load_flags_num      translated mmap protection bits
+    dynamic_vaddr       PT_DYNAMIC virtual address, or zero
+    dynamic_memsz       PT_DYNAMIC size, or zero
+    tls_vaddr           TLS initializer virtual address, or zero
+    tls_filesz          initialized TLS byte count
+    tls_memsz           complete TLS block size
+    tls_align           required TLS alignment
+    phdr_blob_size      size of the Program Header copy
+    phdr_blob           original Program Header bytes
+
+The loader requires <t>phdr_blob_size == phnum * phentsize</t>. It also checks
+that the metadata has enough bytes and that <t>load_filesz</t> is not smaller
+than <t>header_span</t>.
+
+The stripped payload size is computed as <t>load_filesz - header_span</t>, unsigned.
+Skip the check and a crafted <t>SHELFBN1</t> record with <t>header_span &gt; load_filesz</t>
+underflows that subtraction into a number near <t>2^64</t>, which then gets handed
+straight to the RLE decoder as its expected output size, defeating the
+decoder's own bounds checking in the process. This loader validates its own
+metadata for exactly that reason, an attacker controls the sidecar just as
+much as the payload, and the two are trusted only after they reach consensus.
+
+<y>-= Bootstrapping From The Tail</y>
+
+When Linux executes the packed file, it only cares about the stub ELF at the
+front. Appended data is outside the stub load image, but still part of the file.
+
+The stub begins on the original kernel stack and saves <t>argc</t>, <t>argv</t>,
+<t>envp</t> and the executable path. It then opens <t>/proc/self/exe</t>. This is
+better than trusting <t>argv[0]</t>, which can be relative, renamed or simply a
+lie supplied by the caller.
+
+The runtime path is:
+
+1. read the 48 byte footer from EOF
+2. validate magic, flags, lengths and non-overlap
+3. load and optionally de-XOR <t>SHELFBN1</t>
+4. parse its fixed fields and copy the saved Program Headers
+5. load the stored payload
+6. de-XOR it before RLE decoding when both flags are active
+7. require the decoded size to equal <t>load_filesz - header_span</t>
+8. reserve the image, rebuild its head and copy its body
+9. apply relocations, create TLS and rebuild the process stack
+10. switch <t>rsp</t> and jmp to <t>base + entry</t>
+
+The packed file never becomes the payload through a second kernel execution.
+The stub performs the missing loader work inside the current process.
+
+<y>-= RLE Without Drama</y>
+
+The RLE stream has 1 byte control tokens and bit 7 chooses the token type.
+Thelower seven bits store a count minus one, giving lengths from 1 through
+128.
+
+- bit 7 clear means copy the next count bytes literally
+- bit 7 set means repeat the next byte count times
+
+The decoder receives the exact expected output size from <t>SHELFBN1</t>. It
+rejects a stream that ends early, reads past its input or expands past the
+expected payload length.
+
+Worked by hand, encoding the 12 bytes <t>"AAAAAAAABCDE"</t> (eight <t>A</t>s, then four
+literal bytes) looks like this:
+
+    input:   41 41 41 41 41 41 41 41 42 43 44 45    (12 bytes)
+    tokens:  87 41                                  (run: 0x80|(8-1), value 'A')
+             03 42 43 44 45                         (literal: 0x00|(4-1), then "BCDE")
+    output:  7 bytes on disk for 12 bytes in memory
+
+<t>0x87</t> has bit 7 set, so it is a run token: <t>0x87 &amp; 0x7f = 7</t>, plus one, is a
+count of 8, followed by the single repeated byte. <t>0x03</t> has bit 7 clear, so
+it is a literal token: count 4, followed by the 4 literal bytes themselves.
+
+It will not beat a real compressor. It will eat runs of zeroes nicely and the
+decoder fits the project.
+
+<y>-= Rebuilding The Image</y>
+
+The loader rounds <t>load_memsz</t> up to a page boundary and creates one anonymous
+read write mapping. Anonymous pages start zeroed, so the region after <t>load_filesz</t>
+naturally becomes the BSS tail.
+
+At the mapping base it writes a synthetic <t>Elf64_Ehdr</t>. The stable identity
+fields are filled locally, including ELF64, little-endian, x64 and <t>ET_DYN</t>.
+Values such as entry point, Program Header offset, count and entry size come from
+<t>SHELFBN1</t>.
+
+The saved Program Header bytes are copied to <t>base + phoff</t> and the decoded
+payload follows at <t>base + header_span</t>.
+
+The resulting image is logically equivalent to the input load segment:
+
+    base + 0                 synthetic ELF header
+    base + phoff             restored Program Header Table
+    base + header_span       original bytes after the table
+    base + load_filesz       start of zero filled tail
+    base + load_memsz        logical end of the image
+
+After population, <t>mprotect</t> applies the permissions captured from the
+original <t>PT_LOAD</t>. The loader then sets <t>AT_PHDR</t> to the restored table
+inside this mapping.
+
+<y>-= Relocations Before Entry</y>
+
+Position independent does not mean every pointer arrives ready as static PIE
+images usually contain relative relocations that must use the chosen load bias.
+
+If <t>PT_DYNAMIC</t> exists, the loader walks its <t>Elf64_Dyn</t> entries and collects
+<t>DT_RELA</t>, <t>DT_RELASZ</t>, <t>DT_RELAENT</t>, <t>DT_JMPREL</t>, <t>DT_PLTRELSZ</t> and <t>DT_PLTREL</t>.
+
+The supported relocation set is:
+
+- <t>R_X86_64_RELATIVE</t> writes <t>base + addend</t> to <t>base + offset</t>
+- <t>R_X86_64_IRELATIVE</t> calls the resolver at <t>base + addend</t> and writes its return
+value to <t>base + offset</t>
+
+Plain relative relocations run first. Indirect resolvers run in a second pass,
+after the pointers they may depend on are already fixed. The same two passes
+cover the main RELA table and JMPREL.
+
+Anything outside that small world is rejected. Supporting symbols, shared
+objects and a real interpreter would turn this into a different beast. I have
+enough hobbies already (mid life crisis?).
+
+<y>-= TLS, The Part That Bites</y>
+
+A static PIE may carry <t>PT_TLS</t> even without <t>PT_INTERP</t>. Jumping directly to its
+entry point means no dynamic linker will prepare thread local storage so the
+stub must do it.
+
+<t>phork</t> normalizes the requested alignment to at least 16 bytes, then maps
+space for three objects:
+
+    [TLS block][TCB][small DTV]
+
+It copies <t>tls_filesz</t> initializer bytes from <t>base + tls_vaddr</t>, zeroes
+the remainder through <t>tls_memsz</t>, places an aligned Thread Control Block
+after the TLS area and seeds a tiny Dynamic Thread Vector for one module.
+
+Finally <t>arch_prctl(ARCH_SET_FS)</t> points the x64 FS base at that TCB. Now
+the payload can execute the usual FS relative TLS accesses without finding
+an empty void where its thread pointer should be.
+
+<y>-= A Fresh Kernel Stack</y>
+
+The payload should see a process entry stack, not the loader's half used work
+area. The stub allocates a new stack mapping and rebuilds this layout:
+
+    argc
+    argv pointers
+    NULL
+    envp pointers
+    NULL
+    auxiliary vector
+
+Argument and environment strings are copied into target storage. The 16
+bytes behind <t>AT_RANDOM</t> are copied too, along with strings referenced by
+<t>AT_PLATFORM</t> and <t>AT_BASE_PLATFORM</t>.
+
+Most auxv entries survive unchanged. Image values are patched:
+
+- <t>AT_PHDR</t> points to <t>base + phoff</t>
+- <t>AT_PHENT</t> and <t>AT_PHNUM</t> match the reconstructed table
+- <t>AT_ENTRY</t> becomes <t>base + entry</t>
+- <t>AT_BASE</t> is zero because there is no interpreter
+- <t>AT_EXECFN</t> points to the copied executable path
+
+Once the tables and strings are placed, the stack pointer is aligned for the
+x64 entry ABI. The loader closes its self file descriptor, installs the new
+<t>rsp</t> and jumps straight into the mapped entry point.
+
+<y>-= Why Not Embed The Full ELF</y>
+
+That would work, of course. It would also dodge the most interesting thing to me.
+
+Embedding a complete ELF preserves a parser friendly wrapper that the runtime
+already knows how to recreate. Stripping the prefix makes the storage format
+explicit:
+
+- executable bytes stay executable bytes
+- ELF facts become <t>SHELFBN1</t>
+- packed file locations become <t>SPACK01!</t>
+
+This is not a universal compression win. The stub and metadata have their own
+cost but the win is architectural. Each layer carries only the facts its consumer
+needs, and the final output remains one directly executable file.
+
+<y>-= Tooling, Because One Builder Was Too Peaceful</y>
+
+The archive contains code for building the pack, and separate tools for inspection,
+validation and extraction.
+
+For packing: <t>utils/mkpack.asm</t>
+<pre><code class="language-txt">
+    mkpack &lt;stub-elf&gt; &lt;input-shelf-elf&gt; &lt;output-packed&gt; [--xor-meta] [--xor-payload]
+</code></pre>
+The two flags are independent and order does not matter. Leaving both off is
+still the default, and produces the exact same <t>flags = 0</t> pack as before.
+
+For looking inside, validating or extracting a pack: <t>utils/spack_tool.asm</t>
+
+They are also written in FASM.
+
+A quick look at both flags landing on the same pack, using the argv/TLS sample:
+<pre><code class="language-txt">
+$ mkpack ./phork input_tls packed --xor-meta --xor-payload
+$ spack_tool inspect packed
+spack magic: SPACK01!
+file_size: 727171
+footer_off: 727123
+meta_off: 7907
+meta_len: 312
+payload_off: 8219
+payload_len: 718904
+flags: 3
+$ ./packed alpha beta; echo $?
+argv/tls ok 20
+7
+</code></pre>
+<t>flags = 3</t> is <t>0x01 | 0x02</t>, both bits landed, and the packed file still runs
+exactly like the unflagged one. The de-XOR happens before anything else
+touches the embedded bytes, so correctness never depended on it.
+
+<y>-= Samples And Running It</y>
+
+The tarball also includes some sample binaries that are tailored to work with
+the packer.
+<pre><code class="language-txt">
+$ PHORK_DEBUG=1 make run
+...
+spack: self loading SHELF packer stub
+phork: debug tracing enabled
+phork: reserving SHELF load window
+phork: load bias = 0x000075d18f306000
+phork: mapping SHELF PT_LOAD at 0x000075d18f306000
+phork: synthetic stack base = 0x000075d18ea00000
+phork: applying direct entry relocations
+phork: preparing PT_TLS runtime state
+phork: rebuilding argc/argv/envp/auxv
+phork: jumping to SHELF entry = 0x000075d18f30ccc0
+hello
+...
+</code></pre>
+<y>-= Final Thoughts</y>
+
+The original SHELF work asks a beautiful question. If static PIE already knows
+how to live anywhere, how much ELF can we remove before it stops being a "real"
+program.
+
+Despite having conscious design limits, it asks:
+
+<t>"Can the stripped thing carry its own loader and still arrive as one
+normal executable?"</t>
+                        --- Phork
+
+Turns out it you can, little phorky.
+
+<img src="static/15/forky.png" alt="No DMCA plz Mickey" height="200px" width="200px"></a>
+<small>(no DMCA plz Mickey)</small>
+
+<y>-= References</y>
+
+[1] <a href="https://tmpout.sh/1/10/">Introducing SHELF Loading, tmp.0ut volume 1</a>
+[2] <a href="https://ulexec.github.io/post/2021-04-08-shelfloading/">SHELF Loading by @ulexec</a>
+[3] <a href="https://grugq.github.io/docs/ul_exec.txt">The Design and Implementation of Userland Exec</a>
+[4] <a href="https://sourceware.org/binutils/docs/ld/PHDRS.html">GNU ld PHDRS documentation</a>
+[5] <a href="https://tmpout.sh/5/13/">halfexec: Assembly x64 ELF Linux Loader, tmp.0ut volume 5</a>
+[6] <a href="https://tmpout.sh/1/14/">halfshelf: Loading ELF After The Header Is Gone, tmp.0ut volume 5</a>
+
+--[ <a href="14.html">PREV</a> | <a href="index.html">HOME</a> | <a href="16.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+
+</html>

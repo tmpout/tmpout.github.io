@@ -1,0 +1,415 @@
+<html>
+<head>
+<title>Control Flow That Isn't There: State Without State via Flags, Timing, and Overlapping Execution ~ febnug</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+Control Flow That Isn't There:                         │                 █▄▄▄█ │
+  State Without State via Flags, Timing,               │                 ▄▄▄▄▄ │
+  and Overlapping Execution                            │                   █   │
+                                                       │                   █   │
+~ febnug                                               └───────────────────█ ──┘
+
+
+[Abstract]
+----------
+
+Most shellcode keeps state somewhere. Registers, stack, memory, there is always 
+something you can point at.
+
+This one doesn’t.
+
+State is carried in flags. Control flow is selected at runtime. A single bit 
+derived from timing decides how execution enters a shared region of bytes.
+
+The binary looks fixed. It is.
+
+Same bytes, different executions. Static analysis recovers a path that may 
+never actually run.
+
+
+[1. Introduction]
+-----------------
+
+Reverse engineering usually starts with a simple assumption: the binary 
+describes one program.
+
+Instructions are static. Control flow is fixed. State is visible.
+
+That assumption doesn’t always hold.
+
+If control flow depends on flags that are never stored, and execution can begin 
+at different offsets within the same byte sequence, the structure you recover 
+is only a guess.
+
+What you see is not necessarily what runs.
+
+[2. Overview]
+-------------
+
+The whole construction is built from three small pieces:
+
+- one bit stored in a flag
+- one bit derived from timing
+- one control transfer selected at runtime
+
+Pseudo-flow:
+<pre><code class="language-x86asm">
+t = rdtsc()
+bit = (t.low ^ t.high) & 1
+
+if bit:
+    CF = 1
+else:
+    CF = 0
+
+if CF:
+    jump overlap_shift
+else:
+    jump overlap
+</code></pre>
+
+[3. Flag-Based State]
+---------------------
+
+The Carry Flag (CF) is used as a one-bit state container. No memory writes or 
+explicit state tracking are required.
+
+Pseudo-asm:
+<pre><code class="language-x86asm">
+if entropy_bit:
+    stc
+else:
+    clc
+
+jc entry_B
+</code></pre>
+The state is implicit. It is not stored or restored, but persists as a side 
+effect of execution and directly influences control flow. No variable holds 
+this state. It exists only as a flag.
+
+
+[4. Timing as Entropy]
+----------------------
+
+A single bit of entropy is derived from rdtsc:
+<pre><code class="language-x86asm">
+    rdtsc
+    xor eax, edx
+    test al, 1
+</code></pre>
+This value varies across executions and is sensitive to timing conditions, 
+including debugging and instrumentation.
+
+The entropy is minimal (one bit), but sufficient to influence control flow.
+
+
+[5. Runtime Control Selection]
+------------------------------
+
+This construction does not rely on instruction rewriting. Instead, control flow 
+is determined by how execution enters a shared region of bytes.
+
+A timing-derived bit is mapped into CF and used to select between two entry 
+points:
+<pre><code class="language-x86asm">
+    jc entry_B
+
+entry_A:
+    jmp overlap
+
+entry_B:
+    jmp overlap_shift
+</code></pre>
+Both entry points lead into the same contiguous byte region, but at different 
+offsets.
+
+Because x86 decoding is alignment-sensitive, starting execution at different 
+offsets produces different instruction streams, even though the underlying 
+bytes are identical. The instructions do not change. The interpretation does.
+
+
+[6. Overlapping Execution]
+--------------------------
+
+The overlap region consists of adjacent jump encodings:
+<pre><code class="language-x86asm">
+    overlap:        db 0xeb, &lt;rel real&gt;
+    overlap_shift:  db 0xeb, &lt;rel alt&gt;
+</code></pre>
+These bytes are fixed at compile time.
+
+However, depending on the entry point, execution begins at a different offset 
+within this region, resulting in a different decoded instruction sequence, and 
+therefore a different control flow path.
+
+This is not a case of multiple code paths being stored separately. It is a 
+single byte sequence interpreted in multiple ways.
+
+
+[7. Implementation]
+-------------------
+
+Execution begins by deriving a single bit from rdtsc and mapping it into the 
+Carry Flag (CF). This bit determines which control path is taken.
+<pre><code class="language-x86asm">
+    rdtsc
+    xor eax, edx
+    test al, 1
+</code></pre>
+If the bit is set, CF is set via stc; otherwise it is cleared. The resulting 
+flag state is then used to select between two entry points:
+<pre><code class="language-x86asm">
+    jc entry_B
+
+entry_A:
+    jmp overlap
+
+entry_B:
+    jmp overlap_shift
+</code></pre>
+Both entry points lead into the same contiguous byte region, but at different 
+offsets.
+
+The overlap region is defined as two adjacent jump encodings:
+<pre><code class="language-x86asm">
+    overlap:        db 0xeb, &lt;rel real&gt;
+    overlap_shift:  db 0xeb, &lt;rel alt&gt;
+</code></pre>
+These bytes are not modified at runtime. However, because execution may begin 
+at different offsets, they are decoded differently, leading to distinct control 
+flow paths.
+
+The divergence is therefore not encoded in separate instructions, but emerges 
+from how a shared byte sequence is entered.
+
+Payload data is embedded inline and accessed using short call/pop sequences:
+<pre><code class="language-x86asm">
+    jmp short data
+ret:
+    pop rsi
+</code></pre>
+This avoids absolute addressing and keeps the code position-independent.
+
+No writable memory is required, and no instruction rewriting is performed. 
+The code remains static throughout execution. What varies is only the entry 
+point into the overlapping region.  
+
+
+[8. Shellcode Realization]
+--------------------------
+
+The construction can be expressed as position-independent shellcode.
+
+The implementation avoids absolute addressing and relies only on relative 
+control transfers. Inline data is accessed via short call/pop sequences.
+
+To support injection scenarios, the code can be written without null bytes by 
+using byte-sized immediates and short-form control transfers.
+
+The resulting shellcode preserves the same properties:
+
+    - no explicit state storage
+    - runtime-dependent control flow
+    - overlapping execution regions
+
+This shows that the technique is not tied to ELF binaries, but applies
+directly to injected code.
+
+
+[9. Implications]
+-----------------
+
+Static analysis assumes a fixed mapping from bytes to instructions.
+
+This assumption breaks when execution depends on entry offset and implicit 
+state such as flags.
+
+A disassembler will typically recover one valid control flow graph. That graph 
+may not correspond to any runtime execution.
+
+The discrepancy is not due to obfuscation layers or encryption, but to 
+fundamental properties of the execution model.
+
+
+[10. Behavior]
+--------------
+
+Running the program multiple times yields different outputs:
+<pre><code class="language-txt">
+hello
+holla
+hello
+hello
+</code></pre>
+The exact sequence depends on timing and flag state.
+
+Under debugging, timing shifts can bias execution toward a specific path, 
+making behavior environment-dependent. 
+
+
+[10. Conclusion]
+----------------
+
+A minimal construction has been presented where:
+
+- state is carried in flags
+- control flow is selected at runtime
+- execution depends on entry into overlapping byte regions
+
+No explicit state storage is required. No code mutation is necessary.
+
+The code does not change. Only the path through it does.
+
+
+[11. Proof-of-Concept]
+----------------------
+
+Below is a minimal implementation of the idea. It is position-independent and 
+works both as a small ELF and as raw shellcode.
+
+Execution starts with rdtsc. One bit is extracted and pushed into CF using 
+stc/clc. Nothing is stored anywhere. The flag is the only state.
+<pre><code class="language-x86asm">
+    jc entry_B
+</code></pre>
+From there, execution is forced into one of two entry points. Both land inside 
+the same byte region, just at different offsets.
+
+The overlap itself is just two adjacent jumps:
+<pre><code class="language-x86asm">
+    overlap:        jmp real
+    overlap_shift:  jmp alt
+</code></pre>
+No bytes are changed at runtime. The difference comes entirely from where 
+execution begins. Same bytes, different decode.
+
+The payload is inline and recovered with a short call/pop. No absolute 
+references, no relocations.
+
+At runtime, the program prints either "hello\n" or "holla\n". The choice is not 
+obvious from the static layout. You get one path. The CPU might take another.
+<pre><code class="language-x86asm">
+global _start
+section .text
+
+_start:
+    rdtsc
+    xor eax, edx
+
+    test al, 1
+    jz noflip
+    stc
+    jmp decide
+
+noflip:
+    clc
+
+decide:
+    jc entry_B
+
+entry_A:
+    jmp overlap
+
+entry_B:
+    jmp overlap_shift
+
+; --- OVERLAP ---
+
+overlap:
+    db 0xeb, real - overlap - 2
+
+overlap_shift:
+    db 0xeb, alt - overlap_shift - 2
+
+; --- PAYLOAD ---
+
+alt:
+    jmp short alt_data
+alt_pop:
+    pop rsi
+    jmp write
+alt_data:
+    call alt_pop
+    db 'h','o','l','l','a',0x0a
+
+real:
+    jmp short real_data
+real_pop:
+    pop rsi
+    jmp write
+real_data:
+    call real_pop
+    db 'h','e','l','l','o',0x0a
+
+write:
+    push 1
+    pop rdi            ; stdout
+
+    xor eax, eax
+    mov al, 1
+
+    xor edx, edx
+    mov dl, 6
+
+    syscall
+
+    xor eax, eax
+    mov al, 60
+    xor edi, edi
+    syscall
+</code></pre>
+This version is null-byte free and fully position-independent,
+making it suitable as shellcode.
+<pre><code class="language-c">
+unsigned char shellcode[] =
+"\x0f\x31\x31\xd0\xa8\x01\x74\x03\xf9\xeb\x01\xf8\x72\x02"
+"\xeb\x02\xeb\x02\xeb\x12\xeb\x00\xeb\x03\x5e\xeb\x1b\xe8"
+"\xf8\xff\xff\xff\x68\x6f\x6c\x6c\x61\x0a\xeb\x03\x5e\xeb"
+"\x0b\xe8\xf8\xff\xff\xff\x68\x65\x6c\x6c\x6f\x0a\x6a\x01"
+"\x5f\x31\xc0\xb0\x01\x31\xd2\xb2\x06\x0f\x05\x31\xc0\xb0"
+"\x3c\x31\xff\x0f\x05";
+</code></pre>
+
+[12. References]
+----------------
+
+[1] Covert Computation: Hiding Code in Code
+    Computers & Security, 2014
+    https://www.sciencedirect.com/science/article/pii/S0167404814000030
+
+[2] Christopher Eagle
+    The IDA Pro Book: The Unofficial Guide to the World's Most
+    Popular Disassembler, 2nd Edition, 2011
+
+[3] Skape & Skywing
+    Understanding Windows Shellcode, Uninformed Journal, 2007
+
+[4] A Taxonomy of Self-Modifying Code for Obfuscation
+    Computers & Security, 2011
+    https://www.sciencedirect.com/science/article/pii/S0167404811001076
+    
+
+--[ <a href="6.html">PREV</a> | <a href="index.html">HOME</a> | <a href="8.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+

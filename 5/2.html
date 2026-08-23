@@ -1,0 +1,1622 @@
+<html>
+<head>
+<title>Interview: Doug McIlroy ~ tmp.0ut Staff</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Interview: Doug McIlroy                                │                   █   │
+~ tmp.0ut Staff                                        └───────────────────█ ──┘
+
+In October 2025, tmp.0ut Staff got the opportunity to talk with Doug McIlroy.
+
+Born in 1932, Doug is a computing pioneer who was on the ground floor for the 
+creation of Unix and C, and contributed to many of the core utilities and 
+languages that we use daily. 
+
+His design approach and methodology is based a foundation of meticulous study 
+of code and it's documentation. From the get go, Doug has been dedicated to 
+understanding the machine on a fundamental level. Across multiple generations
+of computing, Doug has been thinking about what the next step is to elevate the 
+domain as a whole, while doing more with less. Doug is attributed with the 
+quote "The real hero of programming is the one who writes negative code".
+
+tmp.0ut staff and others were invited to Dartmouth College to do a week-long
+series of lectures called "Binary Fun Week", focusing on everything from file 
+formats, malware, reverse engineering, exploit development, and Binary Golf.
+
+Our interview was conducted in the Dartmouth CS lab with several speakers 
+present, as well as some students, who also asked questions of Doug and are
+included in this interview.
+
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄▄▄▄▄ 
+█      [ So you wrote echo? ]
+█▀▀▀▀  
+█▄▄▄▄  
+▄▄▄▄▄    That was the first C program I ever wrote. 
+█   █  
+█▀▀▀█  
+█   █  [ o.0 wow ]
+▄▄▄▄▄  
+█   █  
+█▀▀█▀    And little did I know that it was going to become a well-known program.
+█   █  
+▄      
+█      [ echo was your program? ]
+█      
+█▄▄▄▄  
+▄   ▄    First C program. When C was just invented.
+█   █  
+▀▀▀▀█  
+▄▄▄▄█  [ What year was this? ]
+&lt;&lt;&lt;&lt;&lt;  
+&lt;&lt;&lt;&lt;&lt;  
+&lt;&lt;&lt;&lt;&lt;    About '72.
+&lt;&lt;&lt;&lt;&lt; 
+▄   ▄ 
+█   █  [ There's a long list of programs you wrote, diff, sort. You wrote sort? ]
+█   █ 
+█▄▄▄█ 
+▄▄  ▄   I didn't write the first one, but I put in most of the options for sort. 
+█▀▄ █   Although I'm opposed to lots of options in programs like ls, which is 
+█ ▀▄█   run through both upper and lower case flags.
+█  ▀█ 
+▄▄▄▄▄ 
+  █     sort was originally written by Ken Thompson. It had an amusing remark in  
+  █     the manual "wide options are available" but it didn't say what those 
+▄▄█▄▄   options were.
+▄   ▄ 
+█   █   
+▄▀▀▀▄   I asked Ken, "well, what are they?" and he said, "well, all you have to 
+█   █   do is go put them in the source." So, I did.
+
+                                   &gt;editor's note: $ ls -transubstantiationalist
+
+
+[ What was it like working with Ken Thompson and Dennis Ritchie? ]
+
+
+  They were great. Ken is certainly one of the greatest programming geniuses 
+  I've known. He's just incredible. I mean, not only did he do Unix, he did the 
+  first chess machine to become master rated. His architecture for the chess 
+  machine was then imitated by Deep Blue and put in silicon.
+
+
+[ IBM. It was Gary Kasparov who got beat by Deep Blue, right? ]
+
+
+  Yeah. At IBM. 
+
+
+[ So Ken Thompson wrote one of the first chess programs ]
+
+
+  Yep, and made a machine with which he had some grand adventures. He got 
+  invited to take the machine to Russia by Botvinnik, who was the world 
+  champion or a past world champion.
+
+
+[ Do you keep up with chess news? ]
+
+
+  No.
+
+
+└──────────────────────────────────────────────────────────────────────────────┐
+                                                                           ▄▄▄▄▄
+[ What was your education background before Bell Labs? ]                   █    
+                                                                           █▀▀▀▀
+                                                                           █▄▄▄▄
+  I was an undergraduate in engineering physics at Cornell. This was       ▄▄▄▄ 
+  back in the day, when Cornell thought it was going to set a new trend,   █   █
+  where undergraduate engineers had a five-year curriculum. That lasted    █   █
+  about a decade, I guess. Cornell realized that other colleges weren't    █▄▄▄█
+  going along with it. If you could go to MIT for four years, you'd get    ▄   ▄
+  a cheaper degree.                                                        █   █
+                                                                           █   █
+                                                                           █▄▄▄█
+[ And you did go to MIT as well, didn't you? ]                             ▄▄▄▄▄
+                                                                           █   ▀
+                                                                           █    
+  I did go on to MIT because they had the Whirlwind 2 computer, which      █▄▄▄█
+  was a gigantic machine.                                                  ▄▄▄▄▄
+                                                                           █   █
+                                                                           █▀▀▀█
+[ The Whirlwind 2? ]                                                       █   █
+                                                                           ▄▄▄▄▄
+                                                                             █  
+  Whirlwind 2[1]. It was built in 1952. It was built there in 1954. The      █  
+  machine occupied three stories of a building. The basement was rotating    █  
+  equipment to convert AC to DC. The first floor was electronic power      ▄▄▄▄▄
+  supplies. The second floor was the computer itself. You could walk         █  
+  inside the mainframe. There were 16 bits of the accumulator, each of       █  
+  which was an eight-foot-high relay rack.                                 ▄▄█▄▄
+                                                                           ▄▄▄▄▄
+                                                                           █   █
+[ Each bit was an eight-foot-high relay rack? ]                            █   █
+                                                                           █▄▄▄█
+                                                                           ▄▄  ▄
+  Yes. Then at the far end was one of its two great innovations, core      █▀▄ █
+  memory. That was just one relay rack. The memory itself was about this   █ ▀▄█
+  big. **holds hands up wide**                                             █  ▀█
+
+
+  It was absolutely gigantic. The one at Cornell, the CQC, had 24 words of 
+  memory. It was not stored programming. The little ones had a thousand 16 bit 
+  words, 2K. The register was eight feet tall. Each one of those bits in the 
+  accumulator. In the CPU. 
+
+[ So you said each register is eight feet tall? That's nuts man. ]
+
+
+  Yeah. Jay Forrester, who was the project manager, told me once that he thought 
+  his greatest invention was marginal testing.
+
+
+[ Marginal testing? ]
+
+
+  Do you know what that is?
+
+
+[ I don't. ]
+
+
+  So every morning before work began, they would take the machine down for an 
+  hour with preventative maintenance. And during that hour, they would run the 
+  voltages up and down. The idea was that if you were going to break something, 
+  you broke it during testing, rather than during the day.
+
+
+[ Okay, so almost like stress testing. ]
+
+  
+  Yes. I may be getting my machines mixed up. I saw the Bell Labs relay computer 
+  but I never used it.
+
+
+[ When you were studying at MIT, you did a math degree? ]
+
+
+  I did a math degree.
+
+
+[ It sounds like you did a pretty interesting dissertation, conical shells? ]
+
+
+  Really boring.
+
+
+[ It sounds interesting. Conical shells? Like, nautilus shells? ]
+
+
+   Yes. Just... You've got a sheet metal cone and you bend it, how does it bend?
+   That's... Very classical...
+
+
+[ I'm sure you're oversimplifying it. ]
+
+
+  So the notion was, it gets you a degree. Although, I was there because of 
+  the computer.
+
+
+  Really early on, maybe 1948 or 49, von Neumann and Goldstein wrote this 
+  paper[2] about how many digits you had to carry to do matrix inversion. 
+  Their estimates were very pessimistic. To do a 10x10, you probably needed 40
+  decimal digits. Everybody at the time was inverting 10x10s with 8 digits.
+
+
+  If von Neumann and Goldstein couldn't make a good estimate, what chance was 
+  there for me? So I didn't do it. It didn't work in numerical analysis.
+
+
+  It was in 1979 that Wilkinson in England invented backwards error analysis. 
+  Finally, people began to be able to really get good estimates on the accuracy 
+  of numerical computations. I was too early for that.
+
+
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄▄▄▄  
+█   █ [ How did you get to Bell Labs? ]
+█▀▀▀▄ 
+█▄▄▄▀ 
+▄▄▄▄▄   I had two summer jobs before 1953 and 1957, I guess, before joining the 
+█       labs in 58. When the recruiters showed up at MIT, I was well primed and 
+█▀▀▀▀   eager to join.
+█▄▄▄▄ 
+▄     
+█     [ What was the path that led you to working on Multics and Unix? ]
+█     
+█▄▄▄▄ 
+▄       Oh, the usual thing is if you arrive at Bell Labs for a PhD, you're left 
+█       to find out what you're going to do. At first, I played with integer 
+█       linear programming and proved an incorrect theorem. Gomory at IBM proved 
+█▄▄▄▄   the correct one, and called me one day to tell me about it.
+&lt;&lt;&lt;&lt;&lt; 
+&lt;&lt;&lt;&lt;&lt; 
+&lt;&lt;&lt;&lt;&lt;   Then I worked on macros. Macro-processing became very popular. In fact, 
+&lt;&lt;&lt;&lt;&lt;   macros became such a thing in Bell Labs that the folks making switching 
+▄       systems invented a programming language, which was just a set of macros. 
+█       They used this very heavily.
+█     
+█▄▄▄▄ 
+▄▄▄▄▄   I remember the director of that division once telling me, "we are the 
+█   █   greatest users of computing at Bell Labs. We use more time than anybody 
+█▀▀▀█   else. We depend on it much more." And that was because they're using a 
+█   █   macro-processor, which runs slow by about a factor of a hundred, rather 
+▄▄▄▄    than a regular compiler. He was just blissfully unaware that macros were 
+█   █   great for defining a language, but once they had it, they should have 
+█▀▀▀▄   built a compiler.
+█▄▄▄▀ 
+▄▄▄▄▄ 
+█       [ So between when you started in 1958 and when they created Unix... ]
+▀▀▀▀█ 
+▄▄▄▄█     Oh yeah, that was eleven years.
+
+
+[ What else were you working on? ]
+
+
+  Um...besides the macros, what else did I do? Lots of consulting. I worked 
+  with Dick Hamming, of the Hamming crew.
+
+
+[ Hamming? Did you keep your distance? ] 
+
+
+  Yes.
+
+
+  They wrote a couple of papers about macros in there, but what else, what 
+  else did I do? Oh, worked out. Multics, that's it. Yeah.
+
+
+[ Multics, okay. ]
+
+
+  Multics started in 1964, beginning with picking the hardware. At the same 
+  time, I had gotten myself onto the PL1 design committee. When Multics was 
+  choosing what language they were going to write in, there were several 
+  candidates around, and one... all of them, almost vaporware. PL1 was just 
+  getting its first compilers written. I was responsible for making sure that 
+  PL1 had enough facilities that it looked like a decent language to write in. 
+  I was responsible for bringing that in. 
+
+
+  Then I contracted with an outfit in California called Digitech, which had a 
+  terrific business of making Fortran compilers. They were really good. These 
+  Fortran compilers could even run on very small machines. Dynamically allocated 
+  internal tables. They could grow and move, so they'd get really the most out 
+  of every machine.
+
+
+  They went for this contract, thinking they'd get in on the ground floor of a 
+  new language. But they put a new employee on, didn't supervise him, and the 
+  people who knew how to use their compilers didn't pay much attention to it, 
+  and he screwed up terribly.
+
+
+  So there we were a year later with no compilers and Multics waiting for one. 
+  Bob Morris and I, when Bob Morris started it, decided we'd write a compiler 
+  in TMG. Do you know what TMG is?
+
+
+[ No. What is TMG? ]
+
+
+  It was a compiler writing language from Bob McClure at Texas Instruments. He 
+  had sent it to me. He wrote it for the CDC 1620, which was a 36-bit machine, 
+  and he hand transliterated it on the green coding sheets into machine language 
+  for the IBM 704, 7090 by then. 
+
+
+  It was an interesting debugging thing. I knew the program logic was right, but 
+  there were opcodes like CAL and CLA (clear and add and clear and add logical), 
+  and you could get the wrong one if you were hand translating. So debugging was 
+  all finding clerical errors. And I had brought that up. 
+
+
+  We wrote the first Multics compiler in a couple of months in TMG. That lasted 
+  Multics until about 1970, when finally GE made a really good compiler for us. 
+
+
+  So that's what I was doing in that interval. TMG, Multics, and we had this big 
+  GE 645 in our attic. Three of us would be beavering the way out. MIT was the 
+  prime instigator of Multics. They had one in Cambridge, and they let us use 
+  their Cambridge time sharing system.
+
+
+  We really, really stressed that time sharing system by writing the, by running 
+  a TMG written compiler, which had long compile times. They were optimized for 
+  short times. Their whole scheduling said, always prefer the short program.
+  A really long program actually ran in the meantime between failures, and 
+  that meant you ran the long program twice. We were really screwing up MIT's 
+  computation center.
+
+
+  The Multics project crept on and on, never got anywhere. Finally, higher 
+  management at Bell Labs said, "let's cut our losses". We were paying a 
+  million dollars a year rental or something like that on this machine. And it 
+  was supporting three people.
+
+
+  Oh, that's enough about Multics, I guess.
+
+
+[ Then Unix folllowed? ]
+
+
+  Ken Thompson in the background had been playing with these ideas for Little 
+  Machine. Thompson and Richie and Joe Ossanna lobbied hard to continue the work 
+  on operating systems. Our management, once burned, didn't like the idea. They 
+  thought it would be nice to have a PDP-10. Eventually Thompson finds this cast 
+  off PDP-7 and in three weeks builds the whole operating system.
+
+
+[ That's wild. Three weeks?? ]
+
+
+  The assembler and the operating system. His wife was away for vacation. 
+
+
+  He allocated himself one week to build an assembler, one week to build an 
+  operating system, and one week to build the file system.
+
+
+[ That's nuts. ]
+
+
+  They had been thinking about the file system. The design was ready to go. 
+  How he came up with the API for the operating system, I actually don't know. 
+  So clean. He threw out a lot of things. He had good ideas from Multics, like 
+  the hierarchical file system. Although he implemented it in an entirely 
+  different way. The shell, the separate shell that came from Multics, he had 
+  it up and running.
+
+
+[ What do you mean by "separate shell" that came from Multics? ] 
+
+  
+  The command language for operating systems up until that time had been built 
+  into the operating system. The user space shell was a new idea of Multics. 
+  Not quite a totally new idea. 
+
+
+  The Dartmouth time sharing system had something, their idea was to just put 
+  a shell in user space, but they didn't think of it as a substitutable program.
+  Everybody used the same shell, but it was in user space. Almost like the 
+  dynamic linker today. In Unix, several shells actually did get written. 
+  Although nowadays everybody uses the same one.
+
+
+[ What shell was it? Was it a named shell? ]
+
+
+  It was a progentior of the Bourne shell.
+
+
+[ How long was it until they started networking Unix machines together? ]
+
+
+  Well at the same time we had Sandy Fraser in the computer science department 
+  who was a real proselytizer and designer and builder of networks. 
+
+
+  Unfortunately, although he thought networking and digital data was the future,
+  the big guns at AT&T said, "Digital data is 4% of our business, why should we 
+  worry about that?" Sandy didn't get near the support that he deserved.
+
+
+  But anyway, he made these networks that we had used in the lab among our 
+  machines probably starting in 1972 or 73. We ran through about three 
+  generations of those. Eventually got onto CSNet, Computer Science Net, a 
+  version of ARPANET was not available to the industry.
+
+
+[ What was CSNet? ]
+
+
+  CSNet was kind of an interim between ARPANET and the internet.
+
+
+[ Was it between colleges? ]
+
+
+  Yes. CS departments.
+
+
+[ What was the communication medium? ]
+
+
+  It was both... It had dial-up and... I even forgot the name of the protocol. 
+  But it was almost called dial-up. It had a little bit. And a bridge to the 
+  ARPANET. A bridge to ARPANET. 
+
+
+[ What was the speed? ]
+
+
+  Oh, I remember when we went to 1200 (baud). That was blindingly fast.
+
+
+[ What time period was that? Was that still early 70s? ]
+
+
+  That would have been... I'm trying to think... When the cu utility was put 
+  into Unix. cu is call up another Unix system.
+
+
+[ I'm not familiar with that. I've never used that. ]
+
+
+  Do you know my... So called Unix reader[3]? You'll find it on my website.
+
+
+  Anyway, it has a very useful table of contents of all of research generations 
+  of Unix. Which I refer to when I need to know one of these things. I can tell 
+  you from that table of contents just when networking began.
+
+
+└──────────────────────────────────────────────────────────────────────────────┐
+                                                                           ▄▄▄▄▄
+[ student: I'm still thinking about that whole Switching team at Bell      █   █
+  Labs using macros as a programming language instead of just writing      █▀▀▀▀
+  their own programming language and compiler. What was the reason for     █    
+  this? ]                                                                  ▄▄▄▄▄
+                                                                           █   █
+                                                                           █▀▀█▀
+  I can't think of anything special.                                       █   █
+                                                                           ▄▄▄▄▄
+                                                                           █   █
+  How can they write big systems that consist only of machine language?    █   █
+                                                                           █▄▄▄█
+                                                                           ▄▄▄▄▄
+  How can people write big systems in general?                             █    
+                                                                           █  ▀█
+                                                                           █▄▄▄█
+  We do, but as you say, they're often debugged into existence rather      ▄▄▄▄▄
+  than cleanly designed into existence.                                    █   █
+                                                                           █▀▀█▀
+                                                                           █   █
+[ When you were working on macros, presumably, you were spending a lot     ▄▄▄▄▄
+  of time debugging macros. Now, even today, C preprocessor macros can     █   █
+  be super hard to debug. So, like, did you have tooling here that we      █▀▀▀█
+  don't have anymore? ]                                                    █   █
+                                                                           ▄▄▄▄▄
+                                                                           █ █ █
+  I don't remember debugging difficulties.                                 █ █ █
+                                                                           █   █
+                                                                           ▄▄▄▄▄
+[ Ah! You don't remember, you must have been a good debugger. ]            █ █ █
+                                                                           █ █ █
+                                                                           █   █
+  Well, one time I wrote a Lisp compiler, in macros.                       ▄▄▄▄▄
+                                                                             █  
+                                                                             █  
+[ Oh, my God. ]                                                            ▄▄█▄▄
+                                                                           ▄▄  ▄
+                                                                           █▀▄ █
+  It was a pretty spectacular construction. I remember sitting in bed      █ ▀▄█
+  with paper spread all around, all over the bed one night. I got the      █  ▀█
+  thing was working within a couple more days.                             ▄▄▄▄▄
+                                                                           █    
+                                                                           █  ▀█
+  It was about, as I recall, it was something that, typically, code        █▄▄▄█
+  would issue at call depth, a macro call depth of 50 to 70. It was an 
+  optimizing compiler. That came with time. Bob Morris looked at some of my 
+  object code, and he made the astute comment, notice that transfer on non-zero 
+  sets the accumulator to zero.
+
+
+[ What do you mean? ]
+
+
+  The TNZ instruction. It actually doesn't change the accumulator. But, if you 
+  flow through that instruction, you know that the accumulator is zero. 
+  Otherwise it wouldn't jump. It's conditioned.
+
+
+  And, Lisp has lots of tests on zero. I could optimize the test for null away. 
+  That kind of little local optimizations.
+
+
+[ I was actually going to ask you about that. We are interested in weird file 
+  optimization and program optimization in general. You are talking like 2K of
+  words, what was it like working within those early constraints? Especially for 
+  things like files transfer and storage. ]
+
+
+  Well, you know, occasionally you'd look around for fields, fields buried in 
+  instructions that weren't used, you'd find a little extra memory that way. 
+  But, by and large, since every program is so constrained, that you wouldn't 
+  bother conceiving of something that needed a lot of space.
+
+
+  The first IBM PL1 compilers had for the 360 came within several levels with 
+  completely different hardware implementations. They designed their compiler, 
+  so that would work on the smallest machine. This is a case where I think your 
+  question is really pertinent. They designed their compiler in such small 
+  pieces, that on the smallest machine, it could run in something like 60
+  overloads, one after another. On the bigger machines, everything would be in
+  memory at once. A fascinating design, and very cool.
+
+
+[ Um, so, you were the inventor of the Unix pipes? ]
+
+
+  Yes.
+
+
+[ That's pretty nuts, because we use pipes, like, on a daily basis. ]
+
+
+  Everybody does. It's one of the most wonderful inventions in that regard.
+
+
+[ What was life like before pipes? ]
+
+
+  Well, you'd write these programs, you would write a file, you'd write a 
+  shell script, one item would write in the file, and the next 
+  item would read from the file. The amusing thing about this is that I 
+  don't think either Ken or I were conscious of the fact that there's an 
+  authentic difference between writing a file and reading a file and piping. 
+  The difference is real time.
+
+
+[ Uh huh. ]
+
+
+   If you want to have an interactive pair of programs, you can do it by piping 
+   them together, but you can't do it by writing a file and reading a file, 
+   because you have to write the whole file before you read it. And so you 
+   can't run it, you can't have interactive feedback from the output to the 
+   input.
+
+
+[ What was the design process for pipes? ]
+
+
+  There's no design process. Well, while Ken and Dennis and Rudd 
+  Canaday on one side of the corridor were thinking about file systems, I 
+  happened to be on the other side of the corridor cooking up notations for
+  composing programs.
+
+  Due to lack of imagination, I ran into the difficulty of, if you say ls 
+  through wc, that's pretty cool, you can just write down ls | wc fine, 
+  no concatenation. But suppose ls has flag options, how do you distinguish 
+  options from concatenation of programs? For a long time, this baffled me.
+  And then one day, I invented a notation, not the one that we're using now.
+
+
+[ Okay. ]
+
+
+  You have multiple greater thans.
+
+
+[ Almost like a bit shift. ]
+
+
+  Yeah. I had been lobbying for something to connect programs together for a 
+  long time. Already I had in mind not only pipelines, but cellular automata, 
+  where you connect them up to at least a player array.
+
+
+[ Wow. ]
+
+
+   I'd been lobbying for putting in something, but Ken, Ken, just wouldn't do 
+   it because it made the system more complicated, perhaps. But when I came up 
+   with a notation for the shell, he said, to my surprise, "I'll do it."
+   And he did it in one night.
+
+
+[ Of course he did. ]
+
+
+   And not only did he do it, but it's no surprise that he could do it in one 
+   night because of the architecture of the system. It already had shared 
+   buffers between processes. All he had to do was to have, instead of just 
+   one read-write pointer in the buffer, he had to have two pointers, one for 
+   one process and one for the other. 
+
+   In the same night, he recruited Dennis. They realized that lots of programs
+   which had named inputs and outputs would naturally be pipeable together.
+   You had to arrange for them to have either a missing output file or a 
+   missing input file.
+
+   They changed a whole lot of programs that night, too. And the next morning 
+   they told us, it's working. Then we had an orgy of pipelines that were 
+   demonstrated. Look what I can do, look what I can do.
+
+
+[ I bet. ]
+
+
+  I think the most fun one was Joe Ossanna. He wrote nroff and troff[4]. 
+  I wrote roff. He had a two column gimmick. He had set alternate pages on the 
+  left half of the page, on the right half of the page.
+
+
+  Then he had a final post processor called Overlay, which would OR together
+  these pairs of pages. He said, oh, I can do that in a pipe now, and 
+  furthermore, I can pipe two of them in a row and get four column output.
+  I thought that was the prettiest one.
+
+
+  By the end of the week, our secretaries were piping stuff to the line printer.
+
+
+[ That's so sick. ]
+
+
+  The original description in the manual took a page. Because of the double 
+  greater-thans, there were some really ugly, ugly things there in order to 
+  properly parse it. The manual now manages to describe pipes in the shell 
+  in about that much space. **holds hands up to show a small block**
+
+  That's all there is to it. And that's what's wonderful about it.
+  You don't have to learn anything.
+
+  Finally the, the pipe symbol itself came up. Because Ken was scheduled to 
+  give a talk about Unix in London. He was embarrassed to talk about this ugly 
+  notation. So he cooked that one up, and it really stuck. Ken gets a lot of 
+  credit for the symbol.
+
+
+[ One corner case of pipelines is unintuitive is the exit status of a pipeline. 
+  You can have programs that exit non-zero piped into another program that exits
+  zero && another program, and it works. What was the thinking there? ]
+
+
+  I think whatever happened happened accidentally.
+
+
+[ Okay. You were just interested in functionality. Like get this pipe to the 
+  other, get this data over here to this program faster, the exit status
+  doesn't matter? ]
+
+
+  Yes.
+
+
+  Have you ever heard of the programming language called Pogol?
+
+
+[ Pogol? No. Uh, no. What's that? ]
+
+
+  It's not very well known. It came from NSA.
+
+
+[ Of course it did. ]
+
+
+  It's a data processing language. It came from 1970 to 72 thereabouts. 
+  Tthe way you write programs in it is you write little bits of code that 
+  write unnamed files and read from them. Then you take all these little 
+  bits of programs, compile them together, and it optimizes the files out 
+  of existence. [5]
+
+
+[ I can't even find a Wikipedia page on it. Dude, the AI in Google says that 
+  it doesn't exist. Wait, I found a paper on it... ]
+
+
+[ 1973, Early development occurring in the Department of Defense. ]
+
+
+[ So this sounds a lot like pipes, yeah. ]
+
+
+  They were ahead of pipes, but they didn't have the pipe notation. You
+  still had to pretend there was a file.
+
+
+[ There's very little about Pogol out there.  ]
+
+
+  Very little, just the one paper by Gloria Lambert.[6]
+
+
+
+
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄▄▄▄▄ 
+█     [ What do you know about executable formats for Unix? Like a.out, COFF,
+█▀▀▀▀   then eventually ELF. Can you tell us about the transition to using file
+█▄▄▄▄   formats like ELF? ]
+▄     
+█     
+█       By the time ELF was embedded, it was going on in the Unix support group.
+█▄▄▄▄   I'm completely unaware of how it was designed. 
+▄▄▄▄▄ 
+█     
+█▀▀▀    I have a question about ELF, which you people all know about. Um, I had 
+█       one program that had a 2^15 * 2^15 byte of array in it.
+
+
+[ Uh huh. ]
+
+
+  I initialized element 00 of that array, one very first element. It took 
+  forever to load this program. In C, even though only one element is 
+  initialized, C compiles it, initializes the whole thing and puts it into ELF.
+
+
+  As far as I know, there is not a way to initialize a piece of an array and 
+  have the other uninitialized in the ELF file.
+
+
+[ I think it's like a more of a compiler thing than an ELF thing. ]
+
+
+  It seems like. It's how the compiler uses ELF, but there didn't seem to be 
+  a way for the compiler to force ELF to do that. Because that single element 
+  has to be adjacent to all the other elements. I don't think you can tell ELF 
+  that these two data things have to be contiguous.
+
+
+[ Yeah you will usually have to do this manually or at runtime. ]
+
+
+  This billion-byte binary, uh, is, uh, really quite a surprise.
+
+
+└──────────────────────────────────────────────────────────────────────────────┐
+                                                                           ▄▄▄▄ 
+[ So, before there was Dwarf, what was the debugging procedure like? What  █   █
+  was the debugging information? How did the debugger figure this out? ]   █   █
+                                                                           █▄▄▄█
+                                                                           ▄▄▄▄▄
+  DWARF? I never used DWARF.                                               █    
+                                                                           █▀▀▀▀
+                                                                           █▄▄▄▄
+[ When you wanted to debug something, how was your debugger figuring out   ▄▄▄▄ 
+  the information about the debug target? Did debuggers map assembly to    █   █
+  symbols? If so how? And if it crashed, would it map to the source? ]     █▀▀▀▄
+                                                                           █▄▄▄▀
+                                                                           ▄   ▄
+  You would use whatever was in the symbol table of the C program. And     █   █
+  that goes way back.                                                      █   █
+                                                                           █▄▄▄█
+                                                                           ▄▄▄▄▄
+[ Did Ken write the original debugger for Unix? ]                          █    
+                                                                           █  ▀█
+                                                                           █▄▄▄█
+  Um, I think the first debugger was probably written by Dennis.           ▄▄▄▄▄
+                                                                           █    
+                                                                           █  ▀█
+[ What was it called? ]                                                    █▄▄▄█
+                                                                           ▄▄▄▄▄
+                                                                             █  
+  db                                                                         █  
+                                                                           ▄▄█▄▄
+                                                                           ▄▄  ▄
+[ Obviously, right. ]                                                      █▀▄ █
+                                                                           █ ▀▄█
+                                                                           █  ▀█
+  It became adb.                                                           ▄▄▄▄▄
+                                                                           █    
+                                                                           █  ▀█
+[ Ah there was another adb, before the Android debugger :P. Advanced       █▄▄▄█
+  Debugger? Written by Stephen Bourne. ]
+
+
+  Yes. 
+
+
+  It's wonderful to be in the prescence of people who know the insides of 
+  this stuff. 
+
+
+[ Nerds? ]
+
+
+  Yeah. I am really remote from it now.
+
+
+[ So what about backtraces? In those original debuggers, you want to see the 
+  call stack. So you've got to unwind the stack. What was the procedure for 
+  doing it? ]
+
+
+  It's been so long since I used the debugger. I think you could ask for a 
+  whole stack trace. We could also ask for elements in the current stack frame 
+  and then move a stack frame. I eventually gave up on using...because I don't 
+  write really big things, by and large.
+
+
+  Recompile it and throw in some printfs. 
+
+
+[ That's the way. ]
+
+
+  Well, typically what I'll do is throw in a lot of printfs that print a 
+  single character with no new line. And that gives you a trace. That's often 
+  enough to locate where the trouble is.
+
+
+[ So we keep asking, how did you debug this and that, and you keep saying 
+  "Oh I didn't need to, just printf()". It's starting to make sense how you 
+  would approach these types of problems with extremely limited resources. ]
+
+
+  Well, you know, I didn't come up with that technique in the days of 
+  limited resources. That's something, in the days of limited resources, 
+  I actually used debuggers.
+
+
+  Debugging may be better with a limiter, so there is not so much to look at.
+  I mean, there's so much, so much now. 
+
+
+[ What was the most interesting bug that you think you've seen overall? ]
+
+
+  The most interesting bug... 
+
+
+  I think it's one that I found in the Fortran 2 compiler. It was interesting 
+  just because it was a programming technique that I never saw before or since. 
+
+
+  Do you know about the 7090 machine code? The 7090 had some instructions with 
+  four parts. Two addresses, or an address with an offset, an opcode, which was 
+  only three bits, and an index register, which was only three bits. 
+
+
+  As evolution of the family of computers, on the 704, you could store a whole 
+  machine word, or you could store one of those address fields.
+
+
+  On the 709, you could store the whole machine word, or either one of those.
+
+
+  And on the 7094, they even added, you can store into the opcode, or the 
+  index register tag.
+
+
+  I never saw a store tag used in any program except one. Somebody brought me 
+  a piece of Fortran code with the computed go-to. You list a whole bunch of 
+  addresses, and you index into that list.
+
+
+  This computer's go-to failed. It had 74 branches. If you took one of the 
+  branches out, it worked. If you added a branch, it worked.
+
+
+  At that time, we had a copy of the Fortran compiler, this was before 
+  debuggers. It's the only time I have used a 7090 for my console.
+
+
+  I stayed up all night with it, and finally located the bug. There was a 
+  table in which they kept the addresses for a computed go-to. They wanted 
+  the table to grow to arbitrary length, but they didn't want it to take 
+  arbitrary amount of memory, so they paged it in 75 word pages.
+
+
+  I cannot remember the exact logic. But, instead of doing any rational 
+  indexing, they used the store tag to turn off indexing after 74 elements.
+
+ 
+  So, in fact, they forgot to do that. They did it in one place, but they 
+  needed to do it in two places, and they didn't find the second place. 
+  Needless to say, they'd never tried an example of 74. So a computed go-to 
+  in Fortran 2 would fail if there were 74 mod 75 branches, and I was really 
+  proud of finding this bizarre trick of the store tag instruction.
+
+
+  Yeah, I think that's my favorite.
+
+
+[ That sounds insane to figure out. ]
+
+
+  Yeah.
+
+
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄   ▄ 
+█   █ [ Earlier this morning we were discussing the trusting trust compiler 
+▀█▄█▀   backdoor ]
+  █   
+▄▄▄▄▄ 
+  █     A little louder. One of my hearing aids is just burned out.
+  █   
+▄▄█▄▄ 
+▄▄▄▄▄ [ The trusting trust compiler backdoor. Ken Thompson actually implemented 
+█   █   it? ]
+█▀▀█▀ 
+█   █ 
+▄   ▄   Yes, he did. [7][8]
+█   █ 
+█   █ 
+█▄▄▄█ [ And then it nearly escaped or something like this? ]
+▄▄▄▄▄ 
+█     
+▀▀▀▀█   Yes. There was another group that maintained the so-called programmer's 
+▄▄▄▄█   workbench. They tried to keep abreast of how it worked, and apparently 
+▄▄▄▄▄   Ken had this new compiler in his home directory and they found it. They 
+█       were like "Oh, we want to be up with the latest stuff". The interesting 
+█▀▀▀▀   thing is, I don't know how they did it, but they discovered it to be 
+█▄▄▄▄   bugged.
+▄▄▄▄▄ 
+█       
+▀▀▀▀█   They actually tried it, and whether they discovered it by diffing it 
+▄▄▄▄█   with the old code to see what was doing, or by measuring the size of the 
+  code, I don't know. But they actually discovered it and called up Ken and he 
+  said, "get that thing out of there". So, it was lucky that it didn't really 
+  spread.
+
+
+  I had a similar case when Jim Reeds and I were working on IX [9], a multi-
+  level secure Unix system that handled Bell-LaPadula [10] classification 
+  schemes. Bell-LaPadula was a multi-level thing.
+
+
+  We observed that if you turn it upside down, Bell-LaPadula makes it illegal 
+  to read higher level stuff into lower level memory. Instead, if you prevent 
+  writing higher level stuff into lower level memory, you can use it for 
+  integrity. 
+
+
+  So, we used the two together in the lattice and started in the middle. 
+  Going up, you had privacy control. Going down, you had integrity control.
+  For changing system components, it's the integrity control you want.
+  You don't want people to be able to reach. So, system pieces that everybody 
+  could use were below the floor where you normally started. Highly secret stuff 
+  that people weren't supposed to look up were up above the floor.
+
+
+  Well, originally we put the floor at zero. The first time we turned on the 
+  floor up in the middle, it failed and said there's a security violation.
+  It was probably a certain thing that we had made a mistake in the 
+  implementation somewhere, and Jim worked for a couple of days over it. Then
+  I get this phone call from them and said, "We caught a virus!"
+
+
+  Now, what was a virus doing on our machine? Well, this goes back to Tom Duff 
+  a couple of months before. He wrote about shell viruses. It was published in 
+  the Usenix journal.
+
+
+[ What year was that? ]
+
+
+  That would have been 1987 or 88. There were two articles about shell viruses 
+  in that issue in the Usenix journal. Tom Duff wrote one [11] and I wrote 
+  another [12].
+
+
+  He had actually implemented the virus and to his dismay, it got loose on our 
+  network. So he implemented a worm that would get rid of it. However, Jim and 
+  I were working on this, had a disconnected system at the time that we were 
+  developing IX on. We happened to be connected when he sent the virus, when the 
+  virus got loose. Then, we were disconnected when the disinfectant was running 
+  around. It had been in our machine all along and we didn't know it.
+
+
+  But the minute we turned on integrity control, we discovered, it revealed 
+  itself. So that was a wonderful triumph of our new system.
+
+
+[ So Tom Duff wrote the virus? ]
+
+
+  Yeah.
+
+
+[ He worked there as well? ] 
+
+
+  Yes, he did.
+
+
+[ How did he accidentally? ]
+
+
+  I think he was working there when he got his Emmy [13] for the, for the 
+  alpha channel [14]. But, he didn't invent the alpha channel. He was 
+  working with us.
+
+
+[ And you say he invented, he created a worm to disinfect it? ]
+
+
+  Yes.
+
+
+[ That's kind of funny. ]
+
+
+  Well, it was probably not a worm. It was probably all reaching out from one 
+  computer to the others.
+
+
+[ What was the mechanism of action here? Was there a bug that the worm was 
+  exploiting to fix the other? ]
+
+
+  No, I don't think that. When I said worm, I probably misspoke. He did 
+  something to reach out and touch every other machine and remove the virus.
+
+
+[ Was that the first virus that you ever saw on a computer that you used? ]
+
+
+  No. Um. It's probably the first one I ever saw in real life. Yes. 
+
+
+└──────────────────────────────────────────────────────────────────────────────┐
+                                                                           ▄   ▄
+[ You were at Bell Labs when GNU first became a thing, right? ]            █   █
+                                                                           █   █
+                                                                           █▄▄▄█
+  Yes.                                                                     ▄▄  ▄
+                                                                           █▀▄ █
+                                                                           █ ▀▄█
+[ What was the response internally? ]                                      █  ▀█
+                                                                           ▄▄▄▄▄
+                                                                             █  
+  Good question. Uh, by then we had so many imitators. The policy was        █  
+  that if all they were doing was re-implementing those things that had    ▄▄█▄▄
+  already done before, it was fine. So, there was nothing very special     ▄   ▄
+  about GNU except, except for all the, uh, overburden of policy on it.    █   █
+  That was not of interest to the lawyers.                                 ▄▀▀▀▄
+                                                                           █   █
+                                                                           &gt;&gt;&gt;&gt;&gt;
+[ So you're saying as long as they were just re-implementing, what you'd   &gt;&gt;&gt;&gt;&gt;
+  already done, it was fine. What would not have been fine? ]              &gt;&gt;&gt;&gt;&gt;
+                                                                           &gt;&gt;&gt;&gt;&gt;
+                                                                           ▄▄▄▄▄
+  Well, one example was a guy in Boston, his name escapes me now, was      █   ▀
+  selling a collection of Unix utility lookalikes. Well, that's what he    █    
+  called them. When we looked at those, I looked at them in fact. If you   █▄▄▄█
+  looked at the binary, it was in one-to-one correspondence with the       ▄    
+  source.                                                                  █    
+                                                                           █    
+                                                                           █▄▄▄▄
+[ Wow. ]                                                                   ▄▄▄▄▄
+                                                                           █   █
+                                                                           █   █
+  It happened at the time that one of our patent lawyers was negotiating   █▄▄▄█
+  cross-licensing with DEC. DEC was giving him a hard time and said,       ▄▄  ▄
+  "you don't have anything of interest to us."                             █▀▄ █
+                                                                           █ ▀▄█
+                                                                           █  ▀█
+  He went to a meeting armed with some material that he thought would      ▄▄▄▄▄
+  prove that he had stuff of interest to them. But, unbeknownst to me,     █    
+  he went armed with another thing.                                        █▀▀▀▀
+                                                                           █▄▄▄▄
+                                                                           ▄▄▄▄▄
+  He went armed with the fact that I had told him about this, um, robbery  █    
+  of our code. It turned out that DEC had brought along an expert witness  ▀▀▀▀█
+  who was this guy.                                                        ▄▄▄▄█
+
+
+[ Interesting. ]
+
+
+  And our lawyer, at the end of the day when they broke up and had some coffee 
+  together or whatever, he somehow managed to bring the subject matter around 
+  to furloughing the code. And he said, I happen to have an example in my 
+  briefcase, would you like to see it?
+
+
+  "Oh, yeah!"
+
+
+  He brings it out and here's the source, here's the object. The guy said 
+  you know, that sure looks like it came from that source. Would it interest 
+  you if I told you that this is ours and that's yours? 
+
+
+  He didn't show up the next day.
+
+
+[ He had no idea that guy was going to be in that meeting? It was just a 
+  coincidence? ]
+
+
+  I, he may, he probably did have no idea.
+
+
+[ That's incredible. ]
+
+
+  He had no trouble after that in getting the guy to cease and desist.
+
+
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄▄▄▄▄ 
+█     [ What was your favorite program that you wrote for early Unix? ]
+█▀▀▀  
+█     
+▄▄▄▄▄   Well, I mentioned echo, but that's just because it's amusing.
+█   █   
+█▀▀▀█   
+█   █   Uh, I'll mention two of them. One was a plumbing program, which took a 
+▄   ▄   long list of plumbing connections to make among processes, of pipes, and 
+█   █   would pick them all up.
+▀█▄█▀   
+  █     
+▄▄▄▄▄   The interesting thing about this program is you can only have a limited 
+█   █   number of pipes open every time, and we had to do something to get that. 
+█   █   That was fun, but not useful. The one nice program is Speak [15].
+█▄▄▄█ 
+▄▄▄▄▄ 
+█   █ [ How did the design of that go? ]
+█▀▀█▀ 
+█   █ 
+▄▄▄▄▄   Joe Ossanna got wind of this new device that you could buy from Federal 
+  █     Screw Works. Turns out a guy in the back room of Federal Screw Works had 
+  █     come up with a speech synthesizer. It has nothing to do with the rest of 
+▄▄█▄▄   our business.
+▄▄▄▄▄ 
+  █   
+  █     You fed it phonemes, and it would pronounce them and string them 
+  █     together. It's hard to do, we had a whole department working on speech 
+▄▄▄▄▄   synthesis. And they could do it, but it usually took something like a 
+█       minute of computer time to produce a second of speech. If you had the 
+█▀▀▀▀   Votrax [16], oh, you just fed it phonemes in real time. 
+█▄▄▄▄   
+&lt;&lt;&lt;&lt;&lt;   
+&lt;&lt;&lt;&lt;&lt;   So Joe said, "we need one of those" and he put it on a machine. Lee 
+&lt;&lt;&lt;&lt;&lt;   McMahon promptly became really quite expert fashion in phoneme streams. 
+&lt;&lt;&lt;&lt;&lt;   But it's still like hard labor. You had to prepare it.
+▄▄▄▄▄   
+█   █   
+█▀▀▀▀   I looked at it and I realized that an awful lot of English, especially 
+█       all the big words, things that fill up the dictionary can be pronounced 
+▄▄▄▄▄   phonetically. So I put together in one night this program that had a 
+█   █   list of phonetics, which were fragments of words, and it would take the 
+█▀▀█▀   longest fragment, the longest matching fragment, and pronounce it. And 
+█   █   maybe rewrite part of it and pronounce part of it.
+▄▄▄▄▄   
+█   █   
+█   █   I put together a list of rules for it, and tried it the next day. Well, 
+█▄▄▄█   Morris walks up to the machine and types in "Orlok", and it came out 
+▄▄▄▄▄   perfectly. He said, oh, "it's a success" and it really actually was a 
+█       success. We put itpermanently online. Anybody could walk up to the 
+█  ▀█   computer, type into the computer, and it'd talk back to them.
+█▄▄▄█ 
+▄▄▄▄▄ 
+█   █ [ And you wrote that in one night? ]
+█▀▀█▀ 
+█   █ 
+▄▄▄▄▄   I wrote it in one night, then, spent the next six months perfecting it.
+█   █   But, it went into business right away.
+█▀▀▀█ 
+█   █ 
+▄▄▄▄▄ [ Who is this guy at Federal Screw Works? This guy sounds like a genius. ]
+█ █ █ 
+█ █ █ 
+█   █   Right. Yeah. It was really amazing.
+▄▄▄▄▄ 
+█     
+▀▀▀▀█ [ What even is Federal Screw Works? ]
+▄▄▄▄█  
+
+  The department head for the speech department came in and he listened to it.
+  And he said, this is a breakthrough. But of course, one of the things the 
+  speech department was trying to do was make it a natural speech. The Vortrax 
+  clearly wasn't natural, but it's predictable, and it turns out that for many 
+  tasks, that's all that counts.
+
+
+  To foreign speakers of English, non-native speakers, it turned out the Votrax 
+  was actually, because I put a little gap between words, ten milliseconds or 
+  something like that between words. That segmented it, whereas natural speech 
+  is not segmented. That's one of the real problems of listening to a new or
+  foreign language. So foreigners would listen to it and say, that's easier to
+  understand than people.
+
+
+  Although, I could not do syllable stress. I never got that. It was just, every 
+  syllable was at the same, same stress level. But it was fun.
+
+
+[ What kind of other things did you develop for Unix? We talked about pipes, 
+  and echo, you did tee and tr as well? 
+
+
+  I did tee and tr yeah. Those are just obvious things. You need one night and 
+  you put them together. Spell was a big one. 
+
+
+[ What was that one? ]
+
+
+  Oh, it's a spell checker. Ah, have you ever, have you ever seen the spell 
+  checking pipeline that I taunted Donald Knuth with? [17]
+
+
+[ I don't think so. ]
+
+
+  There's actually a nice cartoon online about it. Anyway, Steve Johnson 
+  invented this pipeline for doing spell checking. It works wonderfully if 
+  the words are in the dictionary, but you have to fill your dictionary out 
+  with all the plurals and derived forms. That should be done automatically 
+  rather than, rather than filling up 200,000 word dictionary. So I did the 
+  automation part, all of the businesses, suffixing, prefixing, and turned 
+  this pipeline into a nice spell checker.
+
+
+[ Nice. So this is early 70s that you wrote that? ]
+
+
+  Probably around 76. The pipeline is a wonder[18]. You will really want to see 
+  that.
+
+
+  You should see how big the Donald Knuth program is in comparison. One of the 
+  things about the spell check program is, I ended up with a vocabulary of 
+  30,000 words. But, you know, 30,000 words at an average word length of seven, 
+  something like that, is rather too big for a 64K memory. So there's some great
+  data compression in there[19]. John Bentley wrote one of his, um, programming 
+  pearls columns about it[20].
+
+
+[ Who is John Bentley? ]
+
+  
+  John Bentley was another Bell Labs person who came from Carnegie Mellon.
+  After he got a teaching prize at Carnegie Mellon, the president presents it 
+  to him and says, "you know, every time you realize you're getting paid for 
+  research, not teaching, this prize makes up for that a bit.""
+
+
+  John really didn't appreciate that comment, so he came to work for Bell Labs.
+  Where he continued to teach a lot by writing these columns for the CACM.
+
+
+[ What was it like being around so many really smart people at Bell Labs? ]
+
+
+  People being recruited also would say, I wasn't interested in coming here.
+  Thompson said this. I wasn't interested in coming here, but then I walked 
+  down the corridor and saw the names on the walls, that changed my mind.
+
+
+  It was a really nice collegial atmosphere. I discovered when I came to 
+  Dartmouth that colleges aren't as collegial. Especially the poor assistant 
+  professors struggling for tenure. They can't take a minute off to get diverted 
+  to something else.
+
+
+  You could walk into anybody's office at Bell Labs and say, who's an expert?
+  Then say, I need help here, and they may help. You weren't paid for how many 
+  papers you wrote. You were paid for how useful you were to the company.
+
+
+[ What year did you come to Dartmouth? ]
+
+
+  Uh, 97.
+
+
+[ So then were you at Bell Labs for Plan 9? ]
+
+
+  Yes. I didn't participate in the project, but that was while I was there.
+  It's really too bad that it didn't catch on. Well, there are a thousand of 
+  them out there still, but.
+
+
+[ I would say like, I mean, 9P still exists. And like, ProcFS came from Plan. 
+  I mean, like the, the big ideas got imported. But yeah, it is sort of 
+  unfortunate, that like the grand re-architecting of things is not adopted. ]
+
+
+  Some pieces do still exist, like the idea that multiple computers are not 
+  different from one computer. We still have sockets and files. And Plan 9 even 
+  managed to overcome big and little and the differences between machines.
+
+
+[ How? ]
+
+
+  When you move data between them, they would automatically do the necessary 
+  swapping.
+
+
+[ For like executable code? ]
+
+
+  If you were doing executable code you had to recompile for different machines.
+  But they did that very nicely. No ifdefs, all done with, um, makefiles.
+
+
+[ Would it do like automatic detection of the data for the machine type? Well, 
+  how would you know if it's just data? ]
+
+
+  It would. A machine of course knew what it was, so it would establish 
+  connections. If you talked to a different machine, right. But if you were 
+  just given some data. They both had to be running Plan 9.
+
+
+[ Gotcha. So what got you into programming Haskell? ]
+
+
+  Well, the thing is, it's a beautiful imitation of mathematics. And, um, I 
+  happen to be an addict of stream processing. Haskell is the best stream 
+  processing language I know of. With lazy evaluation, a stream is exactly 
+  like a list. And, and so there's some lovely demos you can do.
+
+
+[ What do you use it for? ]
+
+
+  I happen to be a fan of map projections. One class of map projections is 
+  the doubly periodic. It's doubly periodic. You have a world map and you can 
+  paste them together and tile, and tile the globe. It continues like the Earth 
+  goes without ends, repeated, copies of the same map in two dimensions.
+
+
+  If you know advanced calculus, you can do this with conformal mapping, 
+  elliptic integrals. I have used Haskell to compute the coefficients of the 
+  power series expansions of the elliptic integrals. I also use Haskell 
+  to help make Christmas cards for myself.
+
+
+[ So it's easier for you to do this type of math in Haskell? ]
+
+
+  Knuth tells you how to, in uh, volume one, I guess it is, how to do various 
+  power series calculations. And the most complicated one is called reversion, 
+  which is a function to find the power series that is the functional inverse 
+  of another power series. Knuth does reversion in a half page of pseudocode. 
+  I do it in one line in Haskell. Real code, working code.
+
+
+[ Yeah. Real code, you call it. This is out of The Art of Computer Programming? ]
+
+
+  Yes.
+
+
+[ When we look at what languages have caught on, the family of things that 
+  spawned off from C remains super dominant. Way more so than the things that 
+  came from ML like Haskell. ]
+
+
+  Yeah.
+
+
+[ And similarly, when we look at the operating systems in use today, and the 
+  family of things that spawned off from Unix, they integrate ideas from the
+  future, but the older idea remains. What do you think accounts for the 
+  stickiness of C in Unix? ]
+
+
+  Well, partly, the assignment statement really makes code go faster. No, ML 
+  does not have an assignment statement. It isn't done.
+
+
+[ It has "let" ]
+
+
+  Yeah, but, but you, but you are never proud when you have to write one.
+
+
+[ Yes. ]
+
+
+  Haskell doesn't have one at all. Uh, Lisp, Lisp was another one that just, 
+  uh, had a dirty assignment statement.
+
+
+[ Unpopular opinion, but I never really liked Lisp. ]
+
+
+  Well, it's, too many right parentheses. That's the nice thing about pipes. 
+  They do away with the right parentheses.
+
+
+[ But they also do away with the tree. So because it's a line, you don't need 
+  the parentheses anymore, but often you want the tree... ]
+
+
+  It's sad to say, we've, nobody yet has come up with a nice way of expressing.
+  I don't know how many different shells allow trees, including the Bourne 
+  shell. Uh, the, I'm sorry, bash.
+
+  None of them are very appealing syntaxes. It still eludes us.
+
+
+[ student: I am working on a domain specific language for on the fly testing of 
+  REDACTED. I want to send it a request to multiple REDACTED, then send back
+  through other REDACTED, then bounce that to REDACTED, then have it all 
+  go backwards through a bunch of stuff. My problem is the syntax, just thinking
+  about how to make this not annoying to write. I still have no idea what the 
+  solution is. ]
+
+
+  Yeah. I sympathize with you. I've, I wrote my first proposal for such a thing 
+  that never, has never seen the light of day. Because it's so ugly. And I keep
+  going back to it and nothing ever gets better.
+
+
+[ student: Well, maybe it's just inherently graphical. ]
+
+
+  Well, there's one argument you can make. You can make it for structured 
+  programming. Structured programming only covers a very small fraction of all 
+  possible graphs.
+
+
+  But it turns out, this is an extremely useful subset, and it's pretty clean by
+  indentation. We haven't yet found that subset for, other than linear pipelines 
+  for connecting processes, and I don't know why.
+
+
+[ student: I mean, I guess the question is, does that, is that subset even 
+  significantly different from the space of all graphs?
+
+
+  Yeah.
+
+
+[ student: When you're writing a compiler, you want things to be inter-
+  operable, and you have to figure out how to do that by reading the ABIs 
+  and understanding the constraints and all that. If you're starting fresh,
+  like at the beginning of Unix, when none of this exists, so you get to make
+  it all up, which sounds very fun. But it also sort of implies that you need a
+  long design phase and think about how you can make it so that people actually
+  want to write machine code for this thing. It sounds like you had long design
+  phases and then short bursts of writing code. ]
+
+
+  Yes.
+
+
+[ student: This is very much not how, uh, a lot of people work today. Was there
+  a specified ABI for Unix? Was it well documented or was it just like "eh, 
+  whatever works"? ]
+
+
+  Yeah, that's a huge contrast between Multics and Unix. Multics had a five-foot 
+  design shelf, uh, and it still wasn't working.
+
+
+  In Unix, the first manual occurred two years after the system.
+
+
+└──────────────────────────────────────────────────────────────────────────────┐
+                                                                           ▄▄▄▄▄
+Our interview had to come to an end because it was lunch time, followed    █    
+by afternoon talks. We invited Doug to come hang out, and he attended      █▀▀▀▀
+lectures by elfmaster, netspooky, and sblip.                               █▄▄▄▄
+                                                                           ▄▄  ▄
+                                                                           █▀▄ █
+It was an honor to talk to such a legend. Thank you to Sergey Bratus for   █ ▀▄█
+inviting us all in to Dartmouth!                                           █  ▀█
+                                                                           ▄▄▄▄  
+                                                                           █   █ 
+Gigantic shoutout goes to sblip for recording and leading this interview.  █   █ 
+                                                                           █▄▄▄█ 
+┌──────────────────────────────────────────────────────────────────────────────┘
+▄▄▄▄▄ 
+█   ▀ [1] Whirlwind 2 Info
+█         https://www.radomes.org/museum/parsehtml.php?html=fsq-7.html&type=equip_html
+█▄▄▄█     https://x.com/MITLL/status/1910440210791379145
+▄▄▄▄▄ 
+  █   [2] von Neumann, J. and Goldstine H.H. (1947) Numerical Inverting of Matrices of 
+  █       High Order. Bulletin of the American Mathematical Society, 53, 1021-1100.
+▄▄█▄▄     https://doi.org/10.1090/S0002-9904-1947-08909-6 
+▄▄▄▄▄ 
+  █   [3] A Research UNIX Reader: Annotated Excerpts from the Programmer’s Manual,
+  █       1971-1986 M. Douglas McIlroy 
+  █       https://www.cs.dartmouth.edu/~doug/reader.pdf  
+▄▄▄▄▄     full link: https://archive.org/details/a_research_unix_reader/mode/2up 
+█   █ 
+█▀▀▀█ [4] troff History
+█   █     https://www.troff.org/history.html
+▄▄▄▄▄     Editor's Note: nroff is new roff, troff is typesetter roff
+  █   
+  █   [5] https://en.wikipedia.org/wiki/Dataflow_programming
+  █   
+▄▄▄▄▄ [6] Gloria Lambert (1973). "Large scale file processing: POGOL". _POPL '73: 
+  █       Proceedings of the 1st annual ACM SIGACT-SIGPLAN symposium on Principles 
+  █       of programming languages_. pp. 226–234.
+▄▄█▄▄     https://dl.acm.org/doi/abs/10.1145/512927.512948
+▄▄▄▄▄ 
+█   █ &gt;"POGOL, an otherwise conventional data-processing language developed at  
+█   █ &gt;NSA, compiled large-scale applications composed of multiple file-to-file 
+█▄▄▄█ &gt;operations, e.g. merge, select, summarize, or transform, into efficient 
+▄▄  ▄ &gt;code that eliminated the creation of or writing to intermediate files to 
+█▀▄ █ &gt;the greatest extent possible."
+█ ▀▄█ 
+█  ▀█ [7] Reflections on Trusting Trust (1984) by Ken Thompson
+▄▄▄▄▄     https://www.cs.cmu.edu/~rdriley/487/papers/Thompson_1984_ReflectionsonTrustingTrust.pdf 
+█     
+▀▀▀▀█ [8] Computerphile video on Trusting Trust
+▄▄▄▄█     https://www.youtube.com/watch?v=SJ7lOus1FzQ
+
+[9] Multilevel Security in the UNIX Tradition - M. D. McIlroy, J. A. Reeds (1992)
+    https://www.tuhs.org/Archive/Documentation/TechReports/Bell_Labs/CSTRs/163c.pdf
+
+[10] https://en.wikipedia.org/wiki/Bell%E2%80%93LaPadula_model
+
+[11] Tom Duff, Experience with Viruses on UNIX Systems (1989)
+     https://www.usenix.org/legacy/publications/compsystems/1989/spr_duff.pdf
+
+[12] Doug McIlroy - Virology 101 (1989)
+     https://www.usenix.org/legacy/publications/compsystems/1989/spr_mcilroy.pdf
+
+[13] 1996 Academy Award Winners 
+     https://www.imdb.com/event/ev0000003/1996/1/#scientific_and_engineering_award
+
+[14] Thomas Porter, Tom Duff. "Compositing Digital Images" Computer Graphics 
+     Volume 18, Number 3 (July 1984)
+     https://keithp.com/~keithp/porterduff/p253-porter.pdf
+
+[15] https://en.wikipedia.org/wiki/Speak_(Unix)
+
+[16] https://en.wikipedia.org/wiki/Votrax
+
+[17] https://www.leancrew.com/all-this/2011/12/more-shell-less-egg/
+
+[18] Editors note - this is the pipeline he describes:
+<pre><code class="language-sh">
+   tr -cs A-Za-z '\n' |
+   tr A-Z a-z |
+   sort |
+   uniq -c |
+   sort -rn |
+   sed ${1}q
+</code></pre>
+     His explanation:
+       If you are not a UNIX adept, you may need a little explanation, but not 
+       much, to understand this pipeline of processes. The plan is easy:
+      
+       1. Make one-word lines by transliterating the complement (-c) of the 
+          alphabet into newlines (note the quoted newline), and squeezing out 
+          (-s) multiple newlines.
+       2. Transliterate upper case to lower case.
+       3. Sort to bring identical words together.
+       4. Replace each run of duplicate words with a single representative and 
+          include a count (-c).
+       5. Sort in reverse (-r) numeric (-n) order.
+       6. Pass through a stream editor; quit (q) after printing the number of 
+          lines designated by the script’s first parameter (${1}).
+
+[19] "yes, it's me, the author of spell"
+     https://x.com/abhi9u/status/1887010136155414602
+     https://news.ycombinator.com/item?id=42962394
+
+[20] Jon Bentley, Don Knuth, and Doug McIlroy. 1986. Programming pearls: a 
+     literate program. Commun. ACM 29, 6 (June 1986), 471–483. 
+     https://doi.org/10.1145/5948.315654
+
+--[ <a href="1.html">PREV</a> | <a href="index.html">HOME</a> | <a href="3.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

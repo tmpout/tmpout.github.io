@@ -1,0 +1,622 @@
+<html>
+<head>
+<title>halfexec: Assembly x64 ELF Linux Loader</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                   █   │
+halfexec: Assembly x64 ELF Linux Loader                          │                   █   │
+~ TMZ                                                            └───────────────────█ ──┘
+
+
+              ┌────────────────────────────────────────────┐
+              │  ET_EXEC  •  ET_DYN  •  PT_INTERP  •  TLS  │
+              │     half an execve, all the fun parts      │
+              └────────────────────────────────────────────┘
+
+halfexec
+ │
+ ├── halfexec.asm
+ ├── utils.inc
+ ├── Makefile
+ │
+ ├── tests
+ │   │
+ │   ├── exec_static.c
+ │   ├── nolib.c
+ │   ├── exec_asm.asm
+ │   └── argv_nolib.c
+ │
+ └── runtime
+     │
+     ├── validate.inc
+     ├── reloc.inc
+     ├── interp.inc
+     ├── stack.inc
+     ├── rwdata.inc
+     ├── rodata.inc
+     └── trampoline.inc
+
+Download <a href="static/13/halfexec.tgz">halfexec.tgz</a>
+
+<y>-= The Half-Loader Series: 1/3</y>
+
+This article is the first part of a series for tmp.0ut volume 5:
+
+1. <t>halfexec</t> (you are here!)
+   Rebuild enough of <t>execve</t> in userspace to load familiar ELF blobs.
+2. <a href="14.html">halfshelf</a>
+   Restrict the input to one static PIE, then remove its head.
+3. <a href="15.html">phork</a>
+   Shove the stripped image, its metadata and its loader into one file.
+
+The articles work on their own, but the intended reading order is as numbered
+above. Keep in mind that the codebase for the projects is quite dense as expected
+from ASM.
+
+<y>-= Introduction</y>
+
+ELF is one of those formats that quietly gets away with a lot.
+
+You run a file, Linux nods, something eventually lands in <t>_start</t>, and most
+of the interesting machinery disappears behind the curtain. Convenient, but
+also a little unsatisfying.
+
+What actually has to happen before control reaches user code? How much of that
+path can we reproduce from userspace? And how far can we go before the whole
+thing stops being a fun loader and starts turning into a (very) sad knockoff of
+<t>execve(2)</t>?
+
+Here's my answer to that. A small x64 Linux ELF loader written in <t>FASM</t>.
+(of course it is). It took me almost 4 years (!!!) to "finish" it, but during
+this time, I changed it a lot and used it to create new projects too. Here's
+an image I posted on Twitter when I started coding it, in late 2022:
+
+<a href="static/13/halfexec.png"><img src="static/13/halfexec.png" alt="https://x.com/guitmz/status/1589057858985156609" width="700px"></a>
+<a href="https://x.com/guitmz/status/1589057858985156609">https://x.com/guitmz/status/1589057858985156609</a>
+
+I named it <t>halfexec</t> because:
+
+- it is not the kernel
+- it is not a full dynamic linker
+- it is not the whole execution path
+
+I guess one can say I was lacking creativity at that point.
+
+The goal was to build something small enough to read, but enough to run mundane
+ELFs. The initial versions were simple and worked fine for super specific
+small executables but then a rabbit hole formed and, with each commit, I was
+adding more features, supporting more ELFs, getting mad deep diving into the
+the internals of this amazing file format.
+
+That means supporting cases like:
+
+- <t>ET_EXEC</t>
+- <t>ET_DYN</t> / PIE
+- static and dynamic libc binaries
+- tiny no-libc samples
+- <t>PT_INTERP</t> handoff for normal dynamically linked binaries and <t>BusyBox</t>
+(which was essentially my main target during the development of the loader)
+
+Oh and I really wanted something in Assembly that I could use for other projects.
+
+If you want to skip ahead and just run the thing:
+<pre><code class="language-sh">
+$ make
+$ HALFEXEC_DEBUG=1 ./halfexec /bin/true
+</code></pre>
+<t>make run</t> builds and exercises the whole test matrix in one go, if you
+would rather see every supported shape pass at once.
+
+<y>-= What The Loader Actually Does</y>
+
+At a high level:
+
+1. parse its own startup stack to find the target path
+2. open the target and stage the whole file in memory
+3. validate the ELF header
+4. decide whether it is dealing with <t>ET_EXEC</t> or <t>ET_DYN</t>
+5. map the main image
+6. optionally load the interpreter from <t>PT_INTERP</t>
+7. optionally apply a small relocation subset for direct entry <t>ET_DYN</t>
+8. optionally build a minimal TLS runtime state
+9. rebuild a fresh stack with <t>argc</t>, <t>argv</t>, <t>envp</t> and <t>auxv</t>
+10. jump to the right entry point (I hope)
+
+At first glance, it sounds almost civilized, but of course, the details are
+where all the funny bugs live.
+
+<y>-= A Tiny Map Of ELF Loading</y>
+
+Before getting into <t>halfexec</t>'s choices, it helps to separate an ELF file
+from the process image it describes. An ELF is not copied wholesale to one
+address and executed. The loader reads the ELF header, follows the program
+header table, and treats each program header as an instruction about how to
+construct the new address space.
+
+Sections such as <t>.text</t>, <t>.data</t>, <t>.dynsym</t> and <t>.rela.dyn</t> are
+mostly the linker's view of the file. At execution time, the important table is
+the program header table: entries such as <t>PT_LOAD</t>, <t>PT_INTERP</t>,
+<t>PT_DYNAMIC</t> and <t>PT_TLS</t> describe what the runtime really needs.
+
+        ELF file                              process memory
+   ┌──────────────────┐                  ┌──────────────────────┐
+   │ ELF header       │── e_phoff ──────>│ loader reads PHDRs   │
+   ├──────────────────┤                  ├──────────────────────┤
+   │ program headers  │── PT_LOAD RX ───>│ code mapping         │
+   │                  │── PT_LOAD RW ───>│ data + zeroed BSS    │
+   │                  │── PT_INTERP ────>│ dynamic linker image │
+   ├──────────────────┤                  ├──────────────────────┤
+   │ segment bytes    │──── copy/map ───>│ mapped segment bytes │
+   └──────────────────┘                  └──────────────────────┘
+
+For every <t>PT_LOAD</t>, the loader combines two kinds of information:
+
+- <t>p_offset</t> and <t>p_filesz</t>: which bytes come from the file
+- <t>p_vaddr</t> and <t>p_memsz</t>: where they live and how much memory exists
+- <t>p_flags</t>: whether the final pages are readable, writable or executable
+
+When <t>p_memsz</t> is larger than <t>p_filesz</t>, the remaining bytes are
+filled with zeros. That is how uninitialized data such as <t>.bss</t> appears in
+memory even though those zeroes do not occupy space in the file.
+
+The last part is process startup state. Mapping code is not enough: the entry
+point expects a stack in a specific kernel layout.
+
+                 map segments
+                      │
+                      v
+          relocate / prepare TLS if needed
+                      │
+                      v
+     ┌──────────────── initial stack ────────────────┐
+     │ argc │ argv[] │ NULL │ envp[] │ NULL │ auxv   │
+     └───────────────────────────────────────────────┘
+                      │
+           entry = load_bias + e_entry
+                      │
+                      v
+                   <t>_start</t>
+
+For a static direct entry image, control can go to the executable's entry
+after relocations and stack construction. If <t>PT_INTERP</t> is present, the
+named dynamic linker is mapped too. Control goes to its entry point while
+auxiliary vector entries such as <t>AT_ENTRY</t>, <t>AT_PHDR</t> and <t>AT_PHNUM</t>
+still describe the main executable. The dynamic linker then finishes symbol
+resolution before eventually transferring control to the program.
+
+That is the broad job normally hidden inside <t>execve(2)</t>. <t>halfexec</t>
+does not reproduce every kernel and dynamic linker feature, but it follows this
+same skeleton closely enough.
+
+<y>-= First Things First</y>
+
+One design decision was made early and it shaped everything else: the loader
+maps the whole file into memory first.
+
+Could this be done in a more elegant or more scalable way? Yeah. But I wanted to
+avoid yet another complexity in this already dense code to avoid a staging buffer.
+It is, however, a totally valid improvement to be done at some point.
+
+Anyway, reading the full target into memory keeps a lot of things pleasantly simple:
+
+- header validation is straightforward
+- program header iteration is easy
+- <t>PT_INTERP</t> path extraction is trivial (I see this as "trivial" now, but
+  definitely not back then)
+- segment population can be done by copying bytes from buffer to mapping
+- the <t>ET_EXEC</t> child path can duplicate the staged image into scratch memory
+
+The tradeoff: files must fit in the fixed buffer. For a small loader meant to
+be read by humans, that feels like a fair deal, I suppose.
+
+<y>-= <t>ET_DYN</t> And <t>ET_EXEC</t> Are Not the Same Problem</y>
+
+This is the most important split in the loader. It would be tempting to think
+of <t>ET_EXEC</t> and <t>ET_DYN</t> as mostly the same thing with a few small
+differences. In practice, that mindset just makes the code worse.
+
+--[ <t>ET_DYN</t>
+
+<t>ET_DYN</t> is the "nice" case. Since the image is relocatable, the loader can:
+
+- scan all <t>PT_LOAD</t> segments
+- compute the lowest and highest virtual address span
+- reserve one adjacent anonymous mapping
+- derive a load bias from that reservation
+- place each <t>PT_LOAD</t> at <t>base + p_vaddr</t>
+
+That is nice and cute. That is the kind of ELF shape that wants to cooperate.
+
+--[ <t>ET_EXEC</t>
+
+<t>ET_EXEC</t> is a different story. Its virtual addresses are fixed, that is fine
+when the kernel creates a fresh address space for the process but much less
+fine when a userspace loader is already running inside the same process and
+tries to map the target right on top of itself.
+
+To deal with that, we cheat (respectably). The loader prepares everything it
+can in the parent, then <t>fork</t>s. The child copies a small trampoline plus the
+staged ELF into a scratch mapping and jumps there. From that scratch code, it
+is finally safe to <t>MAP_FIXED</t> the target segments at their real <t>ET_EXEC</t>
+addresses without smashing the running loader text it still depends on.
+
+That was one of the most satisfying parts of the whole project to get working.
+It is also the kind of thing that makes you appreciate why the kernel normally
+does this in a brand new process image and calls it a day.
+
+The fork/trampoline split, trimmed down to the interesting part:
+<pre><code class="language-x86asm">
+forkTransformExec:
+    mov rax, SYS_FORK
+    syscall
+    test rax, rax
+    js forkFailed
+    test rax, rax                 ; zero means we are now executing in the child process
+    jz .child
+    ; parent: wait4() the child and mirror its exit status, then we are done
+    ...
+    .child:
+    ; Scratch mapping layout:
+    ;   [EXEC_CTX][trampoline code][padding][staged ELF file image]
+    ;
+    ; The trampoline runs entirely from this high scratch area while it remaps
+    ; the ET_EXEC PT_LOAD segments to their final fixed virtual addresses
+    ...
+</code></pre>
+The parent never touches <t>MAP_FIXED</t> at all. Only the child, running from
+scratch memory it does not depend on, is allowed to overwrite the addresses
+the original loader text still lives at.
+
+<y>-= Where The Trouble Starts</y>
+
+Most of the real work in any ELF loader is around <t>PT_LOAD</t>.
+
+Once a segment is identified as loadable, the loader has to:
+
+- round the segment start down to a page boundary
+- account for any in page offset between that page boundary and <t>p_vaddr</t>
+- round the total mapping length up to a full page size
+- <t>mmap</t> writable memory at the final destination
+- copy the file bytes
+- zero the <t>memsz - filesz</t> tail for <t>.bss</t>
+- translate ELF <t>PF_*</t> flags into Linux <t>PROT_*</t>
+- <t>mprotect</t> the segment to its final permissions
+
+The kind of thing a hobbyist computer virus writer like me enjoys and is
+familiar with. Nothing there is individually exotic, but there are many small
+ways to get it wrong (even more so when writing the damn thing in Assembly):
+
+- confusing file offsets with runtime addresses
+- forgetting that <t>filesz</t> can be smaller than <t>memsz</t>
+- forgetting page alignment
+- assuming ELF permission bits match Linux protection bits directly
+
+For the last item, they do not, by the way (why would they). <t>PF_R/PF_W/PF_X</t>
+and <t>PROT_READ/PROT_WRITE/PROT_EXEC</t> do NOT share the same bit positions.
+That is exactly the kind of stupid little detail that steals hours of your
+life if you are not paying attention.
+
+Concretely: <t>PF_X = 0x1</t>, <t>PF_W = 0x2</t>, <t>PF_R = 0x4</t>, while
+<t>PROT_READ = 0x1</t>, <t>PROT_WRITE = 0x2</t>, <t>PROT_EXEC = 0x4</t>. Read
+and execute sit on swapped bits between the two sets, write only lines up by
+coincidence. The loader's <t>ELF_FLAGS_TO_PROT</t> macro exists purely to paper
+over that mismatch, one <t>test</t>/<t>or</t> pair per bit:
+<pre><code class="language-x86asm">
+macro ELF_FLAGS_TO_PROT flags_reg, out_reg
+{
+  local .no_read, .no_write, .done
+    xor out_reg, out_reg
+    test flags_reg, PF_R
+    jz .no_read
+    or out_reg, PROT_READ
+  .no_read:
+    test flags_reg, PF_W
+    jz .no_write
+    or out_reg, PROT_WRITE
+  .no_write:
+    test flags_reg, PF_X
+    jz .done
+    or out_reg, PROT_EXEC
+  .done:
+}
+</code></pre>
+Nothing clever, just the one place in the whole loader that is allowed to know
+both bit layouts at once.
+
+<y>-= <t>PT_INTERP</t>: Knowing When To Stop</y>
+
+One thing I did not want to do here was to let this become a full dynamic linker.
+So when a target has <t>PT_INTERP</t>, the loader does not go down the path of
+just implementing the rest of ld-linux too. That way lies madness!
+
+Instead, it does something much more reasonable:
+
+1. validate the interpreter path in the staged target image
+2. open and stage the interpreter too
+3. map the interpreter as another <t>ET_DYN</t> image
+4. rebuild the stack
+5. patch <t>AT_BASE</t> to the interpreter base
+6. jump to the interpreter entry point
+
+The main executable is still the main executable. <t>AT_ENTRY</t> still describes
+its entry point. But final control transfers to the interpreter, because that
+is the component responsible for finishing the job in that case.
+
+<t>"It ain't much but it's honest work."</t>
+                  --- Farmer dude from the interwebz memes
+
+<y>-= A Little Relocation Support Goes A Long Way</y>
+
+For direct entry <t>ET_DYN</t>, the loader intentionally handles only a small
+subset of relocations:
+
+- <t>R_X86_64_RELATIVE</t>
+- <t>R_X86_64_IRELATIVE</t>
+
+I wanted enough relocation logic to support the real test matrix, but not so
+much that the project would turn into a relocation petting zoo. For a loader
+like this, the smaller subset brings more value.
+
+It also makes the two pass structure very clear:
+
+- first fix plain <t>RELATIVE</t> relocations
+- then run <t>IRELATIVE</t> resolvers
+
+If you reverse that order, bad things can happen. Resolver code likes running
+inside a world where the obvious pointers were already fixed first.
+
+<y>-= Rebuilding The Stack By Hand</y>
+
+Another thing I wanted to make explicit is process entry state.
+
+The loaded program should not keep pointers into the loader's original stack.
+That is sloppy and also a very good way to manufacture confusing bugs.
+
+So <t>halfexec</t> creates its own fresh stack mapping and rebuilds:
+
+- <t>argc</t>
+- <t>argv[]</t>
+- <t>envp[]</t>
+- <t>auxv[]</t>
+
+It also copies:
+
+- all argument strings
+- all environment strings
+- <t>AT_RANDOM</t>
+- <t>AT_PLATFORM</t>
+- <t>AT_BASE_PLATFORM</t>
+
+Then it patches the <t>auxv</t> entries that need to match the new reality:
+
+- <t>AT_PHDR</t>
+- <t>AT_PHENT</t>
+- <t>AT_PHNUM</t>
+- <t>AT_BASE</t>
+- <t>AT_ENTRY</t>
+- <t>AT_EXECFN</t>
+
+This was one of those areas where any mistake will have very large
+consequences, like:
+
+- forgetting to copy a payload string
+- leaving <t>AT_EXECFN</t> pointed at the old stack
+- misplacing the <t>NULL</t> terminators between <t>argv</t>, <t>envp</t>, and <t>auxv</t>
+- getting stack alignment wrong
+
+All of those bugs are deeply educational when they happen to somebody else
+and very much less so when they happen to you at 2AM (and often).
+
+<y>-= TLS: Just Enough To Be Useful</y>
+
+I also wanted <t>PT_TLS</t> binaries to work, at least for the supported matrix.
+I had to do a lot of research on this, it was kinda of an unexplored area of ELF
+to me until then. That means the loader has to build a minimal TLS layout itself.
+In this case it uses:
+
+- the TLS block
+- a TCB
+- a tiny DTV
+
+Then it points <t>%fs</t> at the synthetic TCB with <t>arch_prctl</t>.
+
+This is not a full TLS runtime implementation. It is just enough x64 TLS
+setup to make the supported cases work and to keep the mechanism visible in the
+code instead of waving it away.
+
+<y>-= Testing Real Shapes Matters</y>
+
+One thing I am happy about is that <t>halfexec</t> did not stop at a single toy
+binary.
+
+It now covers a small but useful matrix of recognizable shapes:
+
+- no-libc <t>ET_EXEC</t> in C
+- no-libc <t>ET_DYN</t> in C
+- no-libc <t>ET_EXEC</t> in Assembly
+- argv focused no-libc regression probes
+- libc static <t>ET_EXEC</t>
+- libc dynamic <t>ET_EXEC</t>
+- libc dynamic PIE <t>ET_DYN</t>
+- libc static PIE <t>ET_DYN</t>
+- <t>PT_INTERP</t> binaries
+
+Your mileage may vary. You'll likely encounter bugs if you run this code with
+random ELFs that need more than this loader supports.
+
+Every new shape stresses a different assumption (and stressed my nerves too).
+If you only test one "Hello World", almost everything looks fine. The moment
+you start mixing <t>ET_EXEC</t>, PIE, <t>PT_INTERP</t>, libc startup, TLS and
+argv/envp usage, the loader starts telling (usually very loudly) you where
+your shortcuts were.
+
+<y>-= How Does It Look Like</y>
+
+Running a <t>ET_DYN</t> binary with <t>halfexec</t> in debug mode looks like this:
+<pre><code class="language-txt">
+$ uname -r
+6.8.0-64-generic
+
+$ file -b /bin/whoami | cut -d, -f1-4
+ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked
+
+$ readelf -h /bin/whoami
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x2890
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          41512 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           56 (bytes)
+  Number of program headers:         14
+  Size of section headers:           64 (bytes)
+  Number of section headers:         30
+  Section header string table index: 29
+
+$ HALFEXEC_DEBUG=1 ./halfexec /bin/whoami
+halfexec v0.0.1 by TMZ (c) 2026
+halfexec: debug tracing enabled
+halfexec: target type ET_DYN
+halfexec: reserving ET_DYN load window
+halfexec: load bias = 0x000077279c35e000
+halfexec: synthetic stack base = 0x000077279ba00000
+halfexec: mapping PT_LOAD at 0x000077279c35e000
+halfexec: mapping PT_LOAD at 0x000077279c360000
+halfexec: mapping PT_LOAD at 0x000077279c365000
+halfexec: mapping PT_LOAD at 0x000077279c367000
+halfexec: loading PT_INTERP image
+halfexec: interpreter base = 0x000077279c326000
+halfexec: mapping interpreter PT_LOAD at 0x000077279c326000
+halfexec: mapping interpreter PT_LOAD at 0x000077279c327000
+halfexec: mapping interpreter PT_LOAD at 0x000077279c34f000
+halfexec: mapping interpreter PT_LOAD at 0x000077279c35a000
+halfexec: rebuilding argc/argv/envp/auxv
+halfexec: jumping to interpreter entry = 0x000077279c3432c0
+root
+</code></pre>
+Implementing the debug mode in ASM was tedious work, very tedious. It takes a
+lot in low level just to print some information to the screen. But I enjoyed
+working with the code way more after having it done. Beats endless <t>gdb</t>
+sessions and obscure code comments anytime.
+
+<y>-= How The Code Is Organized</y>
+
+To keep things readable, the loader was split by phase:
+
+- <t>halfexec.asm</t> keeps the main control flow
+- <t>runtime/validate.inc</t> handles ELF validation and early dispatch
+- <t>runtime/interp.inc</t> handles interpreter loading
+- <t>runtime/reloc.inc</t> handles the direct-entry relocation subset
+- <t>runtime/stack.inc</t> handles TLS and stack rebuilding (I am still a bit
+traumatized by this one, not gonna lie)
+- <t>runtime/trampoline.inc</t> handles the <t>ET_EXEC</t> child transform path
+- <t>runtime/rwdata.inc</t> keeps mutable runtime state
+- <t>runtime/rodata.inc</t> keeps messages and other read only loader data
+- <t>utils.inc</t> keeps constants, structs and macros
+
+That split helped a lot. Assembly gets unreadable very quickly when everything
+lives in one giant file and every label tries to do two things at the same time.
+
+There is still a lot going on, but at least now the project reads more like a
+guided tour, as much as it can be I guess, and less like a wall of opcodes.
+I also tried to add comments to most sections where I thought they would help (if
+you read some of my ASM code before you know what to expect). Without them, it
+was hard to remember why that "mov rax" was added there 3 months ago, things like
+that.
+
+<y>-= Could halfexec Be A Library?</y>
+
+Yes. The phase split above is already most of the conceptual work needed.
+
+The reusable surface could expose validation, address reservation, segment
+mapping, relocation, TLS and stack construction as separate entry points over
+an explicit loader structure. A caller could select the phases it needs and
+provide the policy: accepted ELF types, number of segments, interpreter
+support and final handoff.
+
+The current project is not packaged that way because it's not a stable library
+ABI. Its includes share one global state layout and assume labels from the main
+loader. Turning that into a real library would mean defining ownership, inputs,
+clobbers, errors and feature boundaries instead of merely giving the same labels
+a nicer directory name.
+
+That refactor is possible and I want to do it. The next articles will reuse the
+small phases that fit in order to be self contained.
+
+<y>-= Why This Loader Exists In This Shape</y>
+
+There are plenty of ways to make a loader like this more... ambitious.
+
+- It could support more relocation types
+- It could try to validate more of the world
+- It could grow into something closer to a full runtime environment
+- It could be part of some nefarious business?
+
+All of that would be interesting, to me particularly the last one the most.
+
+<y>-= Final Thoughts</y>
+
+This is not meant to be the last word on ELF loading. It is not hardened. It
+does not aim to support every relocation. It is not a new dynamic linker.
+It is not trying to compete with the kernel.
+
+What it is meant to do is much simpler:
+
+- show how real ELF loading works
+- make ABI details visible
+- support common executable shapes people recognize
+- stay readable enough that future me, and hopefully other people, can still
+  learn from it
+- use 100% Assembly (duh!)
+
+Sometimes the best systems projects are the ones that make familiar things
+look slightly suspicious again for a while.
+
+<y>-= References</y>
+
+[1] <a href="https://gabi.xinuos.com/elf.pdf">System V ABI: ELF Object File Format</a>
+[2] <a href="https://gitlab.com/x86-psABIs/x86-64-ABI">System V AMD64 ABI</a>
+[3] <a href="https://man7.org/linux/man-pages/man5/elf.5.html">elf(5)</a>
+[4] <a href="https://man7.org/linux/man-pages/man2/execve.2.html">execve(2)</a>
+[5] <a href="https://man7.org/linux/man-pages/man2/mmap.2.html">mmap(2)</a>
+[6] <a href="https://man7.org/linux/man-pages/man3/getauxval.3.html">getauxval(3)</a>
+[7] <a href="https://man7.org/linux/man-pages/man8/ld.so.8.html">ld.so(8)</a>
+[8] <a href="https://linux.googlesource.com/linux/kernel/git/torvalds/linux/+/refs/heads/master/fs/binfmt_elf.c">Linux <t>fs/binfmt_elf.c</t></a>
+
+--[ <a href="12.html">PREV</a> | <a href="index.html">HOME</a> | <a href="14.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+
+
+</html>

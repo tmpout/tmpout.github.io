@@ -1,0 +1,501 @@
+<html>
+<head>
+<title>Brainfuck as a ROP Compiler ~ febnug</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                               ┌───────────────────────┐
+                                               ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                               │ █   █ █ █ █   █       │
+                                               │ █   █ █ █ █▀▀▀▀       │
+                                               │ █   █   █ █     ▄     │
+                                               │                 ▄▄▄▄▄ │
+                                               │                 █   █ │
+                                               │                 █   █ │
+                                               │                 █▄▄▄█ │
+                                               │                 ▄   ▄ │
+                                               │                 █   █ │
+                                               │                 █   █ │
+                                               │                 █▄▄▄█ │
+                                               │                 ▄▄▄▄▄ │
+                                               │                   █   │
+Brainfuck as a ROP Compiler                    │                   █   │
+~ febnug                                       └───────────────────█ ──┘
+
+
+[Abstract]
+----------
+
+This paper presents a minimal yet expressive execution model in which
+Brainfuck is compiled directly into a Return-Oriented Programming
+(ROP) chain. Instead of interpreting instructions in a traditional
+fetch-decode-execute loop, programs are translated into a sequence of
+gadget addresses placed on the stack. Execution is driven entirely by
+the `ret` instruction, effectively turning the stack pointer into the
+program counter.
+
+The result is a compact weird machine in which control flow, memory
+manipulation, and looping constructs emerge from stack arithmetic
+alone. We describe the design, implementation, and implications of
+this approach and discuss its relevance to exploitation, obfuscation,
+and unconventional computation models.
+
+[1. Introduction]
+-----------------
+
+Return-Oriented Programming (ROP) is commonly associated with
+exploitation techniques that reuse existing code snippets ("gadgets")
+to achieve arbitrary computation. However, beyond its offensive use,
+ROP can be viewed as a general-purpose execution model.
+
+In this work, we take a different approach: instead of constructing
+ROP chains manually under tight constraints, we treat ROP as a target
+for compilation. A high-level language is translated directly into a
+sequence of gadget addresses, forming a valid execution chain without
+the need for a dispatcher or interpreter loop. Brainfuck is used as
+a frontend due to its minimal instruction set and well-understood
+semantics.
+
+The key idea is straightforward: each Brainfuck instruction maps to a
+small gadget, and the resulting sequence is placed on the stack. The
+CPU executes the program by repeatedly performing `ret`, consuming
+the chain one address at a time. This work reframes ROP not as a
+constraint, but as a compilation target. In this model, a high-level
+program is indistinguishable from an exploit payload.
+
+[2. Execution Model]
+--------------------
+
+The system eliminates the traditional dispatcher loop entirely. There
+is no instruction pointer in the conventional sense. Instead:
+
+    rsp → [gadget_0][gadget_1][gadget_2]...
+
+Execution proceeds as follows:
+
+    ret → gadget_0
+    ret → gadget_1
+    ret → gadget_2
+
+The stack pointer (rsp) acts as the program counter, and each gadget
+ends with a `ret`, forming a continuous execution chain.
+
+A dedicated register (rbx) is used as the Brainfuck data pointer,
+referencing a memory tape.
+
+[3. Instruction Mapping]
+------------------------
+
+Brainfuck instructions are mapped to small gadgets:
+
+    +  → increment byte at [rbx]
+    -  → decrement byte at [rbx]
+    &gt;  → increment rbx
+    &lt;  → decrement rbx
+    .  → write byte to stdout
+    ,  → read byte from stdin
+
+Each gadget is minimal and ends with `ret`, ensuring seamless chaining.
+
+[4. Control Flow via Stack Arithmetic]
+--------------------------------------
+
+Loops are implemented without branches in the traditional sense.
+Instead, control flow is achieved by modifying the stack pointer.
+
+The `[` instruction compiles to a conditional forward skip:
+<pre><code class="language-x86asm">
+    cmp byte ptr [rbx], 0
+    jne continue
+    add rsp, N * 8
+continue:
+    ret
+</code></pre>
+The `]` instruction compiles to a conditional backward jump:
+<pre><code class="language-x86asm">
+    cmp byte ptr [rbx], 0
+    je continue
+    sub rsp, N * 8
+continue:
+    ret
+</code></pre>
+Here, N corresponds to the number of gadgets in the loop body. This
+approach transforms control flow into pointer arithmetic, a hallmark
+of weird machines.
+
+[4.1. Control Flow Without Branches]
+------------------------------------
+
+A notable property of this system is the absence of explicit control
+flow instructions such as jumps or calls. Instead, all branching
+behavior emerges from arithmetic applied to the stack pointer.
+
+This effectively removes the distinction between control flow and
+data manipulation. The program counter is no longer a dedicated
+register, but an implicit property of the stack state.
+
+This observation aligns with the notion of weird machines, in which
+computation arises from unintended or unconventional execution paths.
+
+[5. Compiler Design]
+--------------------
+
+The compiler performs a single pass over the Brainfuck source code.
+A stack is used to match brackets and compute jump offsets.
+
+Each instruction is translated into a gadget reference, producing a
+linear array of addresses. Loop constructs are patched after their
+boundaries are determined.
+
+The output is emitted as assembly directives:
+<pre><code class="language-x86asm">
+    .quad g_add
+    .quad g_inc_ptr
+    ...
+</code></pre>
+This representation can be directly assembled and linked into the
+execution environment.
+
+[6. Implementation Notes]
+-------------------------
+
+The chain must reside in executable memory. Placing it in a
+non-executable section (e.g., .data) results in a segmentation fault
+when control flow is redirected incorrectly.
+
+Alignment is also important. Ensuring 8-byte alignment simplifies
+addressing and avoids subtle crashes.
+
+Off-by-one errors in stack adjustments are a common source of bugs.
+Since `ret` implicitly advances rsp, offsets must account for this
+side effect.
+
+[7. Observations]
+-----------------
+
+This system demonstrates that:
+
+  - The stack alone can serve as both code and control flow.
+  - A minimal language can be compiled into a ROP payload.
+  - Control flow can be expressed purely through pointer arithmetic.
+
+Notably, the resulting program is indistinguishable from a handcrafted
+ROP chain. The distinction between "program" and "exploit" becomes
+blurred.
+
+[8. Applications]
+-----------------
+
+Potential applications include:
+
+  - Exploit generation using high-level abstractions
+  - Obfuscation via unconventional execution models
+  - CTF challenges involving weird machines
+  - Research into non-traditional computation
+
+[9. Conclusion]
+---------------
+
+We presented a method for compiling Brainfuck into a stack-driven ROP
+execution model. By eliminating the dispatcher and relying solely on
+`ret`, we obtain a minimal yet expressive system in which the stack
+pointer becomes the program counter.
+
+This work highlights the versatility of ROP beyond exploitation and
+demonstrates how even a trivial language can serve as a frontend for
+a low-level execution paradigm.
+
+Future work may explore optimization, self-modifying chains, or
+integration with real-world gadget sets.
+
+[10. Proof-of-Concept]
+----------------------
+
+To validate the proposed execution model, we implemented a minimal
+compiler and runtime that translate Brainfuck programs into a ROP
+chain and execute them without a traditional dispatcher.
+
+The system consists of two components:
+
+  (1) A compiler that converts Brainfuck source code into a sequence
+      of gadget references.
+  (2) A runtime that initializes the stack pointer to this sequence
+      and begins execution via `ret`.
+
+The resulting program contains no interpreter loop. Instead, control
+flow emerges from the structure of the stack itself.
+
+[10.1 Test Program]
+-------------------
+
+We use a simple Brainfuck program that computes and prints the
+character 'A' with a newline '\n':
+<pre><code class="language-txt">
+++++++++[&gt;++++++++&lt;-]&gt;+.
+&gt;++++++++++.
+</code></pre>
+This program initializes a loop counter, multiplies it into the next
+cell, and outputs the result.
+
+[10.2 Compilation]
+------------------
+
+The compiler translates each instruction into a gadget reference.
+Loop constructs are resolved into conditional stack adjustments.
+
+The generated output is an assembly fragment containing:
+
+    - A linear chain of gadget addresses
+    - Helper gadgets for conditional forward/backward jumps
+
+Example excerpt:
+<pre><code class="language-x86asm">
+    .quad g_add
+    .quad g_add
+    ...
+    .quad g_jz_skip_*
+    ...
+    .quad g_jnz_back_*
+</code></pre>
+[10.3 Execution]
+----------------
+
+At runtime, the following initialization occurs:
+<pre><code class="language-x86asm">
+    lea rbx, tape
+    lea rsp, chain
+    ret
+</code></pre>
+Execution proceeds entirely via `ret`, consuming the chain one
+address at a time. No explicit control flow instructions are used
+outside the gadgets themselves.
+
+[10.4 Observed Behavior]
+------------------------
+
+When executed, the program writes two bytes to stdout:
+
+    write(1, "A\n", 2)
+
+The newline ensures that the output is properly terminated, so the
+shell prompt appears on the next line. This behavior is consistent
+with typical program output, even though the implementation relies
+entirely on raw system calls.
+
+[10.5 Notes on Stability]
+-------------------------
+
+Several implementation details were critical:
+
+  - The chain must reside in an executable section (.text).
+  - Stack alignment must be preserved (8-byte alignment).
+  - Loop offsets must account for the implicit stack movement of `ret`.
+
+Incorrect offsets result in immediate crashes due to invalid control
+flow, which highlights the sensitivity of stack-based execution.
+
+[11. Appendix A: Compiler Source]
+---------------------------------
+
+The following Python script implements the Brainfuck-to-ROP compiler.
+
+---------------------------------------------------------------------
+<pre><code class="language-python">
+#!/usr/bin/env python3
+
+import sys
+
+GADGETS = {
+    '+': 'g_add',
+    '-': 'g_sub',
+    '&gt;': 'g_inc_ptr',
+    '&lt;': 'g_dec_ptr',
+    '.': 'g_write',
+    ',': 'g_read',
+}
+
+def compile_bf(code):
+    chain = []
+    loop_stack = []
+
+    for i, c in enumerate(code):
+        if c in GADGETS:
+            chain.append(GADGETS[c])
+
+        elif c == '[':
+            chain.append(("JZ", None))
+            loop_stack.append(len(chain) - 1)
+
+        elif c == ']':
+            if not loop_stack:
+                raise Exception("Unmatched ]")
+
+            start = loop_stack.pop()
+            end = len(chain)
+
+            skip_len = end - start
+            chain[start] = ("JZ", skip_len)
+
+            back_len = end - start + 1
+            chain.append(("JNZ", back_len))
+
+    if loop_stack:
+        raise Exception("Unmatched [")
+
+    return chain
+
+
+def emit(chain):
+    print(".section .text")
+    print(".global chain")
+    print(".p2align 3")
+    print("chain:")
+
+    for item in chain:
+        if isinstance(item, tuple):
+            op, val = item
+            if op == "JZ":
+                print(f"    .quad g_jz_skip_{val}")
+            elif op == "JNZ":
+                print(f"    .quad g_jnz_back_{val}")
+        else:
+            print(f"    .quad {item}")
+
+    print("    .quad g_exit")
+
+
+def emit_helpers(chain):
+    skips = set()
+    backs = set()
+
+    for item in chain:
+        if isinstance(item, tuple):
+            op, val = item
+            if op == "JZ":
+                skips.add(val)
+            elif op == "JNZ":
+                backs.add(val)
+
+    print("\n# ==== GENERATED GADGET HELPERS ====\n")
+
+    for n in skips:
+        print(f"g_jz_skip_{n}:")
+        print("    cmp byte ptr [rbx], 0")
+        print(f"    jne 1f")
+        print(f"    add rsp, {n}*8")
+        print("1:  ret\n")
+
+    for n in backs:
+        print(f"g_jnz_back_{n}:")
+        print("    cmp byte ptr [rbx], 0")
+        print(f"    je 1f")
+        print(f"    sub rsp, {n}*8")
+        print("1:  ret\n")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} program.bf")
+        sys.exit(1)
+
+    with open(sys.argv[1]) as f:
+        code = f.read().strip()
+
+    chain = compile_bf(code)
+    emit(chain)
+    emit_helpers(chain)
+</code></pre>
+---------------------------------------------------------------------
+
+[12. Appendix B: Runtime (ROP VM)]
+----------------------------------
+
+The runtime provides the execution environment and gadget set.
+
+---------------------------------------------------------------------
+<pre><code class="language-x86asm">
+.intel_syntax noprefix
+.global _start
+
+.section .bss
+tape: .skip 30000
+
+.section .text
+
+_start:
+    lea rbx, tape
+    lea rsp, chain
+    ret
+
+g_add:      inc byte ptr [rbx]; ret
+g_sub:      dec byte ptr [rbx]; ret
+g_inc_ptr:  inc rbx; ret
+g_dec_ptr:  dec rbx; ret
+
+g_write:
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, rbx
+    mov rdx, 1
+    syscall
+    ret
+
+g_read:
+    mov rax, 0
+    mov rdi, 0
+    mov rsi, rbx
+    mov rdx, 1
+    syscall
+    ret
+
+g_exit:
+    mov rax, 60
+    xor rdi, rdi
+    syscall
+</code></pre>
+---------------------------------------------------------------------
+
+[13. Appendix C: Build and Run]
+-------------------------------
+
+Example workflow:
+<pre><code class="language-sh">
+    python3 bf2rop.py test.bf &gt; chain.s
+    cat rop_vm.s chain.s &gt; full.s
+    as full.s -o rop_vm.o
+    ld rop_vm.o -o rop_vm
+    ./rop_vm
+</code></pre>
+
+The output should match the semantics of the original Brainfuck
+program.
+
+---------------------------------------------------------------------
+
+[References]
+------------
+
+[1] Shacham, H.
+    "The Geometry of Innocent Flesh on the Bone"
+    Proceedings of CCS, 2007
+[2] Bratus, S., et al.
+    "Exploit Programming: From Buffer Overflows to Weird Machines"
+[3] Brainfuck
+    https://en.wikipedia.org/wiki/Brainfuck
+[4] ROPgadget
+    https://github.com/jonathansalwan/ropgadget
+[5] exrop
+    https://github.com/d4em0n/exrop
+[6] Brainfvck Programming
+    https://github.com/y3dips/echo-zine/blob/master/issue31/008.txt
+
+--[ <a href="7.html">PREV</a> | <a href="index.html">HOME</a> | <a href="9.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

@@ -1,0 +1,587 @@
+<html>
+<head>
+<title>Detecting syscall hooks with side-channels ~ PinkNoize</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+                                                       │                   █   │
+                                                       └───────────────────█ ──┘
+
+╭───────────────────────────────────────────────────────────────────────────╮
+│                                                                           │
+│     ▄▄▃▃ Detecting ▇▇█▃    ▃ ▅▅▇▆▄▃▃▃▅▄▅▅▇▇▆▆▁▃▅    ▃ ▃     ▃▃▃▃▃▃▃▁      │
+│     ▃▃     ▃▅▃▃▃▃▅▃▅▃▃▃▃▃▃▅▅▃▁▁▁     ▁▄▃ syscall ▃▃   hooks    ▃ ▃▃▃      │
+│     ▅▅▅▅▅▅▅▅▃   with   ▄▄▁   ▃▃  ▃▃▄    side-channels    ▃▃               │
+│       ▃▅▃▃▃  ▃▃▁  ▃▃▅▅▃        ▁      ▃▃▃▃▃▁  ▃▅▅▅▄▃▃▃▅▅▃  ▃ ▅▅▅▇▅▅▅      │
+│                                                                           │
+│     ~ PinkNoize                                                           │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+───[ Table of Contents ]─────────────────────────────────────────────────────
+0 - Intro
+1 - The Cache(s)
+  1.1 - The Instruction Cache
+  1.2 - Set Associativity
+2 - The Ghosts of Christmas Cache
+  2.1 - GhostCache
+3 - Fingerprinting Syscalls
+  3.1 - Developing a Heuristic
+  3.2 - Units Under Test
+4 - PoC
+  4.1 - Baselining
+  4.2 - Evaluations
+5 - Limitations
+
+───[ 0 - Intro ]─────────────────────────────────────────────────────────────
+
+Many rootkits hook syscalls or other functions to hide files/processes or
+create secret channels. Detecting rootkits can be difficult because they can
+modify your OS to make it lie to you. Allow me to demonstrate a way to detect
+syscall hooks (without root!) by abusing a hardware optimization quirk. I've
+also released a tool, l1thography, so you can try it yourself.
+
+───[ 1 - The Cache(s) ]──────────────────────────────────────────────────────
+
+On the scale of CPU speeds, DRAM (dynamic random access memory) is slow. In
+order to bridge the gap between fast CPUs and slow memory, CPU designers add
+small amounts of fast RAM to temporarily hold the contents of DRAM. These
+are known as caches. I would recommend reading "What Every Programmer Should
+Know About Memory" [1] for an in-depth overview of CPU caching (and memory
+overall).
+
+Some of the caches present in various systems include:
+ - L0 cache (μop cache)
+ - L1 cache
+ - L2 cache
+ - L3 cache
+ - System level cache
+ - Translation lookaside buffer (TLB)
+ - and many more (some undocumented)
+
+  ╭───────────────────────────────────────────────────────────────────────╮
+  │╭─────────────────────────────────────────────────────────────────────╮│
+  ││                                 DRAM                                ││
+  │╰──────────────────────────────────┬──────────────────────────────────╯│
+  │╭──────────────────────────────────┴──────────────────────────────────╮│
+  ││                                  L3                                 ││
+  │╰──────────────────────────────────┬──────────────────────────────────╯│
+  │╭──────────────────────────────────┴──────────────────────────────────╮│
+  ││                                  L2                                 ││
+  │╰──────────────────────────────────┬──────────────────────────────────╯│
+  │                 ┌─────────────────┴─────────────────┐                 │
+  │╭────────────────┴────────────────╮ ╭────────────────┴────────────────╮│
+  ││                L1i              │ │               L1d               ││
+  │╰────────────────┬────────────────╯ ╰────────────────┬────────────────╯│
+  │                 └─────────────────┬─────────────────┘                 │
+  │                              ╭────┴────╮                              │
+  │                              │   CPU   │                              │
+  │                              ╰─────────╯                              │
+  ╰───────────────────────────────────────────────────────────────────────╯
+
+───[ 1.1 - The Instruction Cache ]───────────────────────────────────────────
+
+In this article, we will focus on the L1 instruction cache (L1i).
+Because instruction access and data access have different patterns, they
+also have different caches (typically only at L1). This allows for one cache
+to optimize data access patterns while the other optimizes instruction access
+patterns.
+
+On some architectures such as x86, the instruction cache and data cache have
+strong coherence, meaning that they are automatically kept in sync. This
+allows for self-modifying code (SMC) like the following pseudocode to run
+without manual cache management (assuming RWX memory permissions):
+<pre><code class="language-rust">
+  let mutable_func = |_| -&gt; u32 {
+      return 0;
+  };
+  // Add mutable_func to the instruction cache
+  mutable_func();
+  // Modify the code in mutable_func
+  mutable_func = |_| -&gt; u32 {
+    return 1;
+  };
+  let x = mutable_func(); // x = 1
+</code></pre>
+
+On architectures with weak coherence such as ARM or RISC-V, the instruction
+and data caches do not need to be kept in sync. This allows for reduced
+complexity in the CPU as the CPU no longer needs to manage cache invalidation
+for SMC.
+
+This causes unusual behavior for SMC though. For example, if you ran the code
+above on a system with weak coherence, x would most likely equal 0, not 1.
+Since the original function would still be in the cache after it was
+modified, it would execute the old code. Keep this in mind, we will take
+advantage of it later.
+
+To get this to run as expected, we need to flush the write buffer (the
+new instruction writes) to ensure the modifications made it to memory. Then,
+we invalidate the instruction cache to get rid of the stale instructions.
+
+───[ 1.2 - Set Associativity ]───────────────────────────────────────────────
+
+CPU caches require mapping arbitrary memory addresses to a small cache. The
+way in which a memory address maps to a location in the cache is called a
+cache placement policy. The most common cache placement policy you'll likely
+run into is a set-associative cache due to its high hit rate to CPU footprint
+ratio.
+
+A set-associative cache is a cache organized into n sets, each containing m
+spots (or ways) for cache lines. Each address maps to one set but can be stored
+in any one of the m ways depending on which of those ways are free.
+
+               Memory               Sets               Set 0 Ways
+           ╭───────────╮        ╭───────────╮        ╭───────────╮
+           │   @ 0x0   │──┬────►│   Set 0   │──┬┬┬──►│   Way 0   │
+           ├───────────┤  │     ├───────────┤  │││   ├───────────┤
+           │   @ 0x1   │────┬──►│   Set 1   │  ││└──►│   Way 1   │
+           ├───────────┤  │ │   ├───────────┤  ││    ├───────────┤
+           │   @ 0x2   │───────►│   Set 2   │  │└───►│    ...    │
+           ├───────────┤  │ │   ├───────────┤  │     ├───────────┤
+           │    ...    │  │ │   │    ...    │  └────►│   Way m   │
+           ├───────────┤  │ │   ├───────────┤        ╰───────────╯
+           │   @ n-1   │───────►│  Set n-1  │
+           ├───────────┤  │ │   ╰───────────╯
+           │   @ n     │──┘ │
+           ├───────────┤    │
+           │   @ n+1   │────┘
+           ├───────────┤
+           │    ...    │
+           ╰───────────╯
+
+A set-associative cache can be described by its number of ways, its number
+of sets, and its line size. For example, a 32 KB cache described in the ARM
+docs [2] has 4 ways and 256 sets with a 32 byte line length. Note that while
+the cache stores 32 KB, extra metadata is stored alongside the data to manage
+the state of the cache (tag, dirty/valid bits).
+
+The layout of the cache can be thought of as 4 arrays of length 256 with each
+element being 32 bytes long.
+
+ Rust syntax: let cache: [[[u8; 32]; 256]; 4];
+ C syntax   : uint8_t cache[4][256][32];
+
+Now that we have a cache to work with, we need a "hashing" algorithm to map
+addresses to locations in the cache. As the line size is 32 bytes, we will
+reserve the bottom 5 bits (2^5 = 32) of the memory address to index into the
+line. Similarly, we will allocate 8 bits (2^8 = 256) for the set index.
+
+     ╭─────────────────────────────────────────────────────────────────╮
+     │                 Tag                 |       Set      |   Line   │
+     ╰─────────────────────────────────────────────────────────────────╯
+ Bit 31                                  13                5           0
+
+Here are a few examples of how a few cache writes might go:
+  1. Cache 0xdeadbeef @ 0x7ff01234
+       Tag  = (0x7ff01234 & 0xFFFFE000) &gt;&gt; 13 = 0x3ff80
+       Set  = (0x7ff01234 & 0x00001FE0) &gt;&gt; 5  = 0x91
+       Line = (0x7ff01234 & 0x0000001F) &gt;&gt; 0  = 0x14
+     Stored in set 0x91 in way 0
+  2. Cache 0xdeadbeef @ 0x7ffa1234
+       Tag  = (0x7ffa1234 & 0xFFFFE000) &gt;&gt; 13 = 0x3ffd0
+       Set  = (0x7ffa1234 & 0x00001FE0) &gt;&gt; 5  = 0x91
+       Line = (0x7ffa1234 & 0x0000001F) &gt;&gt; 0  = 0x14
+     Also stored in set 0x91, but in way 1 as way 0 is occupied
+  3. Cache 0xdeadbeef @ 0x7ff04321
+       Tag  = (0x7ff01234 & 0xFFFFE000) &gt;&gt; 13 = 0x3ff82
+       Set  = (0x7ff01234 & 0x00001FE0) &gt;&gt; 5  = 0x19
+       Line = (0x7ff01234 & 0x0000001F) &gt;&gt; 0  = 0x1
+     Stored in set 0x19 in way 0
+
+This leaves the case of storing a value in a set where all ways are occupied.
+The way a value in the cache gets replaced is governed by the cache
+replacement policy. Some of these policies include:
+ - Pseudo Random Replacement
+   - Randomly select the next way to be replaced
+ - Round Robin
+   - Iterate through each way for replacement
+ - Pseudo Least Recently Used (PLRU)
+   - Estimate the least recently used way. This is more space efficient than
+     LRU
+When a cached line is removed/replaced, the event is called an eviction. We
+will refer to this process as eviction later in the article.
+
+If this explanation was confusing, a parking lot analogy may help [3].
+
+One more thing to note is that the address used to index the cache can be
+either a physical address or a virtual address. These are called virtual
+index, physical tag (VIPT) or physical index, physical tag (PIPT). This won't
+be relevant in this article but is useful for other cache attacks that target
+an arbitrary address.
+
+───[ 2 - The Ghosts of Christmas Cache ]─────────────────────────────────────
+
+Since caches are designed to speed up the access of recently accessed
+memory, they change the timing of reads and writes. If a read of an address
+was "fast", then the address was in the cache. If it was "slow", the address
+wasn't in the cache. This means we can leak the state of the cache based on
+its timing. Attacks based on this timing leak (and similar cache state
+leaks) are known as cache side-channel attacks.
+
+Leaking cache state via access times is the basis for many attacks including
+the following research that has helped inform my understanding of CPU
+architecture:
+ - Flush + Reload [4]
+ - ARMageddon [5]
+ - Spectre + Meltdown [6][7]
+
+As a result of all these successful attacks which are eased by fine-grained
+timers, CPU designers have started to restrict access to these timers. As a
+response, timer-free cache attacks are being developed. We will explore and
+use one below.
+
+───[ 2.1 - GhostCache ]──────────────────────────────────────────────────────
+
+GhostCache [8] is a research article detailing a timer-free cache
+side-channel on systems with weak coherence. As hinted at earlier, it takes
+advantage of the fact that modified instructions that are cached execute
+their old version while uncached instructions execute their new version. This
+allows the attacker to determine whether their cached instructions were
+evicted by the victim code.
+
+To lay the groundwork for the expected environment of this attack, we assume:
+ - Attacker-controlled RWX memory
+ - Attacker can execute code before and after invoking victim code
+ - System has weak coherence
+
+To initialize our environment, we will first create a function in the RWX
+memory that returns a known value:
+<pre><code class="language-x86asm">
+     0x5550: func:
+              mov x0, 0x420
+     0x5554   ret
+</code></pre>
+
+The first version of their attack is called Modify+Recall:
+ 1. Cache func in L1i by calling it
+ 2. Modify func in a measurable way such as changing its return value
+<pre><code class="language-x86asm">
+     0x5550: func:
+              mov x0, 0x69
+     0x5554   ret
+</code></pre>
+ 3. Execute victim code such as a syscall or yielding to another thread
+ 4. Execute func again and measure the output
+     If it returns 0x69, the victim code evicted it from the cache. This
+     leaks info about the victim code.
+
+They then identify that Modify+Recall has noise issues due to the prefetcher
+on a RISC-V core and propose their next version, Call+ModifyCall:
+ 1. Cache func in L1i by calling it
+ 2. Execute the victim code
+ 3. Modify and call func
+They also identify and address several sources of noise caused by PLRU and
+the L0 cache. At least one of these corrections will be used in my PoC but
+not discussed here.
+
+These attacks on a single cache line can be expanded to the whole L1i cache
+as we have a model for the cache-&gt;memory mapping described in section 1.
+This can be done by allocating a contiguous memory block that is the size of
+the L1i cache (sets * ways * cache line size). Each cache line within that
+allocation gets its own func.
+
+Finally, they demonstrate several sample attacks such as website
+fingerprinting, kernel secret leakage, Spectre IC leaks and a Mbed TLS RSA
+attack. I would recommend reading the article for more detail, but for a
+tl;dr you need to know that we can measure the cache evictions caused by
+victim code as a result of weak coherence.
+
+───[ 3 - Fingerprinting syscalls ]───────────────────────────────────────────
+
+Now that we have a way of measuring cache evictions of victim code, how does
+that help detect syscall hooks? Well, we can measure the sets evicted by a
+given syscall on a trusted device and develop a cache fingerprint for that
+syscall. If future measurements deviate significantly and consistently from
+the known good measurement, then it is likely that the code we are executing
+has changed (or was hooked).
+
+Given the GhostCache implementation above, fingerprinting a syscall should be
+relatively straightforward. We also use the Modify+Recall variation as it
+eliminated some noise issues.
+
+Measurement algorithm:
+ 1. Allocate an array of RWX functions of L1i cache size
+ 2. Initialize functions to their initial state
+     - Each function takes 1 cache line
+     - Ensure written functions are flushed to memory (or at least L2)
+ 3. Call all the functions to ensure they are cached in L1i
+ 4. Execute the syscall to fingerprint
+     - The syscall execution will cause instruction cache evictions as it
+       executes
+ 5. Modify the functions to return a different value
+ 6. Recall each function and record if the new or old value was returned
+
+This results in an array [[bool; SETS]; WAYS] of eviction states.
+
+If you take multiple measurements using this algorithm above, you will notice
+that individual measurements are noisy and inconsistent. We will need to
+remove this noise in order to have a stable measurement we can compare
+against.
+
+───[ 3.1 - Developing a Heuristic ]──────────────────────────────────────────
+
+In order to clean up the noise, I use the age-old idea of taking many samples
+and averaging them. I also sum the ways of each set together, meaning that an
+eviction on set x way 0 is equivalent to set x way 2. This leaves an array
+[f64; SETS] that represents the average evictions per set.
+
+This can be presented visually as shown below, where each character is 1 out
+of the 256 sets in my cache. The height of each character represents the
+average number of evictions for that set across all samples (see scale below
+the image):
+
+      --------------------------- sysinfo ----------------------------
+      ▃▃▃▃ ▃          ▃▃▃▃▃▃▁▃   ▃    ▃         ▃▃▃▃  ▃        ▃▅▃▃▃▃▄
+      ▃              ▃▃▃▃▃▃▃▅▅▄▁▁▁▁▁ ▃ ▃▅▆▄▃       ▃▁
+      ▃▃▃▅▅▅▇▇▅▅▅▅▅▃▅▃▁▁▁
+        ▁                  ▅▅▅▃▃▃▃▁  ▃▃▃ ▃▃▃▃▁▁      ▃▃ ▃▃▃  ▃ ▃▃▅▅▆▅▃
+      ----------------------------------------------------------------
+                ▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇██████
+      0.0                             0.5                          1.0
+
+NOTE: This representation is not normalized but clips at 1.0 evictions. I
+      much prefer the ANSI coloring available in l1thography which can
+      represent many more values.
+
+We still need to be able to compare a separate measurement against the
+baseline, which means we need to determine a threshold for when a set's
+average is "close enough" to the baseline. I chose to achieve this by measuring
+the variance/stddev of each set. This allows dynamically picking a "close
+enough" threshold for each set. This also helps filter out noisy sets while
+still detecting variations in sets with a stable number of evictions.
+
+Through experimentation on a Raspberry Pi 5, I landed on a threshold
+of 3 standard deviations. The equation I chose for the comparison is
+<pre><code class="language-rust">
+ delta = | baseline[set].mean - test[set].mean | - 3 * baseline[set].stddev
+</code></pre>
+Any sets with a delta &gt; 0.0 are considered a deviation from the baseline. The
+deviations can also be visually represented just like the fingerprint.
+
+I also derive two more metrics from these deviations to make it easier to
+identify major deviations.
+ 1. Deviation magnitude: Sum all deviations (delta &gt; 0)
+ 2. Max deviation
+
+You can see some visualizations of this in the Evaluations section.
+
+───[ 3.2 - Units Under Test ]────────────────────────────────────────────────
+
+Since measuring a syscall involves executing it, we must choose how we invoke
+that syscall. This allows for targeting of different paths within the syscall
+(and hook). For example, passing invalid arguments that cause the syscall to
+fail fast might result in a smaller, more stable eviction footprint.
+
+My units under test are:
+ - nop: Execution of a nop instruction with no syscall. This is our control
+ - sysinfo: Normal execution of sysinfo
+ - bad_read: Read syscall with an invalid file descriptor
+ - read: Reading 16 bytes from a given file
+ - getdents64: Getdents64 of a given directory
+ - bad_getdents64: Getdents64 with a buffer that is too small and an invalid
+   file descriptor
+
+───[ 4 - PoC ]───────────────────────────────────────────────────────────────
+
+Below are some measurements from a Raspberry Pi 5. The process I followed is:
+ 1. Baseline on a known clean device/kernel
+ 2. For each scenario
+     i. Reboot to untaint the kernel. This will also ensure the baseline is
+        not dependent on random variations such as KASLR
+    ii. Evaluate the clean kernel as a sanity check for the baseline
+   iii. Load the kernel module and evaluate
+
+───[ 4.1 - Baselining ]──────────────────────────────────────────────────────
+
+      $ ./l1thography --samples 500000 baseline ./baseline-4-real-dis-time
+               ▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▄▄▄▄▄▄▄▄▅▅▅▅▅▅▅▅▆▆▆▆▆▆▆▆▇▇▇▇▇▇▇▇██████
+      Baselining nop
+
+                    ▅▅▃▃▃▄▃          ▃ ▃▃
+
+
+      Took 82.06s
+      Baselining sysinfo
+      ▁▃▃  ▃          ▃▃▃▃▃▁▁▃   ▃    ▃         ▃▃▃▃  ▃        ▃▅▃▃▃▃▄
+      ▃              ▃▃▃▃▃▃▃▅▄▄▃▃▁   ▃ ▃▅▅▃▃       ▃▁
+      ▃▃▃▅▅▅▇▇▅▅▅▅▄▁▃▁▁
+        ▁                  ▅▅▅▃▃▃▃▃▁ ▃▃▃ ▃▃▃▃▁       ▃▃ ▃▃▃  ▃ ▃▃▅▅▇▅▃
+      Took 82.82s
+      Baselining bad_read
+      ▃▃▃▁    ▃▃ ▃▃▃  ▃▃     ▃            ▃▅▅▄▃▃▄▄    ▃
+                     ▃▃▃▃▃▃▃▁▁▁▁▁    ▃▁▃▃                           ▃▃
+      ▃▅▃▅▅▅▅▅▃
+        ▁                        ▁       ▃▃▃▃▁          ▃▃▃  ▃ ▃▃▃▃▃▃▃
+      Took 82.25s
+      Baselining read
+      ▁▃▃▁    ▃▃▃▃ ▃ ▃▅▇▇▅▅▅▅▃  ▃▃    ▃         ▃▃▃▅▅▅▇▄          ▃▃▃▃
+      ▃▃▃   ▃▃▃▅▃▁▁  ▃▃▃▃▃▃▅▆▆▄▄▃    ▃▁▃▃     ▃ ▃       ▁    ▅▅▃▅▃▃▃▅▃
+      ▇▆▇█▇▇██▇▃ ▃ ▃▅▃  ▃▃▃▃ ▃        ▃▃▅▅▅▅▃▅▅█▅▅▅▅▅▃▃▃▃
+       ▃▅▃▃▃▃▃       ▅▅▃▃ ▃▃  ▃▃▃▃▃▃▃▅▅▅▇███▇▁▁  ▃▃▃▃▁  ▃▃▃  ▃ ▄▃▃▃▃▃▃
+      Took 82.31s
+      Baselining getdents64
+      ▃▇▇█▅▃▅▅▆▇▇▅▅▃▃▃▃▃▃▃▃▃▅▅▃▃▃█████▅▅▃▃▆▅▁ ▃▃▅▇▅▅▅▄▇▅▃▃▅▅▇██▇▇▅█▅▇▇
+      ▇▇█▃▃▅█▇▇███▇▅▃▇▇▇▇▇▇███▅▅▄▃▃▃ ▃▃▃▃ ▅▇▇██▇▆▄▃   ▃▅▅▃▃▃▅█▅▃▃▁▃▃▅▅
+      ▇▇▇▇▇███▇▅▅▅▅▅▅▅▅▅▃▅▅▅▅█▅▅▅▃▃▃▃   ▃▅▅▅▃▅▅▃
+      ▃▃▅            ▃▃▃▃▁ ▃  ▃▅▇▇▅▅▇█▇█▇█▆▅▅▃▃▃▃       ▃▃▃  ▃ ▅▅▅▄▄▃▅
+      Took 105.22s
+      Baselining bad_getdents64
+      ▃▃▃▁            ▃▃     ▃                        ▃
+                     ▃▃▃▃▃▃▃▃▃▁▁▁    ▃▁▃▃              ▃▃▃▃▁▃▃      ▃▃
+      ▃▅▃▅▅▅▅▅▃
+        ▃                        ▁       ▃▃▃▃▁          ▃▃▃  ▃ ▃▆▅▆▅▆▅
+      Took 82.33s
+
+───[ 4.2 - Evaluations ]─────────────────────────────────────────────────────
+
+Using the baseline above, we can now evaluate the device or an identical
+device at a later time.
+
+      ---- clean kernel ----------------------------------------------
+      Testing bad_read
+      Took 16.5s
+                ▄
+
+
+
+      Deviation magnitude: 0.457
+      Max deviation: 0.457
+      Diffs: 1
+      Testing read
+      Took 16.5s
+
+
+
+
+      Deviation magnitude: 0.000
+      Max deviation: 0.000
+      Diffs: 0
+      Testing getdents64
+      Took 21.0s
+
+
+
+
+      Deviation magnitude: 0.000
+      Max deviation: 0.000
+      Diffs: 0
+      Testing bad_getdents64
+      Took 16.5s
+
+                                                           ▅     █▆
+
+
+      Deviation magnitude: 2.041
+      Max deviation: 0.898
+      Diffs: 3
+      ----------------------------------------------------------------
+
+Even clean samples have some amount of noise! You can look for consistent
+deviations across both a syscall and its bad variation. This should flag the
+sets that map to the hook's entrypoint which will need to be executed in both
+cases.
+
+      ---- syscall table hijack (diamorphine) ------------------------
+      Testing getdents64
+      Took 21.257781828s
+                                                      ▁▁ ▇ ▁▃
+                                                                 ▁ ▃
+      ▆▄ ▅▃    ▆▄      ▃
+
+      Deviation magnitude: 5.856
+      Max deviation: 0.791
+      Diffs: 21
+      Testing bad_getdents64
+      Took 16.475009902s
+                  ▄▃       ▄                       ▄▆▆▆
+                ▁                                                ▁
+      ▅  ▁
+
+      Deviation magnitude: 4.892
+      Max deviation: 0.701
+      Diffs: 14
+      ----------------------------------------------------------------
+
+Diamorphine [9] hooks getdents64 in order to hide directories. Here we can
+see that the getdents64 syscall has a large number of differences in both test
+cases.
+
+      ---- ftrace hooking --------------------------------------------
+      Testing sysinfo
+      Took 16.622265542s
+       ▃▁  ▆   ▁▄▄       ▅▅▄
+                                                             ▅▆▄█▇▇███
+      █ ▇▇▇                     ███▆▆▆▆
+
+      Deviation magnitude: 20.541
+      Max deviation: 1.680
+      Diffs: 29
+      ----------------------------------------------------------------
+
+This test uses a dummy sysinfo hook that subtracts 100 from sysinfo.procs
+compiled with -Os to minimize L1i cache pollution. This hook compiled to
+about 5 cache lines excluding the calls to memset, copy_from_user,
+copy_to_user and the ftracer overhead.
+
+───[ 5 - Limitations ]───────────────────────────────────────────────────────
+ - Requires a CPU with weak coherence (ARM/RISC-V with icache coherency
+   disabled)
+   - Quick checks show AWS/GCP ARM cores seem to have coherency enabled
+ - Requires support for read, write, and execute memory (AFAIK Apple silicon
+   does not)
+ - Requires knowledge of the CPU cache size and placement policy
+ - Requires a baseline established on the same CPU, kernel, and fingerprinter
+   - Kernel upgrades or recompiling the fingerprinter will likely require
+     re-baselining
+ - Small syscall hooks may be able to avoid detection
+
+───[ Code ]──────────────────────────────────────────────────────────────────
+
+The CLI program developed for this project can be found at
+    https://codeberg.org/PinkNoize/l1thography
+
+───[ References ]────────────────────────────────────────────────────────────
+ [1] Ulrich Drepper. What every programmer should know about memory, 2007.
+     https://people.freebsd.org/~lstewart/articles/cpumemory.pdf
+ [2] https://developer.arm.com/documentation/den0042/0100/Caches/Cache-architecture/A-real-life-example
+ [3] https://asimplecpu.com/Memory/set
+ [4] Y. Yarom and K. Falkner, ‘FLUSH+RELOAD: A High Resolution, Low Noise, L3
+     Cache Side-Channel Attack’, in 23rd USENIX Security Symposium (USENIX
+     Security 14), 2014
+ [5] M. Lipp, D. Gruss, R. Spreitzer, C. Maurice, and S. Mangard, ‘ARMageddon:
+     Cache Attacks on Mobile Devices’, in 25th USENIX Security Symposium
+    (USENIX Security 16), 2016
+ [6] P. Kocher et al., ‘Spectre Attacks: Exploiting Speculative Execution’, in
+     40th IEEE Symposium on Security and Privacy (S&P’19), 2019
+ [7] M. Lipp et al., ‘Meltdown: Reading Kernel Memory from User Space’, in 27th
+     USENIX Security Symposium (USENIX Security 18), 2018
+ [8] Jin, Yu, et al. GhostCache: Timer-and Counter-Free Cache Attacks
+     Exploiting Weak Coherence on RISC-V and ARM Chips, 2025.
+     https://dl.acm.org/doi/epdf/10.1145/3719027.3744833
+ [9] https://github.com/m0nad/Diamorphine
+
+--[ <a href="10.html">PREV</a> | <a href="index.html">HOME</a> | <a href="12.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

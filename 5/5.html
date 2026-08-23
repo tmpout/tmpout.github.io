@@ -1,0 +1,104 @@
+<html>
+<head>
+<title>PERL Stuff ~ genetix</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+PERL Stuff                                             │                   █   │
+~ genetix                                              └───────────────────█ ──┘
+
+
+1.pl
+<pre><code class="language-perl">
+#!/usr/bin/perl
+@original_kw = qw(print if else for elsif open close local do while my push next);
+@kw = @original_kw;
+
+#headache
+sub rndkw { $_ = ' 'x@_; $i = @_ ;s/ /$j = rand($i--);
+@_[$i,$j] = @_[$j, $i]; ''/ge;@_} @kw = rndkw(@kw);$_=
+join ' ' , 0..$#original_kw; s/(\d+)/$index{$1 } = [grep {
+$kw[$_] eq $original_kw[$1]} 0..$#kw]->[0];''/ge;
+
+#the virus would be here
+my $code = <<"END_CODE";
+\$kw[5] \$kw[10] \$f, '<', 't.tmp';
+\$kw[10] \$metacode = \$kw[8] { \$kw[7] \$/; <\$f> };
+\$kw[6] \$fh; \$kw[5] \$kw[10] \$fh, '<', \$0;
+\$kw[10] \@data; \$kw[10] \$skipping = 0;
+\$kw[9] (\$kw[10] \$line = <\$fh>) {
+chomp \$line; \$kw[1] (\$line eq '#poly') {
+\$kw[11] \@data, \$line;\$kw[11] \@data, \$metacode;  
+\$skipping = 1;\$kw[12];}\$kw[1] (\$line eq '#end#') {
+\$kw[11] \@data, \$line;\$skipping = 0;\$kw[12];
+}\$kw[12] \$kw[1] \$skipping;\$kw[11] \@data, \$line;}
+\$kw[6] \$fh; unlink "t.tmp";\$kw[0] join("\\n", \@data), "\\n";
+END_CODE
+
+#this is what av would see
+$code =~ s/\$kw\[(\d+)\]/'\$kw[' . $index{$1} . ']'/ge;
+print $code;
+</code></pre>
+
+2.pl
+<pre><code class="language-perl">
+use List::Util qw(shuffle);
+
+my @arr = qw!shuffle split = @ } or ; , { local shift die print do map join o s . ) ( p m 0 / \\ # ^!; #could add more
+#below is the code which changes in 2 different ways. the "engine" itself is mutated
+my @x = (
+[ 1,  '$code', "$arr[2]", "$arr[13]", "$arr[8]" ],
+[ 2,  "$arr[9]", "$arr[20]", "$arr[3]", 'ARGV', "$arr[7]", '$/', "$arr[19]" ],
+[ 3,  "$arr[2]", "$arr[10]", '||$0;<>', "$arr[4]", "$arr[6]" ],
+[ 4,  '$code=~/my \@arr = qw!(.*?)!;/s ', "$arr[5]", ' ', "$arr[11]", "$arr[6]" ],
+[ 5,  "$arr[3]", "$arr[16]", "$arr[2]", "$arr[1]", q{' '}, "$arr[7]", '$1', "$arr[6]" ],
+[ 6,  "$arr[3]", "$arr[17]", "$arr[2]", "$arr[0]", "$arr[3]", "$arr[16]", "$arr[6]" ],
+[ 7,  "$arr[3]", "$arr[21]", "$arr[8]", "$arr[3]", "$arr[17]", "$arr[4]" ],
+[ 8,  "$arr[2]", "$arr[23]", '..$#s', "$arr[6]" ],
+[ 9,  "$arr[3]", "$arr[22]", "$arr[2]", "$arr[14]", ' $p{$o[$_]}' ],
+[ 10, "$arr[7]", "$arr[23]", '..$#o', "$arr[6]" ],
+[ 11, q{$code=~s/my \@arr = qw![^!]*!;/'my @arr = qw!'.} ],
+[ 12, "$arr[15]", q{(' ',@s).'!;'/e;} ],
+[ 13, '$code=~s/\$arr\[(\d+)\]/"\$arr[$m[$1]]"/ge', "$arr[6]" ],
+[ 14, q{$code=~/(.*?my \@x = \(\n)(.*?)(\n\);.*)/s or die;$pre=$1;$mid=$2;$post=$3;} ],
+[ 15, q{@l=split/\n/,$mid;} ],
+[ 16, q{@l=shuffle @l;} ],
+[ 17, q{$code=$pre.join("\n",@l).$post;} ],
+[ 18, "$arr[12]", ' $code', "$arr[6]" ],
+);
+
+my ($code, $x, $pre, $mid, $post, @l, @s, @o, %p, @m);
+
+$x = join '', map join('', @{$_}[1..$#$_]), sort { $a->[0] <=> $b->[0] } @x; #re-order the shuffled array before using eval ofc.
+
+eval $x;
+die $@ if $@; 
+</code></pre>
+
+
+
+--[ <a href="4.html">PREV</a> | <a href="index.html">HOME</a> | <a href="6.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

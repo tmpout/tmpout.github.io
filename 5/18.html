@@ -1,0 +1,357 @@
+<html>
+<head>
+<title></title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+BGGP6 Recap                                            │                   █   │
+~ Binary Golf Association                              └───────────────────█ ──┘
+
+─── Intro ──────────────────────────────────────────────────────────────────────
+
+This year's BGGP theme was <a href="https://github.com/binarygolf/BGGP/blob/main/2025/6.md">RECYCLE</a>.
+
+The goal was to let golfers explore combinations of previous BGGP challenges.
+Additional points were awarded for how many BGGP challenge criteria a 
+given entry met.
+
+Golfers also had the option of simply trying to find the smallest thing that
+prints or displays the number 6 in some way. 
+
+
+[ Totals by Challenge ]
+
+This year had 36 <a href="https://github.com/binarygolf/BGGP/tree/main/2025">entries</a>. 
+
+1 - Palindromes - 6 entries
+2 - Polyglots - 15 entries
+3 - Crashes - 8 entries
+4 - Self Rep - 11 entries
+5 - Download - 16 entries
+6 - Print 6 - 33 entries
+
+─── 1. Palindromes ─────────────────────────────────────────────────────────────
+
+Palindrome files were the first challenge for BGGP, and one of the hardest ones, 
+requiring byte level precision by the entry authors.
+
+6 entries were palindromes, including the highest scoring BGGP6 entries.
+
+mattpass's 5 byte shell script demonstrated an elegant palindromic loader that 
+leverages command line arguments to execute additional code.
+
+dominikr's ELF and COM polyglot palindrome entry was awarded bonus points for 
+merging a PR to fix bugs.
+
+| Size | Author      | Type                | BGGP        | Score | Issue |
+| ---- | ----------- | ------------------- | ----------- | ----- | ----- |
+| 0223 | dominikr    | ELF COM             | 1 2 3 4 5 6 | 6433  |  <a href="https://github.com/binarygolf/BGGP/issues/170">170</a>  |
+| 0179 | mattpass    | .sh, .sql, .zip     | 1 2 3 4 5 6 | 5453  |  <a href="https://github.com/binarygolf/BGGP/issues/165">165</a>  |
+| 0005 | mattpass    | .sh                 | 1 . . . 5 6 | 4859  |  <a href="https://github.com/binarygolf/BGGP/issues/151">151</a>  |
+| 0055 | mauke       | COM, .pl, .sh, Make | 1 2 . . . . | 4553  |  <a href="https://github.com/binarygolf/BGGP/issues/146">146</a>  |
+| 0472 | xcellerator | ELF, DICOM Image    | 1 2 . . . 6 | 4392  |  <a href="https://github.com/binarygolf/BGGP/issues/167">167</a>  |
+| 0228 | febnug      | ELF                 | 1 . . . . 6 | 4380  |  <a href="https://github.com/binarygolf/BGGP/issues/157">157</a>  |
+
+─── 2. Polyglots ───────────────────────────────────────────────────────────────
+
+15 entries were polyglots
+
+15 entries met the BGGP2 Polyglot challenge criteria. Since BGGP2, polyglots 
+have become a common feature of BGGP entries. 
+
+The entry with the most files in a polyglot was a tie with 4 each:
+- deluks did an ELF, PDF, RAR and Zip polyglot 
+- mauke did a COM, Make, Perl, Shell polyglot that was also a palindrome!
+
+Here is a breakdown of BGGP6 polyglot entries by file type:
+
+  COM deb DICOM ELF js make pbm pdf pl ps1 rar sh sql txt zip <g>
+  <y>x</y>───│───│─────│───│──<y>x</y>────│───│───<y>x</y>──│───│───<y>x</y>──│───│───│──
+  │───<y>x</y>───│─────│───│──│────│───│───│──│───│───<y>x</y>──│───│───│──
+  │───│───<y>x</y>─────<y>x</y>───│──│────│───│───│──│───│───│──│───│───│──
+  │───│───│─────<y>x</y>───│──│────│───<y>x</y>───│──│───│───│──│───│───│──
+  │───│───│─────<y>x</y>───<y>x</y>──│────│───<y>x</y>───│──│───│───│──│───│───│──
+  │───│───│─────<y>x</y>───│──│────│───<y>x</y>───│──│───<y>x</y>───│──│───│───<y>x</y>──
+  │───│───│─────<y>x</y>───│──│────│───│───│──│───│───<y>x</y>──│───│───│──
+  │───│───│─────│───│──│────<y>x</y>───│───│──│───│───<y>x</y>──│───│───│──
+  │───│───│─────│───│──│────│───│───│──<y>x</y>───│───│──│───<y>x</y>───│──
+  │───│───│─────│───│──│────│───│───<y>x</y>──│───│───<y>x</y>──│───│───│──
+  │───│───│─────│───│──│────│───│───│──│───│───<y>x</y>──│───│───<y>x</y>──</g>
+
+See the repo's polyglot section for other entry info!
+
+
+─── 3. Crashes ─────────────────────────────────────────────────────────────────
+
+8 entries met the BGGP3 Crash challenge criteria. 
+
+The smallest was q3w3e3 with a 24 byte shell script. The second smallest was 
+also q3w3e3 with a 26 byte shell and perl polyglot. The third smallest was 
+dominikr with a 29 byte perl crash.
+
+q3w3e3 found multiple ways to crash curl
+- sh 24 bytes - <a href="https://github.com/binarygolf/BGGP/issues/169">169</a>
+- sh pl 26 bytes - <a href="https://github.com/binarygolf/BGGP/issues/171">171</a>
+- sh pl 44 bytes - <a href="https://github.com/binarygolf/BGGP/issues/172">172</a>
+
+dominikr had 3 crashes
+- perl 29 bytes - <a href="https://github.com/binarygolf/BGGP/issues/168">168</a>
+- elf32 154 bytes no cli args - <a href="https://github.com/binarygolf/BGGP/issues/177">177</a>
+- elf, com 223 bytes - <a href="https://github.com/binarygolf/BGGP/issues/170">170</a>
+
+bah figured out how to crash bash via inputrc keybinds in 126 bytes (<a href="https://github.com/binarygolf/BGGP/issues/166">166</a>)
+
+mattpass's 179 byte Shell/Zip polyglot crashed itself while satisfying all 6 
+challenges. (<a href="https://github.com/binarygolf/BGGP/issues/165">165</a>)
+
+
+─── 4. Self Rep ────────────────────────────────────────────────────────────────
+
+11 entries met the BGGP4 Self Replication challenge criteria. 
+
+The smallest was q3w3e3 with a 24 byte shell script. The second smallest was 
+also q3w3e3 with a 26 byte shell and perl polyglot. The third smallest was yet
+again q3w3e3 with a 44 byte shell and perl polyglot.
+
+bah 
+- curlrc 62 bytes - <a href="https://github.com/binarygolf/BGGP/issues/154">154</a>
+- inputrc 126 bytes - <a href="https://github.com/binarygolf/BGGP/issues/166">166</a>
+
+dominikr
+- elf32 45 bytes with cli args - <a href="https://github.com/binarygolf/BGGP/issues/174">174</a>
+- elf32 154 bytes no cli args - <a href="https://github.com/binarygolf/BGGP/issues/177">177</a>
+- deb, sh 182 bytes - <a href="https://github.com/binarygolf/BGGP/issues/175">175</a>
+- elf, com 223 bytes - <a href="https://github.com/binarygolf/BGGP/issues/170">170</a>
+
+ilya
+- elf pdf 512 bytes - <a href="https://github.com/binarygolf/BGGP/issues/180">180</a>
+
+mattpass
+- sh zip 179 bytes - <a href="https://github.com/binarygolf/BGGP/issues/165">165</a>
+
+q3w3e3
+- sh 24 bytes - <a href="https://github.com/binarygolf/BGGP/issues/169">169</a>
+- sh pl 26 bytes - <a href="https://github.com/binarygolf/BGGP/issues/171">171</a>
+- sh pl 44 bytes - <a href="https://github.com/binarygolf/BGGP/issues/172">172</a>
+
+
+─── 5. Download ────────────────────────────────────────────────────────────────
+
+16 entries met the BGGP5 Download criteria. 
+
+The smallest was mattpass's 5 byte shell script using cli args. The smallest 
+without cli args was q3w3e3 with a 24 byte shell script.
+
+bah
+- curlrc 62 bytes - <a href="https://github.com/binarygolf/BGGP/issues/154">154</a>
+- inputrc 126 bytes - <a href="https://github.com/binarygolf/BGGP/issues/166">166</a>
+
+dominikr
+- elf32 45 bytes with cli args - <a href="https://github.com/binarygolf/BGGP/issues/174">174</a>
+- elf32 71 bytes no cli args - <a href="https://github.com/binarygolf/BGGP/issues/173">173</a>
+- elf32 154 bytes - built with custom compiler - <a href="https://github.com/binarygolf/BGGP/issues/177">177</a>
+- tar 148 bytes - <a href="https://github.com/binarygolf/BGGP/issues/178">178</a>
+- deb, sh polyglot 223 bytes - <a href="https://github.com/binarygolf/BGGP/issues/175">175</a>
+- elf com 223 bytes - <a href="https://github.com/binarygolf/BGGP/issues/170">170</a>
+
+febnug
+- elf64 1696 bytes
+
+mattpass
+- sh 5 bytes with cli args - <a href="https://github.com/binarygolf/BGGP/issues/151">151</a>
+- sh zip 179 bytes - <a href="https://github.com/binarygolf/BGGP/issues/165">165</a>
+- sh sql zip 159 bytes - <a href="https://github.com/binarygolf/BGGP/issues/164">164</a>
+
+q3w3e3
+- sh 24 bytes - <a href="https://github.com/binarygolf/BGGP/issues/169">169</a>
+- sh pl 26 bytes - <a href="https://github.com/binarygolf/BGGP/issues/171">171</a>
+- sh pl 44 bytes - <a href="https://github.com/binarygolf/BGGP/issues/172">172</a>
+
+x0
+- sh 86 bytes with args - <a href="https://github.com/binarygolf/BGGP/issues/155">155</a>
+
+─── 6. RECYCLE ─────────────────────────────────────────────────────────────────
+
+33 entries met the BGGP6 challenge criteria to print 6 as small as possible. 
+Since this was the most popular entry, you should just check out the repo 
+for more info :)
+
+
+─── Special Shouts ─────────────────────────────────────────────────────────────
+
+/// New Files We Haven't Seen Before ///////////////////////////////////////////
+
+Every year, golfers explore file types that haven't been seen in BGGP.
+
+  curlrc     -- bah's entry showed us how to use curlrc to execute commands
+  
+  DICOM      -- xcellerator combined a DICOM medical image with a RISC-V ELF
+  
+  erofs      -- bilger used free space to include some sweet art in the base64,
+                see below!
+  
+  inputrc    -- bah came through with another interesting rc file that can 
+                inject commands into bash, neat!
+  
+  NetPBM     -- ackmage investigated the NetPBM format variants and created a 
+                polyglot that works on MacOS
+  
+  Python Pip -- dtm shared some abilities of pip packages that can only be 
+                described as "pure evil"
+  
+  RDOFF      -- A long lost object file format used by nasm revived by netspooky
+  
+  Wireshark  -- netspooky created a tiny and annoying dissector that spams 6
+  Dissector
+
+
+/// Coolest Visual Payloads ////////////////////////////////////////////////////
+
+bilger EROFS base64 including the letters "BGGP" spelled out in "6"s:
+
+  ////////////////////////////////////////////////////////////////////////////
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  //+++6+666666666o+++++++++o666666o+++++++++++o666666o+++++6+666666666o++++//
+  //+++6+6666+++++66++++++6666++++++66+++++++6666++++++66+++6+6666+++++66+++//
+  //+++6+6666++++++66+++6+6666++++++++6++++6+6666++++++++6++6+6666++++++66++//
+  //+++6+6666++++++66++66+6666++++++++++++66+6666+++++++++++6+6666++++++66++//
+  //+++6+6666+++++66+++66+6666++++++++++++66+6666+++++++++++6+6666+++++66+++//
+  //+++6+6666666666++++66+6666++++++++++++66+6666+++++++++++6+666666666P++++//
+  //+++6+6666+++++66+++66+6666+++6666666++66+6666+++6666666+6+6666++++++++++//
+  //+++6+6666++++++66+++6+6666++++++++6++++6+6666++++++++6++6+6666++++++++++//
+  //+++6+6666+++++66++++++6666++++++66+++++++6666++++++66+++6+6666++++++++++//
+  //+++6+666666666P+++++++++6666666P+++++++++++6666666P+++++6+6666++++++++++//
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//
+  /////////////////////////////////////////////////////////////////////////OLh
+  9eCuTjE6AwAAAAkAJAACAAAAAAAAAE4bhUQAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  AAAAAAAAAAAAAAAABAAAAP9BAgAoAAAAAAAAAP////8BAAAAAAAAAAAAAAAkAAAAAAAAACQAAgAk
+  AAAAAAAAACUAAgAnAAAAAAAAACcAAQAuLi42AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP+B
+
+x0's loader - See Repo
+
+xcel's grimey DICOM - See Repo
+
+
+/// Most Cursed Code ///////////////////////////////////////////////////////////
+
+OwOday's entry really demonstrates the power of 6:
+<pre><code class="language-c">
+  #include &lt;stdint.h&gt;
+  #define six (6)
+  #define s6 (six-(six/six))
+  #define ssssss6 (six-six)
+  #define sssss6 (six-s6)
+  #define ss6 (s6-sssss6)
+  #define ssss6 (six-ss6)
+  #define sss6 (ss6-sssss6)
+  #define s6xx (ss6+sss6)
+  #define s6xxxx (ss6+s6)
+  #define s6xxx (s6xxxx-sssss6)
+  #define ss66 (six+ss6)
+  #define s66x (six+six)
+  #define s66xx (six+s6xx)
+  #define s66 (six+s6)
+  #define ss666 (six+ss66)
+  #define sx(x) #x
+  #define s(x) sx(x)
+  #define ______s6x (ss666*ss666*ss666*ss666*ss666*ss666)
+  #define ____s6x (ss666*ss666*ss666*ss666)
+  #define __s6x (ss666*ss666)
+  #define siix (((s6xx*s6*six)*(______s6x))+((ss666*s6xxx)*(____s6x))+(ss6*s6xxx)) //0xd2800020
+  #define siiix (((ss666)*(______s6x))+(((s6xxx*six*ss6)+1))) //0x100000c1
+  #define siiiix (((s6xx*s6*six)*(______s6x))+((ss666*s6xxx)*(____s6x))+((six*s66)))  //0xd2800042
+  #define siiiiix (((s6xx*s6*six)*(______s6x))+((ss666*s6xxx)*(____s6x))+((ss666*s6xxxx))) //0xd2800090
+  #define siiiiiix ((((six*ss66*ss6)+ssss6)*(______s6x))+((s6xxx*s6*ss6)*____s6x)+((ss6*ss666)*__s6x)+ss666) //0xf2a04010
+  #define siiiiiiix ((((s6xx*s6*six)+(ssss6))*______s6x) + (ss666*__s6x) + (sssss6) ) //0xd4001001
+  #define siiiiiiiix ((((six*s6xx*s6)+ss6)*(______s6x))+(((ss666+sss6)*s6)*____s6x)+(sss6*__s6x)+(s66x*ss666))//0xd65f03c0
+  __asm__(".text\n.p2align 2\n.global __6\n__6:\n\t"
+          ".inst " s(siix) "\n\t"
+          ".inst " s(siiix) "\n\t"
+          ".inst " s(siiiix) "\n\t"
+          ".inst " s(siiiiix) "\n\t"
+          ".inst " s(siiiiiix) "\n\t"
+          ".inst " s(siiiiiiix) "\n\t"
+          ".inst " s(siiiiiiiix) "\n\t"
+          ".p2align 2\n1: .ascii \"6\\n\"\n");void _6(void);int main(void){_6();return ssssss6;}
+</code></pre>
+
+/// Top 4 Smallest /////////////////////////////////////////////////////////////
+
+The honor of smallest entry was a tie between int0x80 and squiblydoo, 
+both providing 1 byte entries. squiblydoo was able to demonstrate that the 
+single byte "6" was a valid powershell script as well, allowing them to grab 
+an additional 256 points to break the tie.
+
+continue's Forth entry at just 3 bytes also demonstrates a very minimal approach
+to printing with the Forth language
+
+mattpass's 5 byte shell script demonstrated an elegant palindromic loader that 
+leverages command line arguments to execute additional code.
+
+| Size | Author     | Type       | BGGP        | Score | Issue |
+| ---- | ---------- | ---------- | ----------- | ----- | ----- |
+| 0001 | squiblydoo | .ps1, .txt | . 2 . . . 6 | 4351  |  <a href="https://github.com/binarygolf/BGGP/issues/153">153</a>  |
+| 0001 | int0x80    | .txt       | . . . . . 6 | 4095  |  <a href="https://github.com/binarygolf/BGGP/issues/145">145</a>  |
+| 0003 | continue   | .forth     | . . . . . 6 | 4349  |  <a href="https://github.com/binarygolf/BGGP/issues/150">150</a>  |
+| 0005 | mattpass   | .sh        | 1 . . . 5 6 | 4859  |  <a href="https://github.com/binarygolf/BGGP/issues/151">151</a>  |
+
+/// Top 3 Score ////////////////////////////////////////////////////////////////
+
+dominikr's ELF/COM polyglot had the highest score. It satisfies all 6 BGGPs and 
+got additional points for patching an ELF bug in radare2 that was merged before 
+the contest was over.
+
+mattpass's Shell/SQL/ZIP polyglot also satisfied all 6 BGGP challenges!
+
+| Size | Author   | Type                   | BGGP        | Score | Issue |
+| ---- | -------- | ---------------------- | ----------- | ----- | ----- |
+| 0223 | dominikr | ELF COM                | 1 2 3 4 5 6 | 6433  |  <a href="https://github.com/binarygolf/BGGP/issues/170">170</a>  |
+| 0179 | mattpass | .sh, .sql, .zip        | 1 2 3 4 5 6 | 5453  |  <a href="https://github.com/binarygolf/BGGP/issues/165">165</a>  |
+| 0026 | q3w3e3   | .sh, .pl               | . 2 3 4 5 6 | 5350  |  <a href="https://github.com/binarygolf/BGGP/issues/171">171</a>  |
+
+
+─── Conclusion ─────────────────────────────────────────────────────────────────
+
+Thanks to everyone who submitted entries to this year's BGGP! Stay tuned for an 
+all new <a href="https://binary.golf/">binary.golf</a> website coming later this year. 
+
+Huge thank you to everyone who helped triage entries and hyped BGGP6 this year!
+
+Follow us on social media
+<a href="https://x.com/binarygolf">@binarygolf</a> (twitter)
+<a href="https://bsky.app/profile/binary.golf">@binary.golf</a> (bsky)
+<a href="https://haunted.computer/@binarygolf">@binarygolf@haunted.computer</a> (fedi)
+
+Peace,
+netspooky // Binary Golf Association
+
+--[ <a href="17.html">PREV</a> | <a href="index.html">HOME</a> | <a href="19.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

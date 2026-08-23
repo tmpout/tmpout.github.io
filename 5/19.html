@@ -1,0 +1,1443 @@
+<html>
+<head>
+<title>Fine grained load time ASLR for ELF executables in X86_64 Linux ~ elfmaster</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+Fine grained load time ASLR for ELF executables        │                   █   │
+in X86_64 Linux                                        │                   █   │
+~ elfmaster                                            └───────────────────█ ──┘
+
+## Table of Contents
+
+- Fine grained load time ASLR for ELF executables in X86_64 Linux
+- Introduction with a little background
+  - Origins of this paper
+  - Original research goals
+  - Shiva as a binary patching engine
+    - 1. ELF Microprograms
+    - 2. ELF Micropatches
+  - Illustration 1.0: Loaded Shiva module in process image
+- ELF microprograms for security hardening in the process image
+  - What is ASLR and gASLR?
+    - ASLR definition
+    - gASLR definition
+- Chained dynamic linking concept
+  - Illustration 1.1: Chained dynamic linking execution flow
+- Writing a basic Shiva module in C
+  - Build Shiva for x86_64 Linux
+  - Build for x86_64 Linux
+  - Source code for our first Shiva module: sections.c
+  - Compiling our first Shiva module (aka ELF microprogram)
+  - Testing our sections.o module.
+  - Using shiva-ld to "prelink" our sections.o module to /bin/ls
+    - shiva-ld usage
+- Implementing gASLR as a Shiva module
+  - Design and implementation
+  - Our gASLR requires preserved text relocations
+    - Emit a preserved text relocation section
+    - Source code snippet of gASLR.c line 466: move_function()
+  - ELF executable must have a large code model
+    - How to build an executable for gASLR compatibility
+- gASLR source code
+  - Summary of gASLR.c source code
+- gASLR demo
+  - Source code for test.c in gASLR demo
+  - Running ./test with standard ASLR
+  - gASLR in action
+- Future work on gASLR
+- Closing thoughts
+- ELF binary hacking workshops
+- Contact
+
+## Introduction with a little background
+
+Good day ladies and gentlemen. It is my honor to share some of my research into 
+writing custom ELF dynamic linkers, ELF ABI enhancements, and chained dynamic 
+linking (Multiple dynamic linkers simultaneously) for solving complex security 
+problems such as process-image hardening with load-time granular ASLR-- which 
+is a security feature that I will be demonstrating in this paper.
+
+### Origins of this paper
+
+This paper, in many respects, is a follow up to my paper in tmpout issue 2,
+"preloading the linker for fun and profit"[1] which illustrates how a custom 
+dynamic linker can be chained together with ld-linux.so and load ET_REL objects 
+to implement ELF viruses. That research ultimately led into the project known as 
+Shiva[2] and also see Shiva Github[3].
+
+### Original research goals
+
+The original paper showed how chaining a custom ELF interpreter could be used 
+as a slick new Linux virus technique, yes, but I knew that it had strong 
+potential for much more: security hardening modules , debugging modules, and 
+later realized that it could be adapted for ELF binary patching. Shiva was 
+born... and it was a custom ELF dynamic linker that was originally designed for 
+DevSecOps instrumentation. I wanted to give developers the ability to rapidly 
+design complex in-process security features and hardening modules. I also gave 
+early versions of Shiva a PTRACE-similar interface known as ShivaTrace that 
+gives lightning fast instrumentation for custom tracers and debugging engines. 
+See my Toorcamp 2022 talk "Advancing the programmability and security of the 
+Linux userland runtime"[4].
+
+### Shiva as a binary patching engine
+
+Shiva eventually became funded by DARPA AMP and it evolved into a binary 
+patching engine allowing developers with no reverse engineering knowledge to 
+write powerful binary patches in C. We will not be exploring Shiva's binary 
+patching capabilities today. In the mean time feel free to read "A friendly 
+user-manual to ELF micropatching with Shiva", which demonstrates Shiva's ELF 
+binary patching capabilities for AArch64, or take a peek at the 2023 DEFCON talk
+"Revolutionizing ELF binary patching with Shiva"[6] -- I am waiting on approval 
+from DARPA to release my x86_64 Shiva blog-post which will show users an 
+in-depth guide to binary patching with Shiva. Meanwhile... let's stick to it's 
+other capabilities...
+
+Shiva is a multi-purpose dynamic linker with two major module types. Modules 
+are ELF relocatable objects that come in two varieties for Shiva loading: 
+
+#### 1. ELF Microprograms
+
+These are programs written in C and compiled into ET_REL objects that are 
+installed by Shiva at load-time. These ELF microprograms are powerful for 
+writing security modules, as I illustrated in my 2022 Toorcamp presentation: 
+Debugging engines, exploit mitigations, and tracers.
+
+#### 2. ELF Micropatches
+
+ELF Micropatches in Shiva are similar to ELF microprograms but they have no 
+init function; instead they use symbolic definition and custom Shiva macros to 
+interpose and transform code and data intuitively. This allows developers to 
+patch software that is already compiled-- allowing developers with little to no 
+reverse engineering knowledge to apply complex binary patches written in C.
+
+Shiva uses ET_REL objects as modules because this type of ELF file contains not 
+only the code and data but the meta-data that is necessary to build a program 
+image from scratch. The .text relocations are incredibly valuable for 
+re-linking and transforming code, thus allowing Shiva to modify, transform, and 
+re-program various parts of the program image at load-time with extreme 
+flexibility, descriptiveness, and power.
+
+In todays paper we will be using the ELF microprogram loading capabilities. It 
+is different than the ELF patching capabilities, although both use relocatable 
+modules.
+
+### Illustration 1.0: Loaded Shiva module in process image
+
+                                                            ELF ET_DYN
+                                                          EXECUTABLE (PIE)
+                                                       ┌────────────────────┐
+                                                       │    TEXT SEGMENT    │
+                                                       ├────────────────────┤
+               SHIVA MODULE                            │       .interp      │
+                                                       ├────────────────────┤
+Ox6000000 ┌────────────────────┐                       │      .gnu.hash     │
+          │    TEXT SEGMENT    │                       ├────────────────────┤
+          ├────────────────────┤    ▶▶▶▶▶▶▶▶▶▶▶▶▶      │       .dynsym      │
+          │       .text        │                       ├────────────────────┤
+          ├────────────────────┤    The patch code     │       .dynstr      │
+          │      .rodata       │    and executable     ├────────────────────┤
+          ├────────────────────┤    code are linked    │      .rela.dyn     │
+          │        .plt        │  together at runtime  ├────────────────────┤
+0x8000000 ├────────────────────┤                       │      .rela.plt     │
+          │    DATA SEGMENT    │    ◀◀◀◀◀◀◀◀◀◀◀◀◀      ├────────────────────┤
+          ├────────────────────┤                       │        .init       │
+          │       .data        │                       ├────────────────────┤
+          ├────────────────────┤                       ▼        etc...      ▼
+          │       .bss         │                       ├────────────────────┤
+          ├────────────────────┤                       │    DATA SEGMENT    │
+          │      .got.plt      │                       ├────────────────────┤
+          └────────────────────┘                       │     .init_array    │
+          The Shiva modules use                        ├────────────────────┤
+          a large code model;                          │     .fini_array    │
+          all call instructions                        ├────────────────────┤
+          are indirect through                         │      .dynamic      │
+          the PLT/GOT and so are                       ├────────────────────┤
+          global variable                              │       .got         │
+          references                                   ├────────────────────┤
+                                                       │       .data        │
+                                                       ├────────────────────┤
+                                                       │       .bss         │
+                                                       └────────────────────┘
+
+Shiva module process image - original[7]
+
+## ELF microprograms for security hardening in the process image
+
+This fascinating concept of chaining a custom dynamic linker into the execution 
+flow helps to bridge the gap that allows developers to build sophisticated 
+security features without being a developer of glibc, gcc, binutils, ld, 
+ld-linux.so, and Linux.
+
+Hardening the process image in Linux is currently done with a combination of 
+binary mitigations and security features that have been implemented at various 
+layers throughout the compilers, linkers, libraries and OS code, most often 
+requiring coordinated efforts between multiple projects.
+
+ELF microprograms can load and execute before ld-linux.so has even had a chance 
+to run, giving the developer execution precedence over the entire process 
+image. I have designed extremely fast function tracers, specialized debuggers, 
+exploit mitigations, viruses, and yes backdoors! Among many other fascinating 
+magical concepts while experimenting with my programmable and custom dynamic 
+linker that I now call Shiva. I even wrote a fuzzer for ld-linux.so in 2022.
+
+### What is ASLR and gASLR?
+
+#### ASLR definition
+
+ASLR (Address space layout randomization) is a feature in modern OS's such as 
+Linux that randomizes the base address of the executable and libraries at each 
+load-time of the program, thus discouraging exploits from being able to use 
+hardcoded addresses and making memory corruption exploitation more difficult in 
+general.
+
+ASLR works with PIE ELF Executables so that they can be randomly loaded without 
+the need for text relocations at runtime. The code is all position independent 
+and the file type is ET_DYN.
+
+The weakness is such that ASLR only randomizes the base address. The base 
+address can be leaked by an exploit that is able to gain a read-primitive. Once 
+an attacker determines the base address it is trivial to know the location of 
+code gadgets and global data.
+
+#### gASLR definition
+
+gASLR is "Granular ASLR". It randomizes the program at a granular level. In 
+other words it does fine-grained randomization. Instead of just randomizing the 
+base address it randomizes the address of every function at load-time, and 
+optionally can randomize the location of PLT entries and global data.
+This aims to harden the process-image from memory corruption attacks like ASLR 
+but if an attacker leaks the base address they won't be able to use that 
+information to locate code or data by relative offsets anymore.
+
+Today we will be introducing a prototype for gASLR[8] in the form of a Shiva ELF
+microrogram. Our current implementation re-writes every function within the main
+executable at load-time at a random location in memory and re-links the code and
+data just in time before program execution.
+
+## Chained dynamic linking concept
+
+I highly recommend that you read my original paper[1] to understand the concept 
+of chaining in a custom dynamic linker. There's an entire algorithm I 
+documented on replacing PT_INTERP with "/lib/shiva" instead of 
+"/lib/x86_64-linux-gnu/ld-linux.so". This replaces the primary ELF Interpreter. 
+The new ELF interpreter, once finished with it's work, must be responsible for 
+mapping the original ld-linux.so into memory and transferring control to it when
+all is said in done.
+
+Generally speaking there has always been one dynamic linker, it is the ELF 
+interpreter and it's pathname is set as a string in the PT_INTERP segment of 
+the executable file. The Linux kernel opens the ELF executable and then 
+searches for it's interpreter via the PT_INTERP segment. Usually we see 
+something like "/lib/x86_64-linux-gnu/ld-linux.so.1". We are going to replace 
+this with the path to our new custom ELF interpreter, in this case "/lib/shiva".
+
+[Linux kernel] 
+ -&gt; [New ELF Interpreter] 
+     -&gt; [Microprograms init function] 
+         -&gt; [ld-linux.so] 
+             -&gt; [_start()]
+
+### Illustration 1.1: Chained dynamic linking execution flow
+
+Shiva's dynamic linking workflow - original[9]
+
+LINUX KERNEL (1)
+    SYS_EXEC
+ │
+ │         Shiva passes control (4) 
+ │              to the RTLD for     
+ ▼ (2)            further setup        (5)                   (6)
+┌─ Shiva ───────────────┐       ┌─ RTLD ───────────────┐   ┌─ Target Program ─┐
+│                       │       │                      │   │                  │
+│       /lib/shiva      │──────▶│  /lib64/ld-linux.so  │──▶│  /bin/test       │┐
+│                       │       │                      │   │                  ││
+└───────────────────────┘       └──────────────────────┘   └──────────────────┘│
+ │              ▲│                             │                               │
+ │ Shiva links  ││ Shiva maps        RTLD maps │ RTLD          /bin/test is now│
+ │ the patch    ││ the RTLD       dependencies │ applies           patched and │
+ │ module into  ││ "ld-linux.so"               │ relocations       linked with │
+ │ the process  ││ into memory                 │                    "patch1.o" │
+ │              │▼                             ▼                               │
+ │(3)┌─ MODULES ────────────────────┐(8)  ┌─ LIBS ───────────┐                 │
+ │   │                              │     │                  │                 │
+ └──▶│ /opt/shiva/modules/patch1.o  │     │  /lib64/libc.so  │◀────────┬───────┘
+     │                              │     │                  │         │
+     └─ Shiva patch module ─────────┘     └─ Shared library ─┘         │
+                                ▲                                      │
+                                └──────────────────────────────────────┘
+
+## Writing a basic Shiva module in C
+
+Similarly to Linux LKM's, Shiva modules have an init function that will execute 
+as the module entry point. Shiva modules can execute this init routine either 
+before ld-linux.so runs or after ld-linux.so runs. Depending on what the 
+developer is trying to accomplish. For example if the developer was trying to 
+write a Shiva module that fuzzes ld-linux.so then you would want the module to 
+run before ld-linux.so so that it could mutate the Dynamic auxiliary data 
+before ld-linux.so is executed.
+
+See `shiva/modules/include/shiva_module.h`
+
+`SHIVA_MODULE_PRE_LDSO`
+
+or
+
+`SHIVA_MODULE_POST_LDSO`
+
+If you do not specify one then Shiva will default to `SHIVA_MODULE_POST_LDSO`.
+
+Shiva modules have access to the following structures and code libraries that 
+are statically linked into the binary of the Shiva interpreter itself:
+
+#### 1. struct shiva_ctx  from shiva/shiva.h
+
+This struct is the main context structure for Shiva, it contains all other 
+important structs within it such as `struct shiva_module`. The Shiva module's 
+`shiva_init` function takes this as it's one and only argument, giving the 
+developer of a Shiva module complete access to Shiva's internal ELF linking and 
+binary routines.
+
+
+####2. libelfmaster
+
+This library[10] is used by Shiva for all of the internal ELF heavy lifting, 
+parsing, etc. See https://github.com/elfmaster/libelfmaster
+
+####3. musl-libc
+
+This is the C libary used to compile Shiva. It is baked into the Shiva binary 
+and can be accessed in addition to glibc from within the scope of Shiva 
+modules. In order to force musl-libc resolution over glibc, use the 
+`SHIVA_MODULE_FORCE_MUSL_RESOLUTION` macro. This can be necessary at time to 
+avoid certain glibc functions that use STT_IFUNC relocations, which Shiva does 
+not support.
+
+####4. Dynamically linked symbols (Functions and global variables)
+
+If the program that you are writing a module for has access to a specific 
+shared library at load-time then so do you. If a library is loaded by 
+`dlopen()` then Shiva modules cannot access that symbol without special 
+hacking. This will be fixed in a future version.
+
+####5. libcapstone
+
+Shiva uses libcapstone internally to disassemble code. Shiva modules can use 
+libcapstone to disassemble the code of the target process, or anything else 
+that they choose to open.
+
+### Build Shiva for x86_64 Linux
+
+If you haven't already, checkout the source code to Shiva's `x86_64_port` 
+branch. 
+
+### Build for x86_64 Linux
+
+Clone Shiva[11] and read README.md for the x86_64 build instructions.
+<pre><code class="language-sh">
+git clone https://github.com/advanced-microcode-patching/shiva
+</code></pre>
+
+### Source code for our first Shiva module: sections.c
+
+Our first Shiva module makes use of the Shiva context pointer `shiva_ctx_t 
+*ctx` and the `libelfmaster` API to iterate over the section headers of the 
+loaded ELF executable, printing them to stdout before the target program runs.
+
+Navigate to `shiva/modules/x86_64_modules/sections`
+
+The `sections.c` file contains the source code for our first module.
+<pre><code class="language-c">
+#define _GNU_SOURCE
+#include "shiva_module.h"
+#include "shiva.h"
+#include "libelfmaster.h"
+
+SHIVA_MODULE_POST_LDSO; // Tell Shiva to execute shiva_init() after ld-linux.so runs
+
+int
+shiva_init(struct shiva_ctx *ctx)
+{
+    elfobj_t *elfobj = &ctx-&gt;elfobj;
+    elf_section_iterator_t shdr_iter;
+    struct elf_section shdr;
+    size_t i = 0;
+
+    printf("Printing ELF section headers of program before runtime!\n");
+
+    elf_section_iterator_init(elfobj, &shdr_iter);
+    while (elf_section_iterator_next(&shdr_iter, &shdr) == ELF_ITER_OK) {
+            printf("[%02x] %s\n", i++, shdr.name);
+    }
+}
+</code></pre>
+
+### Compiling our first Shiva module (aka ELF microprogram)
+
+The Shiva modules must be compiled with a large code model so that they can 
+properly link into a process image where the module is further than 2GB from 
+the main executable in memory.
+<pre><code class="language-sh">
+$ gcc -I /opt/shiva/include -I /opt/elfmaster/include -mcmodel=large -c sections.c
+</code></pre>
+You can also run the Makefile that is included in this directory. Simply type 
+`make module` to build the sections.o module.
+
+### Testing our sections.o module.
+
+Shiva is both a regular program and an interpreter. Just like `ld-linux.so` it 
+can be run directly or used as the ELF program interpreter. When testing the 
+effects of a module it can be useful to simply run Shiva directly as the 
+program loader. See the Shiva UserlandExec source code [16].
+
+Let's first run /bin/ls by itself to get a baseline and then again with Shiva 
+to see the effect that the module has on our program. We are expecting it to 
+print out the ELF section headers to `/bin/ls` or whatever executable you 
+choose to run with the module.
+<pre><code class="language-txt">
+$ /bin/ls
+Makefile  prog.c  sections.c  sections.o
+</code></pre>
+Set the `sections.o` module with the `SHIVA_MODULE_PATH` environment variable 
+and run `/bin/ls` again but this time with Shiva as the loader.
+<pre><code class="language-txt">
+$ export SHIVA_MODULE_PATH=./sections.o
+$ shiva /bin/ls
+Printing ELF section headers of program before runtime!
+[00] 
+[01] .interp
+[02] .note.gnu.property
+[03] .note.gnu.build-id
+[04] .note.ABI-tag
+[05] .gnu.hash
+[06] .dynsym
+[07] .dynstr
+[08] .gnu.version
+[09] .gnu.version_r
+[0a] .rela.dyn
+[0b] .rela.plt
+[0c] .init
+[0d] .plt
+[0e] .plt.got
+[0f] .plt.sec
+[10] .text
+[11] .fini
+[12] .rodata
+[13] .eh_frame_hdr
+[14] .eh_frame
+[15] .init_array
+[16] .fini_array
+[17] .data.rel.ro
+[18] .dynamic
+[19] .got
+[1a] .data
+[1b] .bss
+[1c] .gnu_debugaltlink
+[1d] .gnu_debuglink
+[1e] .shstrtab
+Makefile  prog.c  sections.c  sections.o
+$ 
+</code></pre>
+The `shiva_init()` function in in `sections.o` module is executed and it 
+iterates over the section header table printing each section string name of the 
+loaded ELF executable. 
+For real-world modules we don't want to have to invoke Shiva directly everytime 
+we run the program, it would defeat the purpose of any kind of security 
+features that we add since a user could simply run the program without Shiva.
+
+### Using shiva-ld to "prelink" our sections.o module to /bin/ls
+
+Create a local copy of /bin/ls in our CWD (In 
+`shiva/modules/x86_64_modules/sections`)
+<pre><code class="language-txt">
+$ cp /bin/ls .
+</code></pre>
+
+
+#### shiva-ld usage
+<pre><code class="language-txt">
+-=[Shiva Prelinker v2.0.]=-Usage: shiva-ld -e test_bin -p patch1.o -i /lib/shiva -s /opt/shiva/modules/ -o test_bin_final [-cdN]
+[-e] --input_exec   Input ELF executable
+[-p] --input_patch  Input ELF patch (NOTE: should be a .so patch when the -N flag is used)
+[-i] --interp_path  Interpreter search path, i.e. "/lib/shiva"
+[-s] --search_path  Module search path (For patch object)
+[-o] --output_exec  Output executable
+[-d] --disable-cflow    Do not generate CFG data (i.e. .shiva.xref and .shiva.branch)
+[-N] --needed-injection Injects shared object dependency via DT_NEEDED entry
+</code></pre>
+The following command will copy `ls` to `ls.new`. The new version `ls.new` will 
+have the path `/lib/shiva` set as the primary ELF interpreter and the dynamic 
+segment will be moved into a newly added PT_LOAD segment in order to make room 
+for several new custom dynamic segment types. There are also three new ELF 
+sections that you will see in `ls.new` which are  `.shiva.xref`, 
+`.shiva.branch`, and `.shiva.strtab`. These sections live within the new 
+PT_LOAD segment and contains control flow information that Shiva uses to 
+generate relocation meta-data at load-time.
+<pre><code class="language-txt">
+$ shiva-ld -e ls -p sections.o -i /lib/shiva -s /opt/shiva/modules -o ls.new
+................................................................................
+[+] Input executable: ls
+[+] Input search path for patch: /opt/shiva/modules
+[+] Basename of patch: sections.o
+[+] Output executable: ls.new
+Updating dynamic segment vaddr: 0x24000 offset: 0x22000 size: 0x1f0
+Finished prelinking.
+</code></pre>
+Copy the Shiva module `/opt/shiva/modules` because that's where we specified 
+the module search path with the   `-s` flag above.
+<pre><code class="language-sh">
+$ sudo cp sections.o /opt/shiva/modules
+</code></pre>
+Now run `ls.new` directly. The Linux kernel will invoke `/lib/shiva` as the 
+primary ELF interpreter. Shiva will check the dynamic segment for 
+`SHIVA_DT_NEEDED` and `SHIVA_DT_SEARCH` to find the basename of our module 
+`sections.o` and the search path of our module `/opt/shiva/modules`. Once Shiva 
+has finished loading and relocating this module it will map the original 
+interpreter into memory and eventually pass control to it for finalizing the 
+loading and linking of shared libraries. In this module we specified 
+`SHIVA_MODULE_POST_LDSO` which instructs Shiva to run the module after 
+`ld-linux.so` has finished.
+<pre><code class="language-txt">
+$ ./ls.new
+Printing ELF section headers of program before runtime!
+[00] 
+[01] .interp
+[02] .note.gnu.property
+[03] .note.gnu.build-id
+[04] .note.ABI-tag
+[05] .gnu.hash
+[06] .dynsym
+[07] .dynstr
+[08] .gnu.version
+[09] .gnu.version_r
+[0a] .rela.dyn
+[0b] .rela.plt
+[0c] .init
+[0d] .plt
+[0e] .plt.got
+[0f] .plt.sec
+[10] .text
+[11] .fini
+[12] .rodata
+[13] .eh_frame_hdr
+[14] .eh_frame
+[15] .init_array
+[16] .fini_array
+[17] .data.rel.ro
+[18] .dynamic
+[19] .got
+[1a] .data
+[1b] .bss
+[1c] .gnu_debugaltlink
+[1d] .gnu_debuglink
+[1e] .shstrtab
+[1f] .shiva.strtab
+[20] .shiva.xref
+[21] .shiva.branch
+ls  ls.new  Makefile  prog.c  sections.c  sections.o
+</code></pre>
+We were able to run the executable `ls.new` directly and no longer need to run 
+`/bin/shiva` as the loader. Shiva gets automatically loaded by the kernel as 
+the ELF interpreter when we use the prelinker `shiva-ld` to attach the 
+necessary meta-data to the target executable. 
+
+Let me show you the modifications to the `PT_INTERP` and `PT_DYNAMIC` 
+segments...
+
+<pre><code class="language-txt">
+$ readelf -l ls.new | grep interpreter
+      [Requesting program interpreter: /lib/shiva]
+$ readelf -d ls.new
+Dynamic section at offset 0x22000 contains 31 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000001 (NEEDED)             Shared library: [libselinux.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000c (INIT)               0x4000
+ 0x000000000000000d (FINI)               0x17084
+ 0x0000000000000019 (INIT_ARRAY)         0x20fd0
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x20fd8
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x3b0
+ 0x0000000000000005 (STRTAB)             0xf88
+ 0x0000000000000006 (SYMTAB)             0x400
+ 0x000000000000000a (STRSZ)              1446 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000015 (DEBUG)              0x0
+ 0x0000000000000003 (PLTGOT)             0x21c58
+ 0x0000000000000002 (PLTRELSZ)           2400 (bytes)
+ 0x0000000000000014 (PLTREL)             RELA
+ 0x0000000000000017 (JMPREL)             0x2af8
+ 0x0000000000000007 (RELA)               0x16e8
+ 0x0000000000000008 (RELASZ)             5136 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000000000001e (FLAGS)              BIND_NOW
+ 0x000000006ffffffb (FLAGS_1)            Flags: NOW PIE
+ 0x000000006ffffffe (VERNEED)            0x1628
+ 0x000000006fffffff (VERNEEDNUM)         2
+ 0x000000006ffffff0 (VERSYM)             0x152e
+ 0x000000006ffffff9 (RELACOUNT)          201
+ 0x0000000060000018 (Operating System specific: 60000018)                0x241f0
+ 0x0000000060000017 (Operating System specific: 60000017)                0x24203
+ 0x0000000060000019 (Operating System specific: 60000019)                0x2420e
+ 0x0000000000000000 (NULL)               0x0
+</code></pre>
+Congratulations, you now know how to build a basic ELF microprogram as a Shiva 
+module.
+
+## Implementing gASLR as a Shiva module
+
+OK let's get to the cool stuff! gASLR (Granular ASLR) at load-time, implemented 
+as an ELF microprogram that get's loaded and installed by Shiva at runtime.
+
+### Design and implementation
+
+Although our gASLR can technically be applied to existing ELF executables, say 
+on an ubuntu 24 install, it would be slow since those ELF binaries do not have 
+a preserved `.rela.text` section by default, and it will be unreliable since 
+they are built with a small code model which may prevent functions that are 
+randomly moved more than 2GB away from eachother from being properly re-linked.
+
+### Our gASLR requires preserved text relocations
+
+Generally speaking the ELF relocations that apply to the `.text` section are 
+used for linking the programs compilation units with `/bin/ld`. The ELF 
+relocations of this type only apply to ELF relocatable objects by default. 
+Notice that `.o` files have `.rela.text` sections but executables do not. This 
+is because executables don't require .text relocations since the compilation 
+units (Of code and data) are already linked into the ELF executable.
+
+For those of us crazy enough to want to re-link the `.text` section at program 
+load-time we ideally want there to exist a preserved `.rela.text` section in 
+the executable we are applying gALSR too.
+Our Shiva module needs to move the location of every function of the target 
+program into a random memory location which requires the re-linking of every 
+function. This means that in order to efficiently re-write every function into 
+a new address range we will need the **text relocations** of the executable 
+that we are applying gASLR too.
+
+#### Emit a preserved text relocation section
+<pre><code class="language-sh">
+$ gcc -Wl,--emit-relocs test.c -o test
+</code></pre>
+The `.rela.text` section in an executable is slightly different than those in 
+an ET_REL file. The text relocations in an ET_REL object have `r_offset` values 
+that are offsets relative to the start of the `.text` section. In an ELF 
+executable the `.rela.text` has `r_offset` values that are relative from the 
+base of the program.
+
+Since the text relocations are relative to the base of the program then the 
+`r_offset` values will become invalid once we randomize the location of each 
+function. So our gASLR module must update the relocation records for each 
+function before using it to re-link them.
+
+#### Source code snippet of gASLR.c line 466: move_function()
+<pre><code class="language-c">
+bool
+move_function(struct shiva_ctx *ctx, struct aslr_ctx *aslr, struct func_entry *fe)
+{
+
+        size_t delta;
+        struct reloc_entry *rel_entry;
+
+        aslr_debug("Moving function %s to %p\n", fe-&gt;symbol.name, fe-&gt;n_mem);
+        /*
+         * Copy function code from its old address to its new address
+         */
+        memcpy(fe-&gt;n_mem, (uint8_t *)fe-&gt;runtime_vaddr, fe-&gt;func_len);
+        /*
+         * Update the relocation entries for that function so that they
+         * reflect the correct r_offset's after it is moved.
+         */
+        TAILQ_FOREACH(rel_entry, &fe-&gt;reloc_list, _linkage) {
+                delta = rel_entry-&gt;rel.offset - fe-&gt;base_vaddr;
+                rel_entry-&gt;rel.offset = delta;
+        }
+        /*
+         * Now that function has been moved to a new location
+         * fixup the function using the modified relocation records.
+         */
+        return relocate_function(ctx, aslr, fe);
+}
+</code></pre>
+In the source code above we simply subtract the base address of each function 
+from it's `r_offset` values to achieve the new r_offset values.
+
+Our current implementation of gASLR moves each function it's own random base 
+address that was mmap'd. In future versions I will make sure that each function 
+is placed at a random offset of the new base address to make locating functions 
+less predictable at a page boundary.
+
+### ELF executable must have a large code model
+
+As we mentioned earlier Shiva modules must be compiled with the large code 
+model, while typical ELF executables use the small code model by default. The 
+gASLR implementation randomly relocates the executable’s `.text` section, and 
+mmap() may place code more than 2 GB apart. Workarounds such as MAP_32BIT 
+reduce available entropy and weaken security. Therefore, the current gASLR 
+implementation requires the target executable to be built with the large code 
+model. In the future I have some hacks that will get gASLR working with 
+executable's that have a small code model too, but in the meantime we only 
+support executables with large code models.
+
+
+#### How to build an executable for gASLR compatibility
+
+1. Preserved text relocations
+2. Large code model
+<pre><code class="language-sh">
+gcc -mcmodel=large -Wl,--emit-relocs test.c -o test
+</code></pre>
+## gASLR source code
+ 
+Change to the directory `shiva/modules/x86_64_modules/aslr`
+
+$ cat gASLR.c
+<pre><code class="language-c">
+/*
+ * X86_64 gASLR by Ryan O'Neill
+ * A 2025 Shiva module
+ *
+ * Target program must be built with a large code model:
+ *  gcc -mcmodel=large
+ * Target program must be built with preserved text relocations:
+ *  gcc -Wl,--emit-relocs
+ *
+ * cp gASLR.o /opt/shiva/modules
+ * shiva-ld -e &lt;binary&gt; -p gASLR.o -s /opt/shiva/modules -i /lib/shiva -o test -d
+ *
+ */
+
+#define _GNU_SOURCE
+#include "../../include/shiva_module.h"
+#include "../../../shiva.h"
+#include "/opt/elfmaster/include/libelfmaster.h"
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;sys/queue.h&gt;
+
+#include &lt;stdarg.h&gt;
+#include &lt;stdio.h&gt;
+
+#if defined DEBUG
+    #define aslr_debug(...) {\
+    do {\
+        fprintf(stdout, "[%s:%s:%d] ", __FILE__, __func__, __LINE__); \
+        fprintf(stdout, __VA_ARGS__);   \
+    } while(0); \
+}
+#else
+      #define aslr_debug(...)
+#endif
+
+typedef struct reloc_entry {
+    struct elf_relocation rel;
+    TAILQ_ENTRY(reloc_entry) _linkage;
+} reloc_entry_t;
+
+#define ASLR_FUNC_F_ENTRYPOINT  (1 &lt;&lt; 0) // is pointed to by ehdr-&gt;e_entry
+
+#define ELF_RUNTIME_BASE(x) (x + ctx-&gt;ulexec.base_vaddr)
+
+typedef struct func_entry {
+    uint64_t base_vaddr;    // on disk
+    uint64_t runtime_vaddr; // after initial ASLR at runtime
+    uint64_t new_base_vaddr; // at runtime after Granular ASLR (New location)
+    uint8_t *o_mem;     // memory of old location
+    uint8_t *n_mem;     // memory mapping of new location
+    struct elf_symbol symbol;
+    struct elf_section section;
+    size_t func_len;
+    uint64_t flags;
+    TAILQ_HEAD(, reloc_entry) reloc_list;
+    TAILQ_ENTRY(func_entry) _linkage;
+} func_entry_t;
+
+typedef struct aslr_ctx {
+    TAILQ_HEAD(, func_entry) orig_func_list; // orig funclist
+    uint64_t base_vaddr;
+} aslr_ctx_t;
+
+#define HEAP_INITIALIZER NULL
+
+struct elf_section text_section, got_section;
+
+/*
+ * Our modules shiva_init() function should run after ld-linux.so.
+ * This phase is implicit if you don't define this so it's technically
+ * not necessary, but it's important to be explicit.
+ */
+SHIVA_MODULE_POST_EXEC_PHASE;
+
+bool
+build_func_list(struct shiva_ctx *ctx, struct aslr_ctx *aslr,
+    size_t *fn_count)
+{
+    size_t text_size;
+    uint64_t text_addr;
+    struct elf_section text;
+    struct elf_symbol symbol;
+    elf_relocation_iterator_t rel_iter;
+    elf_symtab_iterator_t sym_iter;
+    struct elf_relocation rel;
+
+    TAILQ_INIT(&aslr-&gt;orig_func_list);
+
+    if (elf_section_by_name(&ctx-&gt;elfobj, ".text", &text) == false) {
+        fprintf(stderr, "Failed to get section .text\n");
+        return false;
+    }
+    text_section = text;
+
+    if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got_section) == false ) {
+        fprintf(stderr, "Failed to get section .got\n");
+        return false;
+    }
+    elf_symtab_iterator_init(&ctx-&gt;elfobj, &sym_iter);
+    while (elf_symtab_iterator_next(&sym_iter, &symbol) == ELF_ITER_OK) {
+        if (symbol.type != STT_FUNC)
+            continue;
+        if (symbol.bind != STB_GLOBAL)
+            continue;
+        if (symbol.value &gt;= text.address &&
+            symbol.value &lt; text.address + text.size) {
+
+            struct func_entry *fe;
+
+            fe = calloc(1, sizeof(*fe));
+            if (fe == NULL) {
+                perror("calloc");
+                return false;
+            }
+
+            /*
+             * This function lives in the .text
+             */
+            if (symbol.value == elf_entry_point(&ctx-&gt;elfobj)) {
+                fe-&gt;flags |= ASLR_FUNC_F_ENTRYPOINT;
+            }
+            fe-&gt;symbol = symbol;
+            fe-&gt;section = text;
+            fe-&gt;base_vaddr = symbol.value;
+            fe-&gt;func_len = symbol.size;
+
+            TAILQ_INIT(&fe-&gt;reloc_list);
+
+            /*
+             * The .rela.text section in an ELF executable will
+             * contain r_offset values that are absolute values vs.
+             * values that are relative to the beginning of the
+             * .text section as is the case with ET_REL objects.
+             * This makes sense since the absolute addresses didn't
+             * exist until the ET_REL objects were linked into a
+             * final executable, and thus the relocation tables get
+             * updated with the absolute r_offset's that are relative
+             * to the base (instead of relative to the .text section).
+             *
+             * NOTE: See -z --emit-relocs
+             */
+            elf_relocation_iterator_init(&ctx-&gt;elfobj, &rel_iter);
+            while (elf_relocation_iterator_next(&rel_iter, &rel)
+                == ELF_ITER_OK) {
+                if (strcmp(rel.shdrname, ".rela.text") != 0)
+                    continue;
+                if (rel.offset &lt; fe-&gt;base_vaddr)
+                    continue;
+                if (rel.offset &gt;= fe-&gt;base_vaddr + fe-&gt;func_len)
+                    continue;
+                /*
+                 * Only process relocs that are fixing up the
+                 * current function.
+                 */
+                struct reloc_entry *re = malloc(sizeof(*re));
+                if (re == NULL) {
+                    perror("malloc");
+                    return false;
+                }
+                memcpy(&re-&gt;rel, &rel, sizeof(struct elf_relocation));
+                TAILQ_INSERT_TAIL(&fe-&gt;reloc_list, re, _linkage);
+            }
+            fe-&gt;runtime_vaddr = fe-&gt;base_vaddr + ctx-&gt;ulexec.base_vaddr;
+            /*
+             * Create new memory mapping to move function into.
+             */
+            fe-&gt;n_mem = mmap(NULL, fe-&gt;func_len, PROT_READ|PROT_WRITE,
+                MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+            if (fe-&gt;n_mem == MAP_FAILED) {
+                perror("mmap");
+                return false;
+            }
+            fe-&gt;new_base_vaddr = (uint64_t)fe-&gt;n_mem;
+            fe-&gt;o_mem = (uint8_t *)fe-&gt;runtime_vaddr;
+            TAILQ_INSERT_TAIL(&aslr-&gt;orig_func_list, fe, _linkage);
+            *fn_count++;
+        }
+    }
+    return true;
+}
+
+/*
+ * returns true or false
+ * stores the offset of a given GOT entry (From the beginning of the GOT)
+ * into uint64_t *gotoff
+ */
+bool
+find_gotoff_by_symbol(struct shiva_ctx *ctx, const char *symname, uint64_t *gotoff)
+{
+    struct elf_section got;
+
+    if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got) == false) {
+        fprintf(stderr, "elf_section_by_name() failed on .got\n");
+        return false;
+    }
+
+
+    return true;
+}
+
+#define ASLR_REL_F_NEEDS_PLTGOT (1 &lt;&lt; 0)
+
+bool
+relocate_function(struct shiva_ctx *ctx, struct aslr_ctx *aslr, struct func_entry *fe)
+{
+    uint64_t page_vaddr;
+    struct reloc_entry *rel_entry;
+    bool res;
+    uint8_t movabs_rdi[] = "\x48\xbf\x00\x00\x00\x00\x00\x00\x00\x00";
+    uint8_t rip_call[] = "\xff\x15\x00\x00\x00\x00";
+    uint64_t rel_flags = 0;
+    elf_dynsym_iterator_t dsym_iter;
+    size_t symoffset = 0;
+
+    if (fe-&gt;flags & ASLR_FUNC_F_ENTRYPOINT) {
+        aslr_debug("Relocating entry point  %s\n", fe-&gt;symbol.name);
+    }
+    TAILQ_FOREACH(rel_entry, &fe-&gt;reloc_list, _linkage) {
+        uint8_t *r_ptr = (fe-&gt;flags & ASLR_FUNC_F_ENTRYPOINT) ?
+            (uint8_t *)(ctx-&gt;ulexec.base_vaddr + rel_entry-&gt;rel.offset) :
+            fe-&gt;n_mem + rel_entry-&gt;rel.offset;
+        uint64_t rel_addr = (uint64_t)r_ptr;
+        uint64_t rel_val;
+        uint64_t plt_addr;
+        struct elf_plt plt;
+        struct elf_section shdr, got;
+        uint64_t symval;
+        struct elf_symbol symbol;
+        char *p;
+
+        page_vaddr = (uint64_t)r_ptr & ~4095;
+
+        p = strchr(rel_entry-&gt;rel.symname, '@');
+        if (p != NULL)
+            *p = '\0';
+
+        aslr_debug("Relocation type: %lu\n", rel_entry-&gt;rel.type);
+        aslr_debug("Relocation offset: %#lx\n", rel_entry-&gt;rel.offset);
+        aslr_debug("Relunit: %p\n", r_ptr);
+        aslr_debug("Symbol name: %s\n", rel_entry-&gt;rel.symname);
+
+        (void )mprotect((void *)page_vaddr, 4096, PROT_READ|PROT_WRITE|PROT_EXEC);
+
+        if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got) == false) {
+            fprintf(stderr, "elf_section_by_name() failed on .got\n");
+            return false;
+        }
+
+        switch(rel_entry-&gt;rel.type) {
+        case R_X86_64_GOTPCRELX:
+        case R_X86_64_GOTPCREL:
+            break; /* GOTPCREL relocs are still unfinished, break out here. */
+            struct elf_symbol tmp;
+            elf_dynsym_iterator_init(&ctx-&gt;elfobj, &dsym_iter);
+            while (elf_dynsym_iterator_next(&dsym_iter, &tmp) == ELF_ITER_OK) {
+                if (strcmp(tmp.name, rel_entry-&gt;rel.symname) == 0) {
+                    uint64_t got_entry; // address of the GOT entry for the symbol
+                    struct elf_symbol sym;
+                    aslr_debug("R_X86_64_GOTPCREL(X) processing symbol %s\n", tmp.name);
+                    /*
+                     * First 3 entries of GOT[0, 1, 2] are reserved (hence the "sizeof(uintptr_t) * 3")
+                     */
+                    got_entry = ELF_RUNTIME_BASE(got.address) + symoffset + (sizeof(uintptr_t) * 3);
+                    if (elf_symbol_by_name(&ctx-&gt;elfobj, tmp.name, &sym) == false) {
+                        fprintf(stderr, "elf_symbol_by_name() failed to resolve symbol %s\n", tmp.name);
+                        return false;
+                    }
+                    rel_val = got_entry - ELF_RUNTIME_BASE(sym.value);
+                    aslr_debug("rel_val = %#lx - %#lx\n", got_entry, ELF_RUNTIME_BASE(sym.value));
+                    aslr_debug("symoffset in got is %zu\n", symoffset);
+                    aslr_debug("Setting reloc value to %#lx\n", rel_val);
+
+                    *(uint64_t *)r_ptr = rel_val;
+                    goto success;
+                }
+                symoffset += sizeof(uintptr_t);
+             }
+            fprintf(stderr, "failed to resolve R_X86_64_GOTPCREL\n");
+            return false;
+            break;
+        case R_X86_64_GOT64:
+
+            elf_dynsym_iterator_init(&ctx-&gt;elfobj, &dsym_iter);
+            while (elf_dynsym_iterator_next(&dsym_iter, &tmp) == ELF_ITER_OK) {
+                struct elf_plt plt_entry;
+
+                if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got) == false) {
+                    fprintf(stderr, "elf_section_by_name() failed on .got\n");
+                    return false;
+                }
+
+                /* This symbol should be related to a GLOB_DAT or JUMPSLOT
+                 * relocation.
+                 */
+
+                printf("Comparing %s and %s\n", tmp.name, rel_entry-&gt;rel.symname);
+                if (strcmp(tmp.name, rel_entry-&gt;rel.symname) == 0) {
+                    aslr_debug("R_X86_64_GOT64 processing symbol %s\n", tmp.name);
+                    /*
+                     * First 3 entries of GOT[0, 1, 2] are reserved
+                     */
+                    rel_val = symoffset + (sizeof(uintptr_t) * 3);
+                    aslr_debug("symoffset in got is %zu\n", symoffset);
+                    aslr_debug("Setting reloc value to %#lx\n", rel_val);
+                    *(uint64_t *)r_ptr = rel_val;
+                    break;
+                }
+                symoffset += sizeof(uintptr_t);
+            }
+            fprintf(stderr, "Failed to find symbol for R_X86_64_GOT64 reloc entry\n");
+            return false;
+            break;
+        case R_X86_64_GOTPC64: /* GOT - P + A */
+            if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got) == false) {
+                fprintf(stderr, "elf_section_by_name() failed on .got\n");
+                return false;
+            }
+            aslr_debug("R_X86_64_GOTPC64\n");
+            rel_val = ELF_RUNTIME_BASE(got.address) - rel_addr + rel_entry-&gt;rel.addend;
+            aslr_debug("rel_val = %#lx - %#lx + %#lx\n", ELF_RUNTIME_BASE(got.address),
+                rel_addr, rel_entry-&gt;rel.addend);
+            aslr_debug("Setting %p to %#lx\n", r_ptr, rel_val);
+            *(uint64_t *)r_ptr = rel_val;
+            break;
+        case R_X86_64_GOTOFF64:
+            aslr_debug("R_X86_64_GOTOFF64\n");
+            if (elf_symbol_by_name(&ctx-&gt;elfobj, rel_entry-&gt;rel.symname, &symbol) == false) {
+                fprintf(stderr, "elf_symbol_by_name failed on %s\n", symbol.name);
+                return false;
+            }
+            if (symbol.type == STT_FUNC && symbol.bind == STB_GLOBAL) {
+                struct func_entry *tmp;
+
+                TAILQ_FOREACH(tmp, &aslr-&gt;orig_func_list, _linkage) {
+                    if (strcmp(tmp-&gt;symbol.name, rel_entry-&gt;rel.symname) != 0)
+                        continue;
+                    symval = tmp-&gt;new_base_vaddr;
+                    aslr_debug("symval set to %#lx\n", symval);
+                    break;
+                }
+            } else {
+                symval = ELF_RUNTIME_BASE(symbol.value);
+                aslr_debug("symval set to %#lx\n", symval);
+            }
+
+            rel_val = symval + rel_entry-&gt;rel.addend -
+                ELF_RUNTIME_BASE(got.address);
+
+            aslr_debug("R_X86_64_GOTOFF64 setting r_ptr(%p) to rel_val: %#x\n",
+                r_ptr, rel_val);
+
+            *(int64_t *)r_ptr = rel_val;
+            break;
+        case R_X86_64_PLTOFF64: /* L - GOT + A */
+            aslr_debug("R_X86_64_PLTOFF64\n");
+            if (elf_plt_by_name(&ctx-&gt;elfobj, rel_entry-&gt;rel.symname,
+                &plt) == false) {
+                fprintf(stderr, "elf_plt_by_name() failed on %s\n",
+                    rel_entry-&gt;rel.symname);
+                return false;
+            }
+            if (elf_section_by_name(&ctx-&gt;elfobj, ".got", &got) == false) {
+                fprintf(stderr, "elf_section_by_name() failed on .got\n");
+                return false;
+            }
+            symval = plt.addr + ctx-&gt;ulexec.base_vaddr;
+            aslr_debug("symval:(%#lx) - got:(%#lx) + addend(%#lx)\n",
+                symval, ELF_RUNTIME_BASE(got.address), rel_entry-&gt;rel.addend);
+            rel_val = symval - ELF_RUNTIME_BASE(got.address) + rel_entry-&gt;rel.addend;
+            aslr_debug("rel_val: %#x\n", rel_val);
+            aslr_debug("Setting PLT encoded-offset to GOT offset %#lx\n", got.address +
+                rel_entry-&gt;rel.addend);
+            *(uint32_t *)r_ptr = rel_val;
+            break;
+        case R_X86_64_PC32: /* S + A - P */
+            aslr_debug("R_X86_64_PC32\n");
+            if (rel_entry-&gt;rel.symname[0] == '.') {
+                res = elf_section_by_name(&ctx-&gt;elfobj, rel_entry-&gt;rel.symname,
+                    &shdr);
+                if (res == false) {
+                    fprintf(stderr, "elf_section_by_name() on %s failed\n",
+                        rel_entry-&gt;rel.symname);
+                    return false;
+                }
+                symval = ELF_RUNTIME_BASE(shdr.address);
+                rel_val = symval + rel_entry-&gt;rel.addend - rel_addr;
+                aslr_debug("Setting R_X86_64_PC32(1) reloc value (r_ptr: %p) to rel_val: %#x (destination symbol %s:%#lx)\n",
+                   r_ptr, rel_val, rel_entry-&gt;rel.symname, symval);
+                *(uint32_t *)&r_ptr[0] = rel_val;
+                break;
+            } else {
+                if (elf_symbol_by_name(&ctx-&gt;elfobj, rel_entry-&gt;rel.symname,
+                    &symbol) == false) {
+                    fprintf(stderr, "elf_symbol_by_name() failed to find symbol %s\n",
+                        symbol.name);
+                    return false;
+                }
+                struct func_entry *tmp;
+
+                if (symbol.type != STT_FUNC)
+                    break;
+
+                aslr_debug("Searching for symbol %s\n", symbol.name);
+                TAILQ_FOREACH(tmp, &aslr-&gt;orig_func_list, _linkage) {
+                    if (strcmp(tmp-&gt;symbol.name, rel_entry-&gt;rel.symname) != 0)
+                        continue;
+                    if (fe-&gt;flags & ASLR_FUNC_F_ENTRYPOINT) {
+                        /*
+                         * Instead of solving the normal relocation for
+                         * a R_X86_64_PC32 here, we actually replace an
+                         * entire 'lea 0x0(%rip), $rdi' instruction with
+                         * a 'movabs &lt;new_main&gt; $rdi'. The memory mapping
+                         * where main() lives will likely exceed what can
+                         * be encoded into a 4 byte offset.
+                         *
+                         * init routes (i.e. _start, __libc_start_main, etc.)
+                         * are all already compiled into the crt*.o files. So
+                         * while main() and all other functions compiled may
+                         * be in a large code model, the init routines are not.
+                         */ 
+                        if (strcmp(tmp-&gt;symbol.name, "main") == 0) {
+                            uint8_t *new_r_ptr;
+
+                            new_r_ptr = r_ptr + 6;
+                            uint32_t offset = *(uint32_t *)new_r_ptr;
+                            *(uint32_t *)&rip_call[2] = offset - 3;
+                            *(uint64_t *)&movabs_rdi[2] = tmp-&gt;new_base_vaddr;
+                            new_r_ptr = r_ptr - 3;
+                            memcpy(new_r_ptr, movabs_rdi, sizeof(movabs_rdi));
+                            new_r_ptr += sizeof(movabs_rdi) - 1;
+                            memcpy(new_r_ptr, rip_call, sizeof(rip_call));
+                            break;
+                        }
+                    }
+                    symval = tmp-&gt;new_base_vaddr;
+                    rel_val = symval + rel_entry-&gt;rel.addend - rel_addr;
+                    aslr_debug("Setting X86_64_PC32(2) reloc value to rel_val: %#x"
+                        " destination symbol %s:%#lx)\n", rel_val,
+                        rel_entry-&gt;rel.symname, symval);
+                    *(uint32_t *)r_ptr = rel_val;
+                }
+            }
+            break;
+        default:
+            aslr_debug("Unhandled relocation type %d: %s\n", rel_entry-&gt;rel.type,
+                elf_reloc_type_string(&ctx-&gt;elfobj, rel_entry-&gt;rel.type));
+            break;
+    }
+}
+
+success:
+    aslr_debug("Setting mprotect PROT_READ|PROT_EXEC on %p\n", (void *)page_vaddr);
+    (void)mprotect((void *)page_vaddr,
+        4096,
+        PROT_READ|PROT_EXEC);
+
+    aslr_debug("Returning\n");
+    return true;
+}
+
+bool
+move_function(struct shiva_ctx *ctx, struct aslr_ctx *aslr, struct func_entry *fe)
+{
+
+    size_t delta;
+    struct reloc_entry *rel_entry;
+
+    aslr_debug("Moving function %s to %p\n", fe-&gt;symbol.name, fe-&gt;n_mem);
+    /*
+     * Copy function code from its old address to its new address
+     */
+    memcpy(fe-&gt;n_mem, (uint8_t *)fe-&gt;runtime_vaddr, fe-&gt;func_len);
+    /*
+     * Update the relocation entries for that function so that they
+     * reflect the correct r_offset's after it is moved.
+     */
+    TAILQ_FOREACH(rel_entry, &fe-&gt;reloc_list, _linkage) {
+        delta = rel_entry-&gt;rel.offset - fe-&gt;base_vaddr;
+        rel_entry-&gt;rel.offset = delta;
+    }
+    /*
+     * Now that function has been moved to a new location
+     * fixup the function using the modified relocation records.
+     */
+    return relocate_function(ctx, aslr, fe);
+}
+
+bool
+remove_old_function(struct shiva_ctx *ctx, struct func_entry *fe)
+{
+    int ret;
+    size_t mlen;
+    size_t pgoff;
+
+    /*
+     * Scrub old binary with zeroes. Perhaps this should be random
+     * bytes in the future.
+     */
+    pgoff = ELF_PAGEOFFSET(fe-&gt;runtime_vaddr);
+
+    ret = mprotect((void *)(fe-&gt;runtime_vaddr & ~4095), fe-&gt;func_len + pgoff, PROT_READ|PROT_WRITE|PROT_EXEC);
+    memset((void *)fe-&gt;runtime_vaddr, 0, fe-&gt;func_len - 1);
+    ret = mprotect((void *)(fe-&gt;runtime_vaddr & ~4095), fe-&gt;func_len + pgoff, PROT_READ|PROT_EXEC);
+
+    return ret ? false : true;
+}
+
+bool
+randomize_func_locations(struct shiva_ctx *ctx, struct aslr_ctx *aslr,
+    size_t fn_count)
+{
+    struct func_entry *fe;
+    bool res;
+
+    (void)fn_count;
+
+    TAILQ_FOREACH(fe, &aslr-&gt;orig_func_list, _linkage) {
+        if (fe-&gt;flags & ASLR_FUNC_F_ENTRYPOINT) {
+            /*
+             * This function is probably _start and
+             * we therefore do not move it, we leave it
+             * as the entrypoint, but we must fixup its
+             * relocations to point to the new main() etc.
+             */
+            res = relocate_function(ctx, aslr, fe);
+            if (res == false) {
+                fprintf(stderr, "Failed to relocate entrypoint function %s\n",
+                    fe-&gt;symbol.name);
+                return false;
+            }
+            continue;
+        }
+        aslr_debug("Moving function: %s\n", fe-&gt;symbol.name);
+        res = move_function(ctx, aslr, fe);     
+        if (res == false) {
+            fprintf(stderr, "Failed to move function %s\n", fe-&gt;symbol.name);
+            return false;
+        }
+        aslr_debug("Function %s was moved sucessfuly, now lets scrub the old version\n",
+            fe-&gt;symbol.name);
+        res = remove_old_function(ctx, fe);
+        aslr_debug("Function %s was scrubbed from its original location\n", fe-&gt;symbol.name);
+    }
+    return true;
+}
+
+int
+shiva_init(struct shiva_ctx *ctx)
+{
+    struct aslr_ctx aslr;
+    size_t fn_count;
+
+    aslr_debug("Building func list\n");
+
+    if (build_func_list(ctx, &aslr, &fn_count) == false) {
+        fprintf(stderr, "build_func_list() failed on .text\n");
+        return -1;
+    }
+
+    aslr_debug("Randomizing func locations\n");
+    if (randomize_func_locations(ctx, &aslr, fn_count) == false) {
+        fprintf(stderr, "randomize_func_locations() failed\n");
+        return -1;
+    }
+    aslr_debug("Leaving module\n");
+}
+</code></pre>
+
+### Summary of gASLR.c source code
+
+1. Move every function within the .text section to a new location in memory
+2. Update the `.rela.text` relocation entries `r_offset` values to align with 
+the new function locations
+3. Apply each `.rela.text` relocation to each function that has been moved. 
+
+You might call this technique  **JIT function transplantation**. 
+
+## gASLR demo
+
+From the `shiva/modules/x86_64_modules/aslr` directory you will see several 
+files including test.c, gASLR.c and a Makefile.
+
+
+To illustrate the effects of gASLR I created a simple program called `test.c` 
+that prints the address of it's functions at runtime. With standard ASLR in 
+effect you will notice that the two functions `main()` and `test1()` are always 
+at a fixed offset from the base address of the executable, whereas with gASLR 
+applied to ./test the functions will be mapped to their own base address.
+
+### Source code for test.c in gASLR demo
+
+gaslr_test_source - test.c - original [12]
+<pre><code class="language-c">
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h›
+
+int test1(void)
+{
+    int i = 0;
+    return 0;
+}
+
+static int ignore_me(void) // gASLR.o will not relocate static functions
+{
+    int i = 7;
+    return 0;
+}
+
+int main(void)
+{
+    printf("base address: %p\n", (unsigned long)&ignore_me & ~4095);
+    printf("main() is at %p\n" &main);
+    printf("test1() is at %p\n", &test1);
+    test1();
+}
+</code></pre>
+
+Let's compile this program and run it with standard ASLR in effect.
+
+### Running ./test with standard ASLR
+<pre><code class="language-txt">
+$ gcc -Wl,--emit-relocs -mcmodel=large test.c-o test 
+$ ./test 
+base address: 0x5a3b72d0a000
+main() is at 0x5a3b72d0a19d 
+test1() is at 0x5a3b72d0a149
+</code></pre>
+test_without_gaslr - original [13]
+
+The program output shows that the address of `main()` and of `test1()` stay at 
+the same fixed offsets from the base address `0x5a3b72d0a000` during each run. 
+Let's apply gASLR to the program and see the difference in the output...
+
+### gASLR in action
+<pre><code class="language-txt">
+elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ shiva-ld -e ./test-i /lib/shiva \
+&gt; -5 $PWD -P gASLR.o -o test.gASLR
+...............
+[+] Input executable: ./test
+[+] Input search path for patch: /home/elfmaster/amp/shiva/modules/x86_64_modules/aslr
+[+] Basename of patch: gASLR.o
+[+] Output executable: test.gASLR
+Üpdating dynamic segment vaddr: 0x5000 offset: Ox5000 size: 0x1e0
+Finished prelinking.
+elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ ./test.gASLR
+base address: 0x62e0aa32d000
+main() is at 0x790adc599000
+test1() is at 0x790adc597000
+elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$./test.gASLR
+base address: 0x55d1bb26e000
+main() is at 0x705a9c5f5000
+test1() is at 0x705a9c5f3000
+elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ •/test.gASLR
+base address: 0x5e8f57b1a000
+main() is at 0x7ee27abc6000
+test1() is at 0x7ee279f61000
+</code></pre>
+gASLR_demo - original [14]
+
+In the program output above we can see that the function addresses change each 
+time to addresses that are at a different offset from the executable base 
+address. The gASLR module is using `mmap()` to create a unique base mapping for 
+each function individually.
+
+## Future work on gASLR
+
+Presently this is just a prototype and is lacking the code to handle all 
+possible relocation types and only accomplishes the basic security goals-- in a 
+better version we would also add in the following features:
+
+-  Randomized PLT entries
+-  Randomized global data
+-  Randomization of locally bound functions
+-  Place function at a random offset from its new memory address
+- Ability to work on small-code-model programs
+
+ Given a little bit more time I could have it polished up and ready for 
+production use. I just need the time to get it done!
+
+## Closing thoughts
+
+Shiva bridges the gap between binary patching and dynamic instrumentation and 
+is extremely powerful for building ELF microprograms that solve hard security 
+problems! Thank you so much for taking the time to read this...
+
+## ELF binary hacking workshops
+
+For those interested in learning more about Shiva and how to use it for binary 
+patching as well as for building security features, fuzzers, debuggers, and 
+more... please feel free to check out the training description[15] on the Arcana
+webpage. I'd love to train more people to see what kind of awesome projects come
+out of Shiva.
+
+
+## Contact
+
+Please contact me with questions, comments, collaboration ideas, etc.
+
+elfmaster [at] arcana-research.io
+
+
+## References
+
+[1] <a href="https://tmpout.sh/2/6.html">https://tmpout.sh/2/6.html</a>
+[2] <a href="https://arcana-research.io/shiva">https://arcana-research.io/shiva</a>
+[3] <a href="https://github.com/advanced-microcode-patching/shiva">https://github.com/advanced-microcode-patching/shiva</a>
+[4] <a href="https://infocondb.org/con/toorcon/toorcamp-2022/shiva-advancing-the-programmability-and-security-of-the-linux-userland-runtime">https://infocondb.org/con/toorcon/toorcamp-2022/shiva-advancing-the-programmability-and-security-of-the-linux-userland-runtime</a>
+[5] <a href="https://github.com/advanced-microcode-patching/shiva_user_manual">https://github.com/advanced-microcode-patching/shiva_user_manual</a>
+[6] <a href="https://www.youtube.com/watch?v=TDMWejaucdg">https://www.youtube.com/watch?v=TDMWejaucdg</a>
+[7] <a href="https://arcana-research.io/static/shiva_module_process_image.png">https://arcana-research.io/static/shiva_module_process_image.png</a>
+[8] <a href="https://github.com/advanced-microcode-patching/shiva/blob/x86_64_port/modules/x86_64_modules/aslr/gASLR.c">https://github.com/advanced-microcode-patching/shiva/blob/x86_64_port/modules/x86_64_modules/aslr/gASLR.c</a>
+[9] <a href="https://arcana-research.io/static/shiva-dynamic-linking-workflow.png">https://arcana-research.io/static/shiva-dynamic-linking-workflow.png</a>
+[10] <a href="https://github.com/elfmaster/libelfmaster">https://github.com/elfmaster/libelfmaster</a>
+[11] <a href="https://github.com/advanced-microcode-patching/shiva">https://github.com/advanced-microcode-patching/shiva</a>
+[12] <a href="https://arcana-research.io/static/gaslr_test_source.png">https://arcana-research.io/static/gaslr_test_source.png</a>
+[13] <a href="https://arcana-research.io/static/test_without_gaslr.png">https://arcana-research.io/static/test_without_gaslr.png</a>
+[14] <a href="https://arcana-research.io/static/gaslr_prelink.png">https://arcana-research.io/static/gaslr_prelink.png</a>
+[15] <a href="https://arcana-research.io/blog/the-art-of-elf-binary-patching-in-linux">https://arcana-research.io/blog/the-art-of-elf-binary-patching-in-linux</a>
+[16] <a href="https://github.com/advanced-microcode-patching/shiva/blob/x86_64_port/shiva_ulexec.c">https://github.com/advanced-microcode-patching/shiva/blob/x86_64_port/shiva_ulexec.c</a>
+
+--[ <a href="18.html">PREV</a> | <a href="index.html">HOME</a> | <a href="20.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

@@ -1,0 +1,279 @@
+<html>
+<head>
+<title>Self-Extraction Using Reachability Analysis and Replication ~ r3s1stanc3</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+Self-Extraction Using Reachability                     │                 ▄▄▄▄▄ │
+    Analysis and Replication                           │                   █   │
+                                                       │                   █   │
+~ r3s1stanc3                                           └───────────────────█ ──┘
+
+───[ Table of Contents ]─────────────────────────────────────────────────────
+0 - Intro
+1 - The Class-File API
+2 - Shaking the Tree
+3 - Moving Around
+4 - We're Moving, but Not Running
+5 - Why Is This Cool?
+6 - Shoutouts
+7 - References
+
+───[ 0 - Intro ]─────────────────────────────────────────────────────────────
+
+It's been a while since I polished up HandJar[0] and wrote ClassWar[1]. Both
+viruses work similarly by generating Java source code and compiling it to
+create an entrypoint. This technique depends on the existence of a Java
+compiler toolchain.
+
+My previous work performed the infection by simply copying files into the
+host file and hooking the entrypoint using the `Main-Class` attribute in
+`MANIFEST.MF`, or by wrapping an existing class and calling into the old
+class using reflection. I could never be bothered to do something at the JVM
+bytecode level. It was too much work to understand the low-level file format,
+parse and modify the code, and keep track of and update offsets. Sure, it has
+been done by others[2][3][4], but I never tried it. One could say I was lazy
+and waiting for a high-level API to perform low-level bytecode manipulation.
+
+And boy, oh boy, did the Java team deliver... Java 24 introduced a new,
+interesting API into the standard library: the Class-File API[5]. This API
+allows Java class files to be read, modified, and written without having to
+worry about the low-level details of the class file format.
+
+This API opens some powerful possibilities that I will explore in this
+article:
+
+ - Perform reachability analysis to dynamically extract all methods called
+   from a specified starting point (e.g. the virus entrypoint)
+ - Move those methods into an existing Java class file
+ - Inject a call to the entrypoint into any existing method in the class file
+   using bytecode manipulation
+
+I implemented a PoC using the new API to do exactly that. As the logical next
+step after ClassWar, I called it Revolution.
+
+───[ 1 - The Class-File API ]────────────────────────────────────────────────
+
+The new API is really powerful and allows for many shenanigans, but for now,
+there are only a few relevant classes we need to write a virus:
+
+ - `ClassModel`[6]: a parsed class file
+ - `MethodModel`[7]: method metadata (name, return type, and parameters)
+ - `CodeModel`[8]: the actual bytecode instructions of a `MethodModel`
+ - `ClassTransform`[9]: modifies a class file
+
+Getting instances of those classes is as easy as calling
+`ClassFile.of().parse(content)` to get a `ClassModel`,
+`classModel.methods()` to access all methods in a class, and
+`methodModel.code()` to access the `CodeModel`.
+
+───[ 2 - Shaking the Tree ]──────────────────────────────────────────────────
+
+Tree shaking[10] is a kind of dead-code elimination used to find and remove
+dead code, e.g. code that is never called. We can flip the idea and find only
+the code that actually _is_ executed when searching from a specified starting
+point, giving us a nice and simple reachability analysis.
+
+Knowing the entrypoint of the virus, we can start from there and walk through
+the call stack, building a dependency tree of all the code the virus needs to
+execute.
+
+Java allows us to dynamically retrieve the name of the class and method
+currently being executed from the runtime, so we do not need to store the
+name of the entrypoint inside the virus; we can calculate it when the
+entrypoint is executed.
+
+For simplicity, this PoC places some restrictions on how the code must be
+written for the reachability analysis to work. With a bit more work, the
+analysis can be extended to support every language feature there is. For now,
+the restrictions are as follows:
+
+ - Only static methods (preferably private, so consumers of an infected class
+   don't see them)
+ - No `switch` over `enum`s, as this produces some peculiar bytecode and I
+   didn't have time to figure that one out
+ - No method references (e.g. `List.of(1).forEach(System.out::println)`) for
+   the same reason as above
+ - No runtime reflection
+ - The entrypoint must be a `static void` method with zero parameters (not
+   actually a restriction of the reachability analysis, but it makes calling
+   the entrypoint in an infected class file easier)
+
+This isn't much of a restriction, since any Java code can be rewritten like
+this. We just cannot use classes to carry state and instead have to pass
+state around as method parameters, e.g. in `Map`s. `switch` over `enum`s can
+be rewritten as `if`/`else` constructs, and method references can be
+rewritten as lambdas (`i -&gt; System.out.println(i)` in the example above).
+
+When the code is structured with these restrictions in mind, it's pretty easy
+to perform a breadth-first search[11] of all the methods called from any
+starting method.
+
+Java bytecode only knows a few ways to call a method:
+
+ - `invokedynamic`[12]
+ - `invokeinterface`[13]
+ - `invokespecial`[14]
+ - `invokestatic`[15]
+ - `invokevirtual`[16]
+
+Analyzing those five bytecode instructions gives us a simple way to build a
+call tree. The new Class-File API makes it easy to iterate over the
+instructions of a method's `CodeModel` and perform the reachability analysis.
+We just look at those instructions, check which methods are invoked, and add
+the method to the dependency tree if it is not from the standard library.
+
+The code could even be spread across multiple classes, but then the methods
+cannot be `private`.
+
+This reachability analysis only happens at the method level, not at the
+bytecode level. So, if a method contains dead code, it will not be removed.
+
+───[ 3 - Moving Around ]─────────────────────────────────────────────────────
+
+Okay, now we know the dependencies of our code. What comes next? We need to
+actually move the code into a host file. We can more or less just copy all
+`MethodModel`s, along with their `CodeModel`s, into the host file. Since
+`static` methods in Java still carry a reference to their enclosing class
+(e.g. `MyClass#foo`), we need to adjust the reference to use the name of the
+host class.
+
+Here we can also implement a really basic form of polymorphism: since we are
+already adjusting all references, we can also randomly rename the methods.
+This has two advantages:
+
+ - No conflicts with existing methods of the class. We simply generate new
+   random values until we find a name that isn't already used
+ - No deterministic method names to use as patterns for detecting the virus.
+   The code itself still contains patterns that should make detection
+   trivial, but actually morphing the code is left as an exercise to the
+   reader (or me, but I'm running out of time for this submission...)
+
+───[ 4 - We're Moving, but Not Running ]─────────────────────────────────────
+
+It's all fun and games up to this point. We dynamically extracted all the
+logic our virus needs and moved it into a host file, but it never gets
+executed...
+
+A few entrypoint techniques have already been explored in Java, e.g. changing
+the `Main-Class` attribute in `MANIFEST.MF` to point to the virus and calling
+the original entrypoint from there (HandJar), wrapping classes using
+reflection, and injecting a `static` block to call the virus (ClassWar).
+
+Those techniques are somewhat boring and predictable when we're already
+operating at the bytecode level of the class file. Since the entrypoint is a
+`static` method without any parameters, we just need to use `invokestatic`
+somewhere in the infected class. Using
+`ClassTransform#transformingMethodBodies`[17], we can just pick a random
+method from the host class and inject an `invokestatic` instruction. I
+decided to inject the call before every `*return` instruction so that, no
+matter which branch is executed, the entrypoint is called. `CodeBuilder`[18]
+makes this easy, too.
+
+Now, whenever the method we randomly picked gets executed by the original
+code, the virus is executed, too.
+
+───[ 5 - Why Is This Cool? ]─────────────────────────────────────────────────
+
+We are able to infect JVM bytecode by directly modifying it, without having
+to take care of the gritty little details of the low-level format, like
+rewriting offsets and header fields. All that is hidden behind a nice,
+ergonomic API.
+
+We also now have a nice, self-contained, and fully independent way to collect
+all methods that belong to the virus. We don't really have to know where the
+code is stored; we just need the name of the class and method of the
+entrypoint. We can get both dynamically from the Java runtime. From there, we
+just shake until we have nothing left but the virus-relevant methods, then
+move those to the next target. It keeps working as is, even when we extend
+the functionality of the virus.
+
+Revolution offers a nice, extensible basis for viruses targeting Java
+bytecode that can be used to explore new EPO techniques, split the code and
+inject parts of it into different classes, implement polymorphism (e.g.
+inlining or outlining methods and injecting junk code), and even achieve
+metamorphism by rewriting certain constructs into different but equivalent
+code. Hh86 used the exception table for EPO[19], and I plan on exploring this
+and other EPO techniques based on this framework.
+
+All this works not only for JAR files, but also for class files that are not
+in an archive. Actually, I don't care at all about the executed host file,
+since one can load the contents of any class file loaded by a JVM instance
+using `ClassLoader#getResourceAsStream`[20].
+
+I think that's a kind of elegant and cool new way to infect targets that run
+on the JVM.
+
+───[ 6 - Shoutouts ]─────────────────────────────────────────────────────────
+
+ - SPTH for being a kind of mentor all those years ago and for always keeping
+   me interested in self-replicating code. Hope you're doing well, wherever
+   you are right now.
+ - TMZ and the whole tmp.0ut staff for continuing to release a VX ezine
+   regularly, for the time they put into reviews, and for giving me the
+   opportunity to release articles from time to time. Thanks a lot, and see
+   you in the next issue!
+ - Peter Ferrie for his devastating analysis of HandJar.A[21], which hurt my
+   fragile little ego on one hand, but also motivated me years later to pick
+   up the work again and continue down this path. I just saw that you're
+   judging the Rootkit Competition for this volume. Nice to see you're still
+   participating in this beautiful side of the VX scene.
+ - The Java team for specifying and implementing the Class-File API and
+   thereby offering an enterprise(TM) API for writing cool new Java
+   infectors.
+ - All the other beautiful people with whom I've crossed paths as they
+   dipped their toes into this scene over the years, came up with exciting
+   new ideas, and kept the work from getting boring.
+
+───[ 7 - References ]────────────────────────────────────────────────────────
+
+[0]  <a href="https://tmpout.sh/3/28.html">https://tmpout.sh/3/28.html</a>
+[1]  <a href="https://tmpout.sh/3/29.html">https://tmpout.sh/3/29.html</a>
+[2]  <a href="https://86hh.github.io/valhalla/issue%204/codes/hh86/GRIMES/GRIMES.txt">https://86hh.github.io/valhalla/issue%204/codes/hh86/GRIMES/GRIMES.txt</a>
+[3]  <a href="https://www.f-secure.com/v-descs/sbrew">https://www.f-secure.com/v-descs/sbrew</a>
+[4]  <a href="https://threats.kaspersky.com/en/threat/Virus.Java.BeanHive/">https://threats.kaspersky.com/en/threat/Virus.Java.BeanHive/</a>
+[5]  <a href="https://openjdk.org/jeps/484">https://openjdk.org/jeps/484</a>
+[6]  <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassModel.html">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassModel.html</a>
+[7]  <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/MethodModel.html">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/MethodModel.html</a>
+[8]  <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/CodeModel.html">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/CodeModel.html</a>
+[9]  <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassTransform.html">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassTransform.html</a>
+[10] <a href="https://en.wikipedia.org/wiki/Tree_shaking">https://en.wikipedia.org/wiki/Tree_shaking</a>
+[11] <a href="https://en.wikipedia.org/wiki/Breadth-first_search">https://en.wikipedia.org/wiki/Breadth-first_search</a>
+[12] <a href="https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokedynamic">https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokedynamic</a>
+[13] <a href="https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokeinterface">https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokeinterface</a>
+[14] <a href="https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokespecial">https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokespecial</a>
+[15] <a href="https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokestatic">https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokestatic</a>
+[16] <a href="https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokevirtual">https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-6.html#jvms-6.5.invokevirtual</a>
+[17] <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassTransform.html#transformingMethodBodies(java.util.function.Predicate,java.lang.classfile.CodeTransform)">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/ClassTransform.html#transformingMethodBodies(java.util.function.Predicate,java.lang.classfile.CodeTransform)</a>
+[18] <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/CodeBuilder.html">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/CodeBuilder.html</a>
+[19] <a href="https://86hh.github.io/valhalla/issue%204/articles/hh86/CLASSI.TXT">https://86hh.github.io/valhalla/issue%204/articles/hh86/CLASSI.TXT</a>
+[20] <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getResourceAsStream(java.lang.String)">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getResourceAsStream(java.lang.String)</a>
+[21] <a href="https://www.virusbulletin.com/virusbulletin/2013/12/hands-cookie-jar">https://www.virusbulletin.com/virusbulletin/2013/12/hands-cookie-jar</a>
+
+r3s1stanc3 - r3s1stanc3@riseup.net
+
+2026-07
+
+--[ <a href="15.html">PREV</a> | <a href="index.html">HOME</a> | <a href="17.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

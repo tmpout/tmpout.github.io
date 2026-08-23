@@ -1,0 +1,590 @@
+<html>
+<head>
+<title>halfshelf: Loading ELF After The Header Is Gone</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                                 ┌───────────────────────┐
+                                                                 ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                                 │ █   █ █ █ █   █       │
+                                                                 │ █   █ █ █ █▀▀▀▀       │
+                                                                 │ █   █   █ █     ▄     │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄   ▄ │
+                                                                 │                 █   █ │
+                                                                 │                 █   █ │
+                                                                 │                 █▄▄▄█ │
+                                                                 │                 ▄▄▄▄▄ │
+                                                                 │                   █   │
+halfshelf: Loading ELF After The Header Is Gone                  │                   █   │
+~ TMZ                                                            └───────────────────█ ──┘
+
+
+halfshelf
+ │
+ ├── halfshelf.asm
+ ├── headshelf.asm
+ ├── utils.inc
+ ├── Makefile
+ │
+ ├── loader
+ │   │
+ │   ├── validate.inc
+ │   ├── reloc.inc
+ │   ├── stack.inc
+ │   ├── rwdata.inc
+ │   └── rodata.inc
+ │
+ ├── tests
+ │   │
+ │   ├── test.c
+ │   ├── test_argv_tls.c
+ │   └── static-pie.ld
+ │
+ └── strip_headers
+     │
+     └── strip_headers.asm
+
+Download <a href="static/14/halfshelf.tgz">halfshelf.tgz</a>
+
+
+<y>-= The Half-Loader Series: 2/3</y>
+
+This article is the second part of a three part series for tmp.0ut volume 5:
+
+1. <a href="13.html">halfexec</a>
+   Broad userspace ELF loading and the process state normally built by Linux.
+2. <t>halfshelf</t> (you are here)
+   One direct entry static PIE, with normal and headless input paths.
+3. <a href="15.html">phork</a>
+   The headless representation packaged behind its own loader stub.
+
+The series gets narrower as it goes. This part is the hinge: it keeps the ELF
+runtime obligations from part one, but makes the accepted image shape small
+enough that part three can package it cleanly.
+
+<y>-= Introduction</y>
+
+An ELF loader is even more appreciated when it is allowed to be a bit crazy.
+
+Do not accept every architecture! Do not negotiate with an interpreter! Do not
+map six subtly different load segments! Pick one executable form, write down
+its scope and reject everything outside it.
+
+That is <t>halfshelf</t> (yay).
+
+It is a Linux x64 userspace loader for a narrow SHELF shaped static PIE:
+<t>ET_DYN</t>, exactly one <t>PT_LOAD</t>, no <t>PT_INTERP</t> and a direct jump to
+the payload entry point.
+
+There are two front ends for the same runtime problem.
+
+- <t>halfshelf</t> reads an ordinary ELF from a path
+- <t>headshelf</t> reads a stripped load image plus detached metadata
+
+The first asks how little loader is needed for a deliberately friendly ELF.
+The second asks a stranger question: after the ELF and Program Header prefixes
+are removed, which facts must survive for the program to wake up normally.
+
+There are load biases, dynamic relocations, TLS, a fresh initial stack and an
+auxiliary vector full of promises normally made by the kernel.
+
+<y>-= Where SHELF Comes From</y>
+
+The starting point is <a href="https://tmpout.sh/1/10/">Introducing SHELF Loading</a> by @ulexec and @Anonymous_.
+An alternate copy lives on <a href="https://ulexec.github.io/post/2021-04-08-shelfloading/">ulexec's site</a>.
+
+SHELF combines two properties that are usually discussed separately:
+
+- static linking, so there is no runtime dependency on <t>ld-linux</t> or a set
+  of shared objects
+- position independent code, so the complete image can live at a base chosen
+  at runtime
+
+The result is a static position independent executable: an <t>ET_DYN</t> file
+that contains its own runtime but can still be placed under ASLR.
+
+Static does not mean structurally simple. A glibc static PIE can still contain
+<t>PT_DYNAMIC</t>, RELA tables, indirect function resolvers and <t>PT_TLS</t>.
+glibc itself performs early static PIE relocation before normal startup. The
+interesting opportunity is that these records describe work a small loader can
+perform directly.
+
+SHELF then makes the load geometry boring by linking the image into one <t>PT_LOAD</t>.
+If that segment begins at file offset zero and virtual address zero, every
+payload address follows one equation:
+<pre><code class="language-c">
+    runtime_address = load_bias + image_virtual_address
+</code></pre>
+There is no per segment translation puzzle as the chosen mapping base is the
+load bias.
+
+Calling this raw shellcode would undersell it. It is still a real linked C
+program with libc startup, relocations, TLS and process entry expectations. It
+has simply been shaped to travel as one position independent image.
+
+<y>-= Why A More Restricted Loader Than halfexec</y>
+
+<t>halfexec</t> handles <t>ET_EXEC</t>, normal PIE, interpreted executables,
+multiple <t>PT_LOAD</t> ranges and the awkward handoff to a dynamic linker.
+
+<t>halfshelf</t> treats the bigger loader as its source and trims choices:
+
+    halfexec                         halfshelf
+    -----------------------------    -----------------------------
+    ET_EXEC and ET_DYN               ET_DYN only
+    one or many PT_LOAD segments     exactly one PT_LOAD
+    optional PT_INTERP               PT_INTERP rejected
+    direct or interpreter entry      direct entry only
+    general ELF ish mapping          p_offset = 0, p_vaddr = 0
+
+The reusable runtime phases remain shared, but their source files are vendored
+into this release.
+
+As mentioned in the part one of this series, <t>halfexec</t> could become a library
+at some point.
+
+<y>-= The Payload</y>
+
+The normal loader checks that the input is:
+
+- ELF64, little-endian and x64
+- current ELF version with the native 64 byte ELF header
+- <t>ET_DYN</t>
+- described by native 56 byte <t>Elf64_Phdr</t> records
+- exactly one non empty <t>PT_LOAD</t>
+- loaded from <t>p_offset == 0</t> at <t>p_vaddr == 0</t>
+- free of <t>PT_INTERP</t>
+
+It also records optional <t>PT_DYNAMIC</t>, <t>PT_TLS</t> and <t>PT_GNU_STACK</t> information.
+
+The one load rule comes from the linker script. GNU <t>ld</t>'s <t>PHDRS</t> command lets
+a script describe the output Program Header Table explicitly. The test script
+creates one load segment and assigns all allocatable sections to it:
+<pre><code class="language-c"><!-- TODO: Linker script syntax highlighting -->
+    PHDRS
+    {
+      shelf   PT_LOAD    FILEHDR PHDRS FLAGS(7);
+      dynamic PT_DYNAMIC FLAGS(6);
+      tls     PT_TLS     FLAGS(4);
+    }
+
+    SECTIONS
+    {
+      PROVIDE(__ehdr_start = 0);
+      . = SIZEOF_HEADERS;
+      ...
+      .text    : { *(.text*) }    :shelf
+      .rodata  : { *(.rodata*) }  :shelf
+      .dynamic : { *(.dynamic) }  :shelf :dynamic
+      .data    : { *(.data*) }    :shelf
+      .bss     : { *(.bss*) }     :shelf
+      .tdata   : { *(.tdata*) }   :shelf :tls
+    }
+</code></pre>
+<t>FILEHDR PHDRS</t> places the ELF and Program Header bytes inside the loadable
+segment. That is important twice: the normal loader can produce a valid
+<t>AT_PHDR</t>, and the headless loader knows exactly which prefix it must grow
+back later.
+
+The obvious cost is permissions. Code and mutable data share one segment, so
+the sample linker emits one RWX <t>PT_LOAD</t>. This is a teaching trade, not a
+<t>W^X</t> hardening technique. The linker warning is correct and the article should
+not pretend otherwise.
+
+<y>-= Front End One: A Normal ELF From Disk</y>
+
+<t>halfshelf</t> parses its own initial stack, makes the target pathname become the future
+payload's <t>argv[0]</t>, opens the file, uses <t>fstat</t> to bound it, reads the
+ELF header and stages the file in a fixed buffer.
+
+Validation pre scans the Program Header Table before committing to a mapping.
+It rejects an interpreter and a second load segment, records the dynamic and
+TLS ranges, rounds the one memory span to pages and reserves an anonymous
+window with <t>mmap</t>.
+
+Later, the segment mapping replaces that range with <t>MAP_FIXED</t>. Keeping
+the reservation avoids choosing an address, unmapping it and hoping no intervening
+allocation steals it.
+
+For the single load segment the loader:
+
+1. checks that <t>p_filesz &lt;= p_memsz</t>
+2. checks that the file range stays inside the staged input
+3. maps the rounded range read write
+4. copies <t>p_filesz</t> bytes from the staged file
+5. zeroes the tail through <t>p_memsz</t>
+6. applies the Program Header permissions with <t>mprotect</t>
+
+Anonymous mappings arrive zero filled, but the explicit model is still useful:
+file bytes end at <t>p_filesz</t> and BSS like memory ends at <t>p_memsz</t>.
+
+There is no <t>execve</t> after this point. The loader is building a new runtime
+image inside its own process, then replacing its stack pointer and branching
+to the new entry.
+
+<y>-= Front End Two: Taking The Head Off</y>
+
+<t>headshelf</t> starts from the same linked image but stores it differently.
+
+The stripping tool computes:
+
+    phdr_bytes  = e_phnum * e_phentsize
+    header_span = e_phoff + phdr_bytes
+    payload_len = PT_LOAD.p_filesz - header_span
+
+It preserves bytes from <t>header_span</t> through <t>p_filesz</t> as the
+stripped payload. Section headers, debug sections and other bytes beyond the
+load segment are not runtime payload and are not copied.
+
+The result looks like this:
+<pre><code class="language-txt">
+    original ELF
+
+    0                                                p_filesz
+    ┌──────────┬───────────────┬───────────────────────────┐
+    │ Elf64_Ehdr│ Elf64_Phdr[] │ bytes needed by PT_LOAD   │
+    └──────────┴───────────────┴───────────────────────────┘
+    └────── header_span ───────┘
+
+    detached representation
+
+    ┌──────────────────────┐    ┌───────────────────────────┐
+    │ metadata + phdr bytes│    │ stripped payload bytes    │
+    └──────────────────────┘    └───────────────────────────┘
+</code></pre>
+Nothing inside the logical image is rebased by stripping. A byte originally at
+image offset <t>header_span</t> is copied back to <t>base + header_span</t>. Linked virtual
+addresses remain valid after the load bias is added.
+
+This is the important distinction between deleting bytes and moving bytes. The
+on disk representation is shorter and the reconstructed in-memory layout is not.
+
+<y>-= Two Metadata Encodings</y>
+
+The metadata sidecar has two encodings with the same meaning.
+
+<t>SHELFMETA1</t> is text. It is verbose, friendly to <t>od</t>, <t>sed</t> and human eyes, and
+useful while debugging a new field. A real one, generated by <t>strip_headers</t>
+off the included <t>test.c</t> sample, looks like this:
+<pre><code class="language-txt">
+SHELFMETA1
+entry 0000000000006cc0
+phoff 0000000000000040
+phnum 0000000000000003
+phentsize 0000000000000038
+header_span 00000000000000e8
+load_offset 0000000000000000
+load_vaddr 0000000000000000
+load_filesz 00000000000afab8
+load_memsz 00000000000afab8
+load_flags 0000000000000007
+dynamic_vaddr 00000000000a44b8
+dynamic_memsz 00000000000001a0
+tls_vaddr 00000000000afa88
+tls_filesz 0000000000000030
+tls_memsz 0000000000000058
+tls_align 0000000000000008
+phdr_hex 010000000700000000000000...
+</code></pre>
+One key/value pair per line, fixed width hex values, no parser juggling
+required to eyeball whether a field looks right.
+
+<t>SHELFBN1</t> is a fixed width binary record. It begins with eight magic
+bytes, followed by seventeen little-endian 64 bit values:
+
+     0  magic              "SHELFBN1"
+     8  entry              original e_entry
+    16  phoff              original e_phoff
+    24  phnum              original e_phnum
+    32  phentsize          original e_phentsize
+    40  header_span        end of removed prefix
+    48  load_offset        required to be zero
+    56  load_vaddr         required to be zero
+    64  load_filesz        original PT_LOAD.p_filesz
+    72  load_memsz         original PT_LOAD.p_memsz
+    80  load_flags         mmap R/W/X bits
+    88  dynamic_vaddr      optional PT_DYNAMIC address
+    96  dynamic_memsz      optional PT_DYNAMIC size
+   104  tls_vaddr          optional PT_TLS address
+   112  tls_filesz         initialized TLS byte count
+   120  tls_memsz          complete TLS byte count
+   128  tls_align          requested TLS alignment
+   136  phdr_blob_size     bytes of saved Program Headers
+   144  phdr_blob          original Program Header bytes
+
+The fixed portion is 144 bytes. The current test image has three 56 byte
+Program Headers, so its binary metadata is <t>144 + 168 = 312</t> bytes.
+
+The loader autodetects the leading magic. It then verifies the zero-based load
+geometry, bounds the Program Header blob to its 4096 byte scratch area and
+requires:
+<pre><code class="language-c">
+    phdr_blob_size = phnum * phentsize
+</code></pre>
+The text format optimizes for inspection and the binary format optimizes for an
+unambiguous compact record. Keeping both is useful because serialization is
+part of the loader design here.
+
+<y>-= Growing The ELF Header Back</y>
+
+After metadata and payload validation, <t>headshelf</t> allocates one anonymous
+read write mapping rounded from <t>load_memsz</t>.
+
+It writes a synthetic <t>Elf64_Ehdr</t> at the mapping base. Stable identity
+fields such as ELF64, little-endian, x64 and <t>ET_DYN</t> are supplied by the
+loader. Entry point and Program Header geometry come from the sidecar.
+
+The raw saved Program Header bytes go to <t>base + phoff</t>. The stripped
+payload goes to <t>base + header_span</t>.
+
+    base + 0                 synthetic Elf64_Ehdr
+    base + phoff             restored Elf64_Phdr array
+    base + header_span       first stripped payload byte
+    base + load_filesz       end of file initialized image
+    base + load_memsz        end of zero filled image
+
+Then <t>mprotect</t> applies the original load flags, and <t>phdrRuntime = base + phoff</t>
+becomes the future <t>AT_PHDR</t> value.
+
+Why rebuild the headers if the executable code was already preserved? Because
+the bytes are not the whole ABI. Static libc startup inspects the auxiliary
+vector, uses the Program Header Table to discover structures such as <t>PT_TLS</t>,
+and may refer to <t>__ehdr_start</t>.
+
+SHELF's lesson is not that headers never matter, it is that the facts carried
+by headers can be transported separately and reconstructed where the runtime
+expects them.
+
+Two front ends, one shared runtime, but not perfectly interchangeable. The
+sidecar formats have no field for <t>PT_GNU_STACK</t> permissions, so <t>headshelf</t>'s
+synthetic stack is always mapped read write. <t>halfshelf</t>, reading the original
+header, derives that same protection from the real <t>PT_GNU_STACK</t> entry instead,
+when there is one. A typical entry looks like this (any ordinary ELF, not one of
+the SHELF samples here, since the included <t>static-pie.ld</t> script only declares
+the <t>shelf</t>, <t>dynamic</t> and <t>tls</t> segments and never emits a <t>PT_GNU_STACK</t>
+of its own):
+<pre><code class="language-txt">
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000000000000  RW     0x10
+</code></pre>
+So with the shipped test binaries specifically, both front ends land on the
+same default <t>RW</t> stack anyway, the asymmetry is real in the code but
+currently unobservable in this repo's own test matrix. A SHELF image linked
+with an explicit executable stack marker would be the one to actually see
+<t>halfshelf</t> and <t>headshelf</t> disagree. And because <t>headshelf</t>
+shares <t>halfshelf</t>'s message table wholesale, its version banner and
+every debug line still print <t>halfshelf:</t>, only the usage string was
+actually renamed. Cosmetic, but worth knowing before it confuses a debug
+session.
+
+<y>-= Relocations Before The Jump</y>
+
+Position independent code still contains pointers whose final values depend on
+the chosen load bias.
+
+If the image has <t>PT_DYNAMIC</t>, the shared relocation code walks
+<t>Elf64_Dyn</t> records and collects:
+
+- <t>DT_RELA</t>, <t>DT_RELASZ</t> and <t>DT_RELAENT</t>
+- <t>DT_JMPREL</t>, <t>DT_PLTRELSZ</t> and <t>DT_PLTREL</t>
+
+The supported x64 relocation set is small by design.
+
+For <t>R_X86_64_RELATIVE</t>:
+<pre><code class="language-c">
+    *(base + r_offset) = base + r_addend
+</code></pre>
+For <t>R_X86_64_IRELATIVE</t>:
+<pre><code class="language-c">
+    resolver = base + r_addend
+    *(base + r_offset) = resolver()
+</code></pre>
+The loader makes two passes. Plain RELATIVE entries are written first.
+IRELATIVE resolvers run second, after the ordinary image pointers they may use
+have reached their final values. The same order is applied to both the main
+RELA table and JMPREL.
+
+An unknown relocation is rejected instead of being skipped. That is an
+important failure policy. Silently ignoring a relocation creates a program
+that may run until a much less obvious pointer is touched.
+
+This is not symbol resolution and it is not a dynamic linker. The slim static
+PIE schema makes those two relative forms sufficient for the included glibc
+samples.
+
+<y>-= TLS, Because Static Does Not Mean Simple</y>
+
+The test program declares:
+<pre><code class="language-c">
+    __thread int tls_counter = 17;
+</code></pre>
+That small line forces the loader to provide a valid x64 thread pointer.
+
+Notably, the plain <t>hello world</t> sample from the <t>Running</t> section
+above declares no <t>__thread</t> variable at all, yet its debug transcript
+still prints the <t>preparing PT_TLS runtime state</t> line. A static PIE
+carries its own <t>PT_TLS</t> segment as an artifact of glibc's internal
+startup state, whether or not the linked program ever asks for one. The
+loader does not special case "no user visible TLS" and it reacts to whatever
+<t>PT_TLS</t> the linker actually emitted.
+
+When <t>PT_TLS</t> is present, the shared stack phase normalizes its alignment
+to at least 16 bytes and creates a minimal initial thread layout:
+
+    ┌────────────────┬────────────────┬────────────────┐
+    │ TLS image      │ TCB            │ tiny DTV       │
+    │ init + zeroes  │ thread pointer │ one module     │
+    └────────────────┴────────────────┴────────────────┘
+
+It copies <t>p_filesz</t> initializer bytes from <t>base + tls_vaddr</t>, leaves
+the rest through <t>p_memsz</t> zeroed, seeds a small Dynamic Thread Vector and calls:
+
+    arch_prctl(ARCH_SET_FS, tcb_address)
+
+On x64 Linux, FS is the thread pointer base used by the usual TLS access
+sequences. Without this step, the binary may complete relocation and still die
+the first time libc or the sample touches thread local state.
+
+This is an initial thread model for controlled samples. It is not a complete
+TLS implementation for arbitrary libc versions, dynamically loaded modules or
+new threads.
+
+<y>-= Rebuilding Process Entry</y>
+
+A direct jump to <t>e_entry</t> needs a kernel stack.
+
+The loader allocates a fresh stack mapping and rebuilds the System V process
+entry layout:
+
+    rsp -> argc
+           argv[0]
+           ...
+           NULL
+           envp[0]
+           ...
+           NULL
+           auxv type, value
+           ...
+           AT_NULL, 0
+
+Pointers cannot simply keep referring into the loader's old stack. Argument
+and environment strings are copied into target storage. So are the 16 random
+bytes referenced by <t>AT_RANDOM</t> and strings behind <t>AT_PLATFORM</t> and
+<t>AT_BASE_PLATFORM</t>.
+
+Most auxiliary vector records survive. Image records are patched:
+
+- <t>AT_PHDR</t> points at the real or reconstructed Program Header Table
+- <t>AT_PHENT</t> and <t>AT_PHNUM</t> describe that table
+- <t>AT_ENTRY</t> becomes <t>base + e_entry</t>
+- <t>AT_BASE</t> becomes zero because there is no ELF interpreter
+- <t>AT_EXECFN</t> points to the target visible copied pathname
+
+The stack pointer is aligned, the target file descriptor is closed and control
+transfers to:
+<pre><code class="language-c">
+    entry = base + e_entry
+</code></pre>
+There is no return address. Entry is not a function call. The payload sees the
+same broad stuff it would see after a kernel ELF launch, even though another
+userspace executable assembled the scene.
+
+<y>-= The memfd Mode</y>
+
+The headless loader also accepts:
+<pre><code class="language-sh">
+    cat payload | ./headshelf --memfd payload.binmeta alpha beta
+</code></pre>
+It creates an anonymous file with <t>memfd_create</t>, drains the stripped
+payload from standard input into the normal staging buffer and mirrors each
+chunk into that memory descriptor.
+
+The descriptor is useful for studying the anonymous file transport pattern,
+but it is not where execution comes from in this implementation. Mapping is
+still anonymous and populated from the staging buffer. There is no
+<t>fexecve</t>, no <t>execveat</t> and no executable temporary file.
+
+That distinction is worth stating because it can imply several different designs:
+
+- store a normal ELF in a memfd and ask the kernel to execute it
+- mmap pages directly from a memfd
+- use a memfd as an anonymous transport while a userspace loader maps bytes
+
+<t>headshelf --memfd</t> is the third one.
+
+<y>-=Running</y>
+
+Running a included sample binary in debug mode looks like this:
+<pre><code class="language-txt">
+$ HALFSHELF_DEBUG=1 make run
+halfshelf: SHELF focused userland exec loader v0.0.1 by TMZ (c) 2026
+halfshelf: debug tracing enabled
+halfshelf: target type ET_DYN
+halfshelf: reserving SHELF load window
+halfshelf: load bias = 0x0000741c23d02000
+halfshelf: synthetic stack base = 0x0000741c23400000
+halfshelf: mapping SHELF PT_LOAD at 0x0000741c23d02000
+halfshelf: applying direct entry relocations
+halfshelf: preparing PT_TLS runtime state
+halfshelf: rebuilding argc/argv/envp/auxv
+halfshelf: jumping to SHELF entry = 0x0000741c23d08cc0
+hello
+</code></pre>
+<y>-= From halfshelf To phork</y>
+
+<t>headshelf</t> leaves two artifacts next to each other: metadata and stripped
+payload. That separation makes the reconstruction boundary wonderfully easy to
+inspect, but it is not a single self loading file.
+
+<t>phork</t> is the next step. It places a loader stub at the front, appends the
+same <t>SHELFBN1</t> facts and stripped bytes, and adds a trailing footer so the
+stub can find both pieces inside itself.
+
+That is why <t>halfshelf</t> is useful even if the packer is the flashier final
+artifact. It isolates the hard runtime before adding a container format and self
+discovery logic.
+
+The next article is <a href="../15/">phork: Packing SHELF Back Into One ELF</a>. It keeps this runtime
+and changes the distribution shape from two detached inputs into one executable file.
+
+<y>-= Final Thoughts</y>
+
+An executable is not its header and it's not merely its code bytes either.
+There's so much more to it, a lot of other fascinating facts. Pure admiration!
+
+<t>halfshelf</t> makes those facts visible by implementing the same launch two
+ways, both converging on relocation, TLS, stack reconstruction and a direct
+branch to entry.
+
+<y>-= References</y>
+
+[1] <a href="https://tmpout.sh/1/10/">Introducing SHELF Loading, tmp.0ut volume 1</a>
+[2] <a href="https://ulexec.github.io/post/2021-04-08-shelfloading/">SHELF Loading by @ulexec</a>
+[3] <a href="https://grugq.github.io/docs/ul_exec.txt">The Design and Implementation of Userland Exec</a>
+[4] <a href="https://refspecs.linuxfoundation.org/elf/gabi4+/ch5.pheader.html">System V ABI: Program Loading and Program Headers</a>
+[5] <a href="https://gitlab.com/x86-psABIs/x86-64-ABI">System V AMD64 ABI</a>
+[6] <a href="https://sourceware.org/binutils/docs/ld/PHDRS.html">GNU ld: PHDRS Command</a>
+[7] <a href="https://codebrowser.dev/glibc/glibc/elf/dl-reloc-static-pie.c.html">glibc: static PIE relocation source</a>
+[8] <a href="https://codebrowser.dev/glibc/glibc/csu/libc-start.c.html">glibc: process and static PIE startup source</a>
+[9] <a href="https://man7.org/linux/man-pages/man2/mmap.2.html">mmap(2), Linux manual page</a>
+[10] <a href="https://man7.org/linux/man-pages/man2/mprotect.2.html">mprotect(2), Linux manual page</a>
+[11] <a href="https://man7.org/linux/man-pages/man2/arch_prctl.2.html">arch_prctl(2), Linux manual page</a>
+[12] <a href="https://man7.org/linux/man-pages/man2/memfd_create.2.html">memfd_create(2), Linux manual page</a>
+[13] <a href="https://man7.org/linux/man-pages/man3/getauxval.3.html">getauxval(3) and auxiliary-vector entries</a>
+
+--[ <a href="13.html">PREV</a> | <a href="index.html">HOME</a> | <a href="15.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+
+</html>

@@ -1,0 +1,482 @@
+<html>
+<head>
+<title>Creating polyglot ELF files for fun and anti-forensics ~ dominikr</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+Creating polyglot ELF files for fun and anti-forensics │                   █   │
+~ dominikr                                             └───────────────────█ ──┘
+
+Introduction
+------------
+
+This paper is the continuation of "A deep dive into how the Linux kernel loads 
+executable files". We will take what we have learned from the first part, and 
+use it to create a unique new type of ELF file - one that can interpreted as two
+different ELF files, depending on circumstances.
+
+Throughout the paper, the names "ELF32" and "ELF64" are used, to mean ELF files 
+with 32-bit or 64-bit header data structures, respectively. If not otherwise 
+noted, e_machine == EM_X86_64 is assumed.
+
+A polyglot file is defined as a file whose syntax matches two ore more file
+formats. This paper uses the the term 'polylgot' and not 'ambiguous file', as
+ELF32 and ELF64 are two related, but distinct file formats with well-defined
+and differing data structures (see [3] for further discussion about
+terminology)
+
+
+Are polyglot ELFs possible?
+---------------------------
+
+I mentioned in the discussion of the previous paper how the e_phentsize field
+"will likely contain garbage" if the kernel tries to load an x32 ELF as an
+64-bit ELF.
+
+What if... it doesn't? Could we create a file that is, at the same time, a valid
+32-bit and 64-bit ELF file? Such a file would pose an interesting conundrum: 
+how do you parse such a file, when it is in both formats at the same time? 
+For the Linux kernel, we know the answer: it will try to execute it as an ELF64,
+unless e.g. e_phentsize64 is wrong, or it has an invalid PT_INTERP header. 
+Almost all tools will just use the EI_CLASS and EI_DATA headers to identify the 
+ELF file.
+
+While there are already polyglots of an ELF and other file types, to the best of
+my knowledge nobody has ever created an ELF32 + ELF64 polyglot.
+
+The polylgot ELF itself was created using the NASM assembler. Crafting an
+executable file from scratch requires creating binary structures and
+referencing them i.e. headers by byte offset, tasks which an assembler is
+uniquely suited for. Plus, the assembler of course also allows us to insert
+code into the appropriate places in the executable.
+
+
+Key obstacles in creating polyglot ELFs
+---------------------------------------
+
+What follows is a walk through key parts of the NASM file used to generate
+the polyglot ELF. The setpos macro is used to set an absolute file position
+(or to fail with a fatal error if already past that point). It will fill up
+the space with null bytes by default.
+
+<pre><code class="language-x86asm">
+| setpos  0
+| db 0x7F, "ELF"  ; EI_MAG
+| db 1            ; EI_CLASS / bits
+| db 1            ; EI_DATA  / endian
+| db 1            ; EI_VERSION
+| db 0            ; EI_OSABI
+| times 8 db 0    ; EI_ABIVERSION, EI_PAD
+| 
+| setpos 16
+| dw 3            ; type
+| dw 0x3e         ; machine
+| dd 1            ; version</code></pre>
+The start of the file holds no big surprises: it is a standard ELF header,
+and the ELF32 and ELF64 formats do not differ yet[4]. EI_CLASS is set to 1, 
+i.e. 32-bit ELF file. This will be further discussed below.
+
+<pre><code class="language-x86asm">
+| setpos 24
+| dd _start       ; entry32         / entry64a
+| dd phoff32      ; phoff32         / entry64b
+| dq phoff64      ; shoff32,flags32 / phoff64</code></pre>
+This is the first critical point in the creation of a polyglot ELF. The upper 
+half of the ELF64 entrypoint overlaps with the ELF32 program header offset. 
+That does not pose much of a problem, as we're free to choose the origin 
+addresses in both ELF variants.
+Next, the ELF64 program header offset overlaps with the ELF32 section header
+offset and flags register. We can easily ignore the flags, as they're not
+really used on the x86 architecture, but the phoff64/shoff32 pose more of
+a problem. If we want to use sections in ELF32, we have to deal with the fact
+that at least 1 PHDR64 is overlapping with our sections.
+
+<pre><code class="language-x86asm">
+| setpos 40
+| dw 0x34         ; ehdrsiz32       / shoff64a
+| dw 0x20         ; phdrsiz32       / shoff64b
+| dw PHNUM        ; phdrcnt32       / shoff64c
+| dw SHENT        ; shentsize32     / shoff64d
+| dw SHNUM        ; shnum32         / flags64a
+| dw SHSTR        ; shstrndx32      / flags64b</code></pre>
+Here we have the other major critical point in our ELF header. The ELF64 section 
+header offset is overlapping with several crucial ELF32 headers. phdrsiz32 is 
+fixed to 0x20, and phdrcnt32 needs to be at least 1.
+So, if we want to have a sections in the ELF64 part, the smallest offset
+possible is 0x100200000 (if we also set ehdrsiz32 to 0), which is just over 4GB. 
+shentsize32 will also have to be set to 0, meaning we can't use sections in the 
+ELF32 part. If we want to have sections in both parts (i.e., keep shentsize at 
+0x28), the section header offset, and thus our minimal file size, would be a bit
+over 11 terabytes.
+While 4GB executables might be on the edge of a "reasonable" binary size
+([2] talks about 25GB binaries at Google), 11TB is beyond that, and also
+hits maximum file size limits for some filesystem (actual storage space
+requirements would not be a problem, as those binaries could be saved as
+sparse files).
+
+So, to recap: 
+* We can have ELF32 sections, but the sections will overlap with PHDR64
+* We can have ELF64 sections, at a minimum file size of 4GB, if we disable
+  ELF32 sections
+* We can have ELF64 sections, at a minimum file size of 11TB, if we also want
+  to have ELF32 sections
+
+Now, the goal was to create an ELF file that would be parsed differently by
+the kernel and various tools. For creating a "proper" ELF file, we need to
+have sections (because tools like objdump will not disassemble an ELF without 
+sections) - for the ELF variant that gets shown to the tools, at least.
+This means that we have to go with an ELF32 for the tools, and ELF64 for the
+kernel, if we want to have a small file size. Also, Ubuntu seems to have
+disabled x32 support in their recent versions, which is another argument for
+using ELF64 for the Kernel side.
+
+In short: a file that looks like an ELF32 to the tools, but appears as an ELF64 
+to the kernel, seems to be the best decision.
+
+
+Two distinct code paths
+-----------------------
+
+There wouldn't be much use in painstakingly creating a polyglot ELF if both
+variants just executed the same code in the end (remember that entry32 and
+the lower half of entry64 are at the same byte locations).
+
+How do we achieve two distinct code paths if the entry address points at mostly 
+the same location? One idea would be to add some code that checks if we're 
+running as an x32 or 64-bit binary, but such code would stick out like a sore 
+thumb to any halfway decent forensic analyst.
+
+The easiest way to achieve this is to have two different offsets in the
+respective LOAD program headers. This means that the code will *load* at a
+similar address, but the kernel will take the content from different 
+offsets in the file. The granularity of the program header offset field is
+4096 in Linux - meaning that this is also a lower bound for our file size.
+
+The two payloads are very simple: the x32 payload just does an exit(0).
+One thing to note is that the assembly code itself is also a polyglot - it
+will run in 32-bit, x32, and 64-bit mode (this can be verified by changing
+the e_machine field to EM_386 or EM_486).
+
+The ELF64 payload will print the string "EVIL" and exit.
+
+
+Overlapping SHDR32/PHDR64
+-------------------------
+
+As discussed before, SHDR32 and PHDR64 overlap. Because we chose ELF64 for
+the kernel side, we can keep it as bare as possible, especially if it helps
+to create a more interesting 'fake' ELF32 to show to the tools. In this case
+this means creating just a single PHDR64 entry, and create it in such a way
+that it minimally interferes with the 32-bit section headers.
+
+One thing to point out is that a PHDR64 entry is 56 bytes long, while a SHDR32 
+entry is 40 bytes. This means that the minimal PHDR64 with just one entry will 
+span over 2 SHDR32 entries.
+
+According to the specifications[4], the first section header should only contain
+null values. This is just not possible when also overlapping with a program 
+header, but care has been taken to keep as many values as possible at zero.
+
+<pre><code class="language-x86asm">
+| sh_name   0x00    p_type      == 1 (LOAD)
+| sh_type   0x04    p_flags     == 15 (exec)
+| sh_flags  0x08    p_offset    == 0x1000
+| sh_addr   0x0c    
+| sh_offset 0x10    p_vaddr     == 0x(phof32)00000000
+| sh_size   0x14
+| sh_link   0x18    p_paddr
+| sh_info   0x1c    
+| sh_addralign  0x20    p_filesz    == size + 0x100000000
+| sh_entsize    0x24
+| sh_name2  0x28    p_memsz     == size + 0x100000000
+| sh_type2  0x2c    
+| sh_flags2 0x30    p_align
+| sh_addr2  0x34
+</code></pre>
+The program header entry needs to be 1 (LOAD) to actually load any code, and the
+least-significant bit of the flags needs to be 1, to mark the segment as 
+executable. p_flags was set to 15 - this corresponds to the FINI_ARRAY section 
+type. It was chosen because it can be parsed by readelf, without readelf trying 
+to read any other data structures. The sh_name value of 1 can't be changed, so 
+the string ".fini" was instead placed at position 1 of the section header string
+table, to match with the sh_type.
+
+For simple ELF files, p_filesz and p_memsz are often chosen to be the same (see 
+[1]). But - if sh_name2, which overlaps with p_memsz, is not null; and sh_type2 
+*is* null, then tools like eu-elflint will complain about "nonzero sh_name for 
+NULL section". To prevent that, the value of 0x100000000 was added to the 64-bit
+size field, thus putting the number 1 in the 32-bit sh_entsize and sh_type2 
+fields. This means that eu-elflint will now no longer complain.
+
+Similarily to the previous section header, a (nonensical, but plausible
+sounding) name of ".cfi" has been put at position `size` of the section header 
+string table - or more precisely, at (shdr-$$)+size. `size`, in turn, had also 
+to be chosen as to not interfere with any other parts of the ELF file.
+
+Finally, a value of 0x1000 had to be put in into the p_offset field. The only
+way to prevent this would be to switch offsets around - putting the ELF32
+code at offset 0x1000. But this would also lead to the ELF64 memory image
+containing all the fake headers. This option was not further evaluated.
+
+
+Other sections & headers
+------------------------
+
+While the previous chapter talked about specifics of creating a polyglot,
+some other parts also have to be taken into account to create a normal looking 
+ELF file. As before, this only applies to the ELF32 part, as that is how the 
+file will be interpreted by most tools.
+
+Namely, a ".text" section was added that points to the executable part. This 
+allows the use of "objdump -d", among other things. Header fields also have been
+set to ensure maximum compatibility (e.g. EI_VERSION == 1, EI_OSABI == 0, 
+e_version == 1). 
+
+In the program header, p_paddr has been set to p_vaddr, and p_align has been
+set to 0x1000, to match with how those fields are used in practice.
+
+
+The final polyglot binary
+-------------------------
+<pre><code class="language-txt">
+00000000: 7f45 4c46 0201 0100 0000 0000 0000 0000  .ELF............
+00000010: 0300 3e00 0100 0000 5000 0000 7000 0000  ..&gt;.....P...p...
+00000020: d000 0000 0000 0000 3400 2000 0100 2800  ........4. ...(.
+00000030: 0400 0300 4000 3800 0100 4000 0000 0000  ....@.8...@.....
+00000040: 4153 4d33 32ff ffff ffff ffff ffff ffff  ASM32...........
+00000050: ffc0 cd80 0000 0000 0000 0000 0000 0000  ................
+00000060: 5048 4452 3332 ffff ffff ffff ffff ffff  PHDR32..........
+00000070: 0100 0000 0000 0000 0000 0000 0000 0000  ................
+00000080: 5400 0000 5400 0000 0500 0000 0010 0000  T...T...........
+00000090: 5354 5233 32ff ffff ffff ffff ffff ffff  STR32...........
+000000a0: 002e 6669 6e69 002e 7465 7874 002e 7368  ..fini..text..sh
+000000b0: 7374 7274 6162 0000 0000 0000 0000 0000  strtab..........
+000000c0: 5348 4452 3332 ffff 5048 4452 3634 ffff  SHDR32..PHDR64..
+000000d0: 0100 0000 0f00 0000 0010 0000 0000 0000  ................
+000000e0: 0000 0000 7000 0000 0000 0000 0000 0000  ....p...........
+000000f0: 0001 0000 0100 0000 0001 0000 0100 0000  ................
+00000100: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000110: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000120: 0700 0000 0100 0000 0600 0000 0000 0000  ................
+00000130: 5000 0000 0400 0000 0000 0000 0000 0000  P...............
+00000140: 0000 0000 0000 0000 0d00 0000 0300 0000  ................
+00000150: 0000 0000 a000 0000 a000 0000 af0f 0000  ................
+00000160: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+*
+000001a0: 2e63 6669 0000 0000 0000 0000 0000 0000  .cfi............
+000001b0: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+*
+00001020: 4153 4d36 34ff ffff ffff ffff ffff ffff  ASM64...........
+00001030: ffc7 b001 b205 6845 5649 4c54 5ec6 4604  ......hEVILT^.F.
+00001040: 0a0f 05b0 3c31 ff0f 0500 0000 0000 0000  ....&lt;1..........
+00001050: ebde                                     ..
+</code></pre>
+
+Major sections have been marked in-line with their name, to make it easier
+to navigate the hexdump by sight.
+
+The ASM32 section was placed right after the ELF header, to keep the entrypoint 
+address as low as possible, because the minimal file size will be the entrypoint
+address + 4096, due to the offset of the 64-bit code.
+
+If you look at offset 0x00000050 and 0x00001050, you can nicely see how the
+entrypoints differ by exactly 0x1000 (4096 decimal). The ASM64 code jumps back 
+by a couple of bytes to 0x1030 on entry, to save a few bytes of file size.
+
+The string ".cfi" can be seen at offset 0x000001a0 - this is the name of the
+second section entry, as discussed before. It can also be seen that the
+string table is at offset 0x000000a0 (see "STR32" name above). From this
+it can also be easily calculated that `size` was chosen as 0x100 (256
+decimal).
+
+The above hexdump can be converted back into a binary file with the `xxd -r`
+command.
+
+
+Fun and anti-forensics
+----------------------
+
+All tested tools detect the file as an x32 binary, with the exception of the
+`elfid` tool presented in the first paper of this series.
+
+Tools tested include:
+* file (the widely used open-source variant by Ian Darwin)
+* GNU objdump
+* GNU readelf
+* eu-readelf
+* eu-elflint
+* Binary Ninja
+* Radare2 / rabin2
+* Ghidra
+* gdb
+
+Radare2, Binary Ninja, Ghidra and "objdump -d" all point to the fake x32
+assembly if the binary is statically analyzed. The output from objdump is
+shown as a representative example:
+| poly:     file format elf32-x86-64
+|
+|
+| Disassembly of section .text:
+|
+| 00000000 &lt;.text&gt;:
+|    0:   ff c0                   inc    %eax
+|    2:   cd 80                   int    $0x80
+
+
+gdb shows some interesting behaviours. When loading the polyglot, the command
+`show architecture` will return the following:
+| The target architecture is set to "auto" (currently "i386:x64-32")
+
+But when trying to start the program with `starti`, it warns:
+| warning: Selected architecture i386:x64-32 is not compatible with reported
+| target architecture i386:x86-64
+
+The program starts to execute, but e.g. only the lower 32-bits of all
+registers will be shown with `info registers`.
+gdb starts to work as expected if the architecture is manually set with the
+`set architecture i386:x86-64` command.
+
+The tool `eu-elflint` shows some warnings, but as already discussed, this is
+largely unavoidable due to the SHDR32/PHDR64 overlap. No other tool
+referenced so far shows any warnings about the ELF file.
+| zeroth section has nonzero name
+| zeroth section has nonzero type
+| zeroth section has nonzero flags
+| zeroth section has nonzero align value
+| zeroth section has nonzero entry size value
+| zeroth section has nonzero size value while ELF header has nonzero shnum value
+
+As mentioned, the `elfid` tool is the only program to show any indication
+that something fishy is going on:
+| Polyglot detected
+| Polyglot ELF wants you to think it's 32bit
+| poly: ELF 32-bit LSB pie executable, x86-64, version 1 (SYSV)
+
+
+Discussion & Conclusion
+-----------------------
+
+The question "are polyglot ELFs (ELF32+ELF64) possible?" can be be answered
+with "yes", as practically shown.
+
+Polyglot ELFs have proven to be a powerful anti-forensics technique. All 
+previously available tools were fooled by the polylgot ELF, showing information 
+and/or disassembly of the 'fake' ELF32 part.
+
+This raises the follow up question of how such (ab)uses of the ELF format
+could be prevented. That is not an easy question to answer - because both
+the ELF32 and ELF64 parts are valid ELF files. For identifying a file as
+either ELF32 or ELF64, each tool would basically have to exactly reimplement
+the kernel's ELF loader - an insurmountable task, possibly also depending on
+the exact kernel version and options.
+
+An easier option would be to implement heuristics like in the `elfid` tool -
+either warning users that an ELF might be a polyglot, and/or querying the
+user if he wants to analyze a file as ELF32 or ELF64.
+
+And last but not least, fun was also had [citation needed].
+
+
+Future work
+-----------
+
+As with the previous paper, the research in this paper could also be extended
+to other architectures and other operating systems.
+
+The ELF file described is quite basic, and could be extended to e.g. further
+mislead security tools like `checksec`, while keeping the 'real' part of the
+executable free from constraints that such security check tools seek to check
+and/or enforce. Such a binary has already been created, but there hasn't been
+sufficient time available to create a third paper in the series yet.
+
+
+References
+----------
+
+[1] https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
+[2] https://fzakaria.com/2025/12/28/huge-binaries
+[3] https://speakerdeck.com/ange/generating-weird-files-c691cdd5-ea89-4322-839a-29402da0f859
+[4] https://refspecs.linuxbase.org/elf/elf.pdf
+
+
+Notes about the assembler sources
+---------------------------------
+
+The sources for the assembler file used to create the polyglot ELF can be
+found in Appendix B.
+
+The source file itself is also a polyglot of a NASM assembly file and shell
+script. Run it as `bash poly.asm` to create the polyglot and show some basic
+information about it.
+
+Run it as `bash poly.asm -DBIT=2` to create a variant with EI_CLASS set to
+64-bit.
+
+
+Appendix B - assembler sources to create the polyglof ELF
+---------------------------------------------------------
+
+base64 -d&lt;&lt;'E-O'|zcat&gt;"poly.asm"&&echo OK
+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
+E-O
+
+--[ <a href="9.html">PREV</a> | <a href="index.html">HOME</a> | <a href="11.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

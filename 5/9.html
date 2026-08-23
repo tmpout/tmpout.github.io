@@ -1,0 +1,472 @@
+<html>
+<head>
+<title>A deep dive into how the Linux kernel loads executable files ~ dominikr</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+A deep dive into how the Linux kernel loads            │                   █   │
+executable files                                       │                   █   │
+~ dominikr                                             └───────────────────█ ──┘
+
+Introduction
+------------
+
+It has long been known[1][2] that the ELF executable format, as implemented by
+Linux, is quite flexible in what it will accept vs what is specified in the 
+standard[3]. This has been exploited by Brian Raiter to create ELF files of a 
+minimal size[1], or by netspooky to thwart forensic analysis[2].
+
+To the best of our knowledge, there has never been a rigorous analysis on how 
+exactly executable file loading works in the Linux kernel. This paper seeks to 
+rectify that, in the hope that it will pave the way for future shenanigans (see 
+the follow-up paper (in this issue of tmp.0ut) "Creating polyglot ELF files for 
+fun and anti-forensics" for one such example)
+
+A basic familiarity with C and assembler code, and the structure of an ELF file 
+is assumed.
+
+
+Methodology
+-----------
+
+The main tool used for exploring the Linux kernel sources was the Elixir Cross 
+Referencer[4], as it allowed to easily look up definitions across source files 
+and kernel versions.
+
+The longterm 6.18 kernel was chosen as the primary reference, as it will
+hopefully be free from short-term changes.
+
+It was not possible to exhaustively analyze all supported architectures and 
+subarchitectures, both due to time constraints and hardware availability. Thus, 
+the main focus will be on the x86 architecture, and its major subarchitectures 
+X86_64, X86_X32_ABI and X86_32 (or IA32_EMULATION, respectively, when the kernel 
+is 64bit) [names as used in Kconfig]
+
+
+Subarchitectures?
+-----------------
+
+Some CPU architectures have several major variants. For x86, one such major
+addition was 64-bit mode. CPUs running in 64-bit mode can still execute 32-bit 
+code, which means that the same kernel can run 32-bit Intel 80386 binaries, as 
+well as 64-bit AMD x86-64 binaries.
+
+To further complicate things, a new executable format for 64-bit Intel systems, 
+called x32 or elf32_x86_64, was introduced. It uses 32-bit pointers (and thus 
+also the 32-bit ELF format), but executes in 64-bit mode.
+
+Other architectures like RISC-V, MIPS/Loongson and LoongArch, also both support 
+32- and 64-bit software (and Loongson is a compatible extension to MIPS, while 
+LoongArch is a MIPS extension which is no longer guaranteed to be compatible 
+with the original MIPS architecture)
+
+Some CPUs also are bi-endian, supporting running code in either big- or
+little-endian mode. And there's also middle-endian, but let's not go there.
+
+Please also note that not all architectures might support running those variants
+*at the same time*. That's what I meant when I said I didn't have the time nor 
+the HW to figure this whole mess out.
+
+While "subarchitecture" is not an official term used by the kernel developers, 
+it is used in this paper to describe all those potential architecture variants.
+
+
+Open questions at the beginning of this research
+------------------------------------------------
+
+While "how does the kernel exactly load ELF files?" is a general open question 
+that inspired this research, the specific question that lead to this deep dive 
+into the kernel sources concerns the X86_X32_ABI.
+
+As already discussed, the Linux ELF loader is quite flexible. A 32-bit ELF for 
+e_machine == EM_386 does not care if the class byte (EI_CLASS) is set to 32- or 
+64-bit, nor does it care if the endianness (EI_DATA) is set to big or little.
+
+Similarly, a 64-bit ELF for e_machine == EM_X86_64 also does not care for those 
+two values. This makes sense, as the e_machine field provides enough information 
+to deduct the values in both cases (x86 is always little-endian, and 32/64bit 
+have two distinct e_machine values).
+
+But then - how does the Kernel load x32 binaries? The e_machine value for x32 
+is EM_X86_64 like for 64-bit ELF files, but it actually uses 32-bit structures 
+in the header, as previously mentioned. Hypotheses, such as that the kernel is 
+actually looking at the class byte if e_machine == EM_X86_64, but the file fails 
+to parse correctly, were quickly disproven. This question can of course be 
+extended to other architectures with multiple subarchitectures.
+
+This lead to another question: can we create an ELF binary which loads as an x32 
+file if X86_X32_ABI is activated, but as a different 64-bit ELF file if it is 
+deactivated?
+
+
+What actually happens inside the kernel
+---------------------------------------
+
+The Linux kernel has supported different executable file types over the decades, 
+starting with the a.out format, and transitioning to the ELF format around 1995. 
+Other supported formats are shellscripts, binfmt_misc, and, on some platforms, 
+COFF files.
+
+Describing the process of using a syscall from userland, to where the kernel 
+actually tries to load an executable, will be skipped, as it is not relevant 
+to this paper.
+
+Thus, our journey of trying to load an executable file begins in fs/exec.c:
+| binfmt entry point: https://elixir.bootlin.com/linux/v6.18/source/fs/exec.c#L1651
+|   * try to load_binary() with every registered binfmt
+|   * proceed executing if the current handler set `point_of_no_return`
+|   * next format if retval was ENOEXEC, bail out otherwise
+
+Of note is that this function will just try the next executable format, unless 
+the current executable format handler returns a different status than ENOEXEC. 
+In other words, it will try all loaders until one signals back that it can load 
+the file. The kernel uses the `point_of_no_return` field for signaling that 
+(see exec.c:1674).
+
+The order of file formats to try is neither well-documented, nor obvious from 
+looking at the kernel sources. It seems that the order is implicitly defined in 
+`fs/Makefile`. (https://elixir.bootlin.com/linux/v6.18/source/fs/Makefile#L36)
+
+What follows is an analysis of which conditions each relevant binfmt handler 
+will either return with ENOEXEC, or proceed along, in the order that the kernel 
+processes them. Non-ELF handlers will only be touched on, since they are not the
+main focus of this paper.
+
+
+| load_misc_binary: https://elixir.bootlin.com/linux/v6.18/source/fs/binfmt_misc.c#L202
+|   * pretty much anything accepted, depending on runtime config
+The binfmt_misc loader is the first on the list, and it basically allows a user
+to define arbritary new formats at runtime. Thus it will always return with
+ENOEXEC, unless a match was found.
+
+
+| load_script:      https://elixir.bootlin.com/linux/v6.18/source/fs/binfmt_script.c#L34
+|   * has to start with '!#'
+|   * skip trailing/leading spaces/tabs, nonempty part in the middle
+The binfmt_script loader never interferes with loading of ELF files, as the
+header requirements are mutually exclusive with the ELF format.
+
+
+| load_elf_binary:  https://elixir.bootlin.com/linux/v6.18/source/fs/binfmt_elf.c#L832
+|   * check if ELFMAG == "\177ELF"              (857)
+|   * type ET_EXEC or ET_DYN                (860)
+|   * elf_check_arch:                   (862)
+|       * e_machine == EM_X86_64
+|   * elf_check_fdpic: not supported on x86         (864)
+|   * can_mmap_file: does not depend on content     (866)
+|   * load_elf_phdr:                    (869)
+|       * check e_phentsize == 0x38         (531)
+|       * e_phnum &gt; 0                   (537)
+|       * e_phnum*e_phentsize &lt;= 65536          (537)
+|   * for each phdr:
+|       * if PT_INTERP:
+|           * 2 &lt;= p_filesz &lt;= PATH_MAX (4096)  (890)
+|           * can allocate memory? Else ENOMEM  (894)
+|           * PATH is null-terminated       (904)
+|           * interp not found? ENOENT and bail (909)
+|       * PT_GNU_STACK: check X flag            (942)
+|   * parse_elf_properties (exec or interp if available)    (993)
+|       * only on ARM64
+|   * arch_check_elf                    (1003)
+|       * only ARM64, MIPS, LoongArch
+|   * begin_new_exec                    (1010)
+|       * Sets "point_of_no_return", we're finished (1020)
+This is the meat of the ELF loading/verification on Linux. While this confirms 
+many things already informally known, it reveals the exact order and explicit 
+details of ELF loading. Of note here is also the fact that e_machine *must* be 
+EM_X86_64, even if the kernel supports 32-bit and x32 binaries.
+
+
+| (compat)load_elf_binary:  https://elixir.bootlin.com/linux/v6.18/source/fs/compat_binfmt_elf.c
+|   * Mostly just binfmt_elf, with minimal macros to load 32bit compat format
+|   * compat_elf_check_arch:
+|       * e_machine == EM_386 || EM_486 || EM_X86_64
+|   * load_elf_phdr:
+|       * check e_phentsize == 0x20
+This provides another key piece in understanding how ELF loading works under 
+Linux. compat_binfmt_elf.c is just a very thin wrapper around binfmt_elf.c, 
+merely redefining some key macros, allowing loading of *both* 32-bit and x32 
+binaries. Key differences compared to the regular load_elf_binary are listed.
+
+
+Discussion
+----------
+
+### Answering the open questions
+
+After going through the kernel's internal steps, we can solve the mystery of how 
+x32 binaries actually get loaded.
+
+The kernel first wants to load our x32 binary as a regular 64-bit binary in 
+binfmt_elf.c. While the e_machine == EM_X86_64 test succeeds, the check for
+e_phentsize == 0x38 will most likely fail, as that field is at different offsets
+in 32-bit and 64-bit ELF formats, and thus will likely contain garbage.
+
+But, the kernel will just try the next binfmt handler, in this case the one from
+compat_binfmt_elf.c. This will succeed, because EM_X86_64 is still allowed, 
+while the e_phentsize check now looks for the correct value of 0x20 (at the 
+correct header offset for 32-bit ELF files).
+
+Regarding the second question - loading a binary as an x32 file only when
+X86_X32_ABI is activated does not seem to be possible, as the kernel will always 
+first try to load it as a 64-bit binary, and only tries as x32 if that fails. 
+Using a path to an interpreter (PT_INTERP program header) also doesn't work as a
+switch, as that will lead to a ENOENT error from the binfmt handler, and thus 
+will also stop further handlers from running.
+
+
+### Missing endianness checks
+
+Another interesting thing to point out: there's no test for endianness anywhere.
+Endianness of the executable is just implicitly assumed to be same as for the 
+currently running system. In practice, this will lead to a fail at the type 
+check (ET_EXEC or ET_DYN), as this is the first multi-byte field, and thus the 
+first where endianness matters (ELFMAG == "\177ELF" is a byte-based test and 
+will thus work regardless of endianness).
+
+
+### Kernel architecture
+
+It seems that the kernel devs were careful about not introducing any decision 
+points that depend on external factors (e.g. if interpreter exists [ENOENT], or 
+trying to allocate large amounts of memory [ENOMEM]), instead failing the 
+execution with a fatal error. If memory allocation didn't fail with ENOMEM, 
+it could have been used to discern between CPUs who support 5-level paging and 
+those who don't (see the paper by lm978 for more information about 5-level 
+paging[6]). The only ways for non-fatally failing late during the execution of
+binfmt_elf.c seems to be a wrong phentsize, or an illegal PT_INTERP header.
+
+
+Using this newly-learned knowledge for good
+-------------------------------------------
+
+### A more robust way of identifying ELF files
+
+We've determined how little the Linux kernel actually parses of the ELF file, 
+and how this complicates identifying if a binary is actually 32- or 64-bit, 
+and if it is big or little endian.
+
+Can we use what we learned from how the kernel parses ELF file to create a more 
+robust way of getting this information?
+
+First, we must figure out the endianness of a binary, as this will change how
+every multibyte field in the ELF header is interpreted. As explained in the 
+discussion section, the kernel itself makes no attempt to check for the
+endianness of an ELF file. But in the very next sentence, we conclude that a
+kernel trying to load a wrong endian file will most likely fail at the type
+check of the ELF file. This field is well-suited, as there are only a few
+values of interest to us (ET_EXEC equals 2, and ET_DYN equals 3).
+Fortunately, this field is also in the very beginning of the ELF header, at
+position 0x10, where the field offsets for 32- and 64-bit ELF files do not
+differ yet[9]. Thus we have found a suitable method for checking for
+endianness.
+
+How do we check for 32/64bit then? The e_machine field is not suitable, as
+several subarchitectures can share the same e_machine value. But the e_phent
+field is fit for that task, as it has two distinct values for 32- and 64-bit
+ELF files. Or, better said, the e_phent *fields*, as they now are in two
+different locations[9].
+
+
+#### The final algorithm
+
+| 1. Check beginning of file for string "\177ELF"
+| 2. Read e_type from offset 0x10, as little endian value
+|    Assume little endian if value &lt; 0xFE
+|    Assume big endian otherwise
+|    Warn if if not ET_EXEC or ET_DYN
+| 3. Read e_phentsize32 from offset 0x2A
+|    Read e_phentsize64 from offset 0x36
+|    Assume 32-bit if e_phentsize32 == 0x20
+|    Assume 64-bit if e_phentsize64 == 0x38
+|    Warn about the file potentially being a polyglot ELF if both values
+|    match
+| 4. Check that e_phnum &gt; 0, and e_phnum*e_phentsize &lt;= 65536 
+
+The same test as in the kernel was added for step 1, to see if the file is
+*potentially* an ELF file. The endian test was extended to check if value &lt;
+0xFE, to correclty identify ELF files of type ET_LOOS, ET_HIOS, ET_LOPROC
+and ET_HIPROC[9].
+
+
+#### A proof-of-concept implementation, and its verification
+
+A proof-of-concept of the algorithm was implemented as a shellscript with the 
+name `elfid`. This language was chosen because it should come preinstalled on 
+any system that supports ELF binaries.
+
+The tool checks ELF files like the Linux kernel would, and prints diagnostics
+if a file would not be loaded. It prints out information about the file in
+a style similar to the `file` utility, and warns if it detects any
+inconsistencies.
+
+For testing and verification, the test corpora of both Radare2[10] and Rizin[11]
+were used. Interestingly, no file in these corpora has any inconsistencies in 
+the 32/64bit or endianness flags.
+
+Run on `tiny-x64` from Brian Raiters collection[12], the tool gives out this
+information vs GNU file:
+<pre><code class="language-txt">
+ $ file tiny-x64
+ tiny-x64: ELF, unknown class 176
+
+ $ ./elfid tiny-x64
+ EI_CLASS has illegal value: 176, should be 2 (ELFCLASS64)
+ EI_DATA has illegal endian value: 41, should be 1 (little)
+ EI_VERSION has illegal version: 94, should be 1
+ tiny-x64: ELF 64-bit LSB pie executable, x86-64, version 94 (unknown ABI 64)
+</code></pre>
+All e_machine types found in the corpora were added to the program, as well
+as all encountered OSABI types. While there are bigger databases of e_machine
+types (in e.g. the binutils readelf, or the elfutils readelf), those were not
+included, as not a single actual ELF file could be found for many listed
+architectures.
+
+If the environment variable `FORCE` is set to a non-null variable, elfid will 
+continue if an error is encountered. This might be useful when trying to analyze
+severely broken ELF files.
+
+
+Using this newly-learned knowledge for evil
+-------------------------------------------
+
+### Exploiting the seldomly-used e_machine == EM_486 
+
+One surprising find was the support for the EM_486 (6) e_machine value. It is
+an alias for the much more commonn EM_386 (3), but is poorly supported in many
+tools. It's use in anti-forensics has been documented by the author in [5],
+building upon an unpublished, earlier version of this paper.
+
+
+### Exploiting PT_GNU_STACK parsing differences
+
+The PT_GNU_STACK program header is used to mark the stack of an ELF executable 
+explicitly as either executable or non-executable. The kernel uses only the 
+least-significant bit of the flag field (PF_X) for that, while tools like 
+checksec used to look at all 3 permission bits at once.
+
+So, you can trick checksec into thinking an ELF file has a nonexecutable stack,
+by just setting the permission bits to " WE" instead of "RWE". This first bug 
+was fixed several years ago[7], but there's another bug hiding: the kernel loops
+through all PHDRs, and updates the executable_stack flag each time a 
+PT_GNU_STACK header is encountered. The newest Go version of checksec is still 
+vulnerable as of today, because it returns on the *first* PT_GNU_STACK header 
+encountered[8].
+
+
+Future work
+-----------
+
+As mentioned, there's already a second paper from the same author in this 
+issue of tmp.0ut.
+
+The research of this paper could be extended to other architectures like ARM/
+ARM64 and RISC-V.
+
+Future areas of research could be the ELF loaders of other operating systems,
+namely the *BSD family. Preliminary research has shown that it is e.g. possible 
+to create an ELF file that will run in FreeBSD's Linux emulation layer, but not 
+on an actual Linux system itself.
+
+
+References
+----------
+[1] https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
+[2] https://tmpout.sh/2/3.html
+[3] https://refspecs.linuxbase.org/elf/elf.pdf
+[4] https://elixir.bootlin.com/
+[5] https://github.com/dominikfhnw/bggp6-writeup/tree/main/allinone#scoringbonus-points
+[6] https://tmpout.sh/3/22.html
+[7] https://github.com/slimm609/checksec/commit/532330e34947080e4c527ce5cb6f1fc4f773f82a
+[8] https://github.com/slimm609/checksec/blob/main/pkg/checksec/nx.go#L55
+[9] https://en.wikipedia.org/wiki/Executable_and_Linkable_Format#ELF_header
+[10] https://github.com/radareorg/radare2-testbins
+[11] https://github.com/rizinorg/rizin-testbins
+[12] https://www.muppetlabs.com/~breadbox/software/tiny/return42.html
+
+
+Appendix A - elfid tool
+-----------------------
+
+base64 -d&lt;&lt;'E-O'|zcat&gt;"elfid"&&echo OK
+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
+E-O
+
+--[ <a href="8.html">PREV</a> | <a href="index.html">HOME</a> | <a href="10.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

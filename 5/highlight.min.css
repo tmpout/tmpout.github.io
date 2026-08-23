@@ -1,0 +1,47 @@
+/*!
+  Theme: Default + tmp.0ut
+  Description: Original highlight.js style
+  Author: (c) Ivan Sagalaev <maniac@softwaremaniacs.org>
+  Maintainer: @highlightjs/core-team
+  Website: https://highlightjs.org/
+  License: see project LICENSE
+  Touched: 2026
+*/pre code.hljs{
+  font-family: "unifont", "Lucida Console", monospace, Monaco; 
+  font-size:16px; 
+  line-height: 1.0;
+  filter: contrast(100.00001%); /* widely compatible method to disable subpixel AA */
+display:block;
+overflow-x:auto;
+}
+code.hljs{padding:0px 0px}.hljs{background:#0A0B11;color:#c3bab5}.hljs-comment{color:#697070}
+.hljs-punctuation,
+.hljs-tag{color:#ddc2f7}
+.hljs-tag .hljs-attr,
+.hljs-tag .hljs-name{color:#444}.hljs-attribute,
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-name,
+.hljs-selector-tag{font-weight:700}.hljs-deletion,
+.hljs-number,
+.hljs-quote,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-string,
+.hljs-template-tag,
+.hljs-type{color:#ff95ba}.hljs-section,
+.hljs-title{color:#9383fb;font-weight:700}.hljs-link,
+.hljs-operator,
+.hljs-regexp,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-symbol,
+.hljs-template-variable,
+.hljs-variable{color:#68ffca}.hljs-literal{color:#ffca68}.hljs-addition,
+.hljs-built_in,
+.hljs-bullet,
+.hljs-code{color:#ffca68}.hljs-meta{color:#d995ff}.hljs-meta 
+.hljs-string{color:#38a}.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:700}
+
+.hljs-keyword{color:#68e9ff}

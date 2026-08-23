@@ -1,0 +1,672 @@
+<html>
+<head>
+<title>Static Kernel Patching Redux ~ bah</title>
+<meta charset="utf-8">
+<link href="./style.css" rel="stylesheet" type="text/css">
+<link rel="stylesheet" href="./highlight.min.css">
+<script src="./highlight.min.js"></script>
+<script src="./x86asm.min.js"></script>
+</head>
+<body>
+<div class="txtdiv">
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║                        Static Kernel Patching Redux                        ║
+║                                                                            ║
+║                                    ~bah                                    ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃Introduction                                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+In Phrack 60-8[1], jbtzhm wrote an article discussing how to modify kernel
+images on disk to include a backdoor. I found this to be an interesting idea
+for a backdoor approach, but since then I’ve not encountered an attempt to do
+this for modern x86 kernel images this got me wondering on how to revive the
+technique. Since the original article was published we have all since moved to
+64 bit systems and UEFI has became mainstream. Although the BIOS path remains
+in virtualised setups, it has under gone a major rework in how its implemented
+by the kernel and bootloaders as the years have gone by.
+
+There is limited prior work outside the Phrack article, beyond some attempts
+specifically supporting 32 bit ARM involving repacking the kernel and
+adjusting the various offsets used in decompression [2][3][4]. Also relevant
+was the work done in bootkitty[5], and my bootkit grabit[6] for how they
+implemented their hooks. There is also PciLeech[7], a DMA attack tool, that
+has some relevant code in how it implements its Linux UEFI support via a
+runtime hook. Finally, there has also been some work done on infecting LKMs[8]
+in Phrack 68-11, where the technique still works with modified code.
+
+In this article I will be discussing my approach to modify the kernel images
+on x86. In the process I will touch on both UEFI PEs, the Kernel ELFs, and
+relevant parts of the boot process for both UEFI and BIOS, and some linking
+hacks. This technique supports both UEFI and BIOS boot paths and will
+ultimately load a kSHELF as the final payload (described in tmp.0ut #4[9])
+which can implement whatever is desired. There are some space limitations for
+the payload, around 128KB, but it should be sufficient for most kernel and
+payloads as you can otherwise stage another component.
+
+The full source can be found on GitHub at <a href="https://github.com/bahorn/skp">https://github.com/bahorn/skp</a>. The
+core basis for this work was done in late 2024, and with a large rewrite of
+components done this year (2026) to fix bugs and make it more reliable. The
+techniques have been automated and tested on bzImages for Linux 5.15 to 7.0,
+with and without GRUB as the bootloader. Both the BIOS and UEFI boot paths are
+supported. It should mostly work, but there might be kernel configurations
+that break this. If you encounter one, or any weird bugs, please let me know.
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃Patching the bzImage                                                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Kernel images exist on x86 as a UEFI PE Executable, which also retain some
+structures to support BIOS bootloaders (i.e GRUB in some cases, or the direct
+kernel boot feature of QEMU often used in virtualisation). We will go into
+more details as we progress and explain the patching process.
+
+To modify the images to make the kernel load our payload, we will have to make
+several changes to the PE header, add a new section for our runtime
+components, and also modify several fields in the structures relevant to the
+BIOS boot path.
+
+First, we'll go over the changes that we make to the image on disk, before
+going over the runtime components in detail that are required to support
+getting a payload running in ring0 after the kernel has booted.
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│On-Disk Modifications                                                       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Patching the bzImage on disk involves many steps, which is best described
+using the diagram set out below:
+
+  ┌──────────────────────────────────┐  ┌──────────────────────────────────┐
+  │                                  │  │                                  │
+  │         Original Kernel          │  │        Pre-Built Runtime         │
+  │                                  │  │                                  │
+  └──────────────────┬─────────┬─────┘  └─────────┬───────────────────┬────┘
+                     │         │                  │                   │
+                     │         │                  │                   │
+┌────────────────────┼─────────┼──────────────────┼───────────────────┼─────┐
+│On-Disk Patching    │         │                  │                   │     │▒
+│                    │         │       ┌──────────▼──────────┐        │     │▒
+│                    │         │       │     Dummy Link      │        │     │▒
+│  ┌─────────────────▼─────┐   │       └─────────────────────┘        │     │▒
+│  │Extract Kernel ELF with│   │                  │                   │     │▒
+│  │    vmlinux-to-elf     │   │                  │                   │     │▒
+│  └───────────┬───────────┘   │                  │                   │     │▒
+│              │               │                  │                   │     │▒
+│              │               │                  │                   │     │▒
+│  ┌───────────▼───────────┐   │                  │                   │     │▒
+│  │Find Space and Symbols │   │                  │                   │     │▒
+│  │    from Kernel ELF    │   │                  │                   │     │▒
+│  └─┬─────────────────────┘   │                  │                   │     │▒
+│    │                         │                  │                   │     │▒
+│    │ ┌───────────────────────▼──────────────────▼─────────────────┐ │     │▒
+│    │ │          Add Extract Section and Modify PE Header          │ │     │▒
+│    │ └──────────────────────────────┬─────────────────────────────┘ │     │▒
+│    │                                │                               │     │▒
+│    │                                │                               │     │▒
+│    │ ┌──────────────────────────────▼─────────────────────────────┐ │     │▒
+│    │ │                Change boot protocol values                 │ │     │▒
+│    │ └──────────────────────────────┬─────────────────────────────┘ │     │▒
+│    │                                │                               │     │▒
+│    │                                │                               │     │▒
+│    │ ┌──────────────────────────────▼─────────────────────────────┐ │     │▒
+│    └▶│            Link Runtime with Kernel and Payload            │◀┘     │▒
+│      └──────────────────────────────┬─────────────────────────────┘       │▒
+│                                     │                                     │▒
+│                                     │                                     │▒
+│      ┌──────────────────────────────▼─────────────────────────────┐       │▒
+│      │                Place Runtime in New Section                │       │▒
+│      └──────────────────────────────┬─────────────────────────────┘       │▒
+│                                     │                                     │▒
+└─────────────────────────────────────┼─────────────────────────────────────┘▒
+ ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒│▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+                                      │
+ ┌────────────────────────────────────▼─────────────────────────────────────┐
+ │                                                                          │
+ │                             Patched bzImage                              │
+ │                                                                          │
+ └──────────────────────────────────────────────────────────────────────────┘
+
+-[ Extracting the Kernel and Symbolising -------------------------------------
+
+A bzImage consist of a loader / header component and an embedded compressed
+ELF. The loader decompresses the ELF during boot and maps it into memory.
+
+It is not hard to unpack the kernel ELF from the bzImage, there is even a
+script in the kernel tree that does this, but as this ELF has no symbols it is
+hard to determine where everything inside the kernel is. Luckily, the majority
+of kernels include a structure to support /proc/kallsyms, which contains all
+the symbols and their offsets. Implementing code to do this is fairly complex,
+but there is a useful FOSS project called vmlinux-to-elf [10] that does this,
+which will be used. Once downloaded, it can simply be invoked via uv with:
+<pre><code class="language-sh">
+$ uv run --tools path/to/vmlinux-to-elf source.bzImage out.elf
+</code></pre>
+-[ Compiling and Linking the Runtime -----------------------------------------
+
+The details of what the runtime does will be considered later, but one
+specific design decision of note is that there is just a single runtime that
+is built independent of the kernel as an generic object file, with each
+component used inside it built separately, including with different cflags for
+the different components (like using -msabi for the UEFI code), and packaged
+together with `ld -r` for use by the patcher. The runtime only becomes kernel
+specific during the patching process, where it is linked against the kernel
+using offsets extracted from the kernel ELF and other values only known when
+attempting to link. These values are passed in by just appending them to the
+linker script.
+
+This same patch time linking step is used to add in the final payload, which
+is a bit more kernel specific than the loading runtime.
+
+The code uses the following linker script, with each component used in the
+runtime arranged linearly:
+
+= linker.lds =================================================================
+<pre><code class="language-c"><!-- TODO: Add linker script highlight -->
+OUTPUT_FORMAT("binary")
+
+# We append symbols the final output needs in patch-bzimage/badlink.py
+
+SECTIONS
+{
+    .uefi_hook : {
+        *(.uefi_hook)
+    }
+
+    .code32_hook : {
+        *(.code32_hook)
+    }
+
+    # Stage1, which is the UEFI stage (bypassed for BIOS booting)
+
+    .stage1.text.start : ALIGN(16) {
+        *(.stage1.text.start)
+    }
+
+    # want some spacing
+    .stage1.text : ALIGN(16) {
+        *(.stage1.text)
+        *(.stage1.rodata)
+        *(.stage1.data)
+        *(.stage1.bss)
+        *(.stage1.data.rel.local)
+    }
+
+    # Stage 2, which is what is ran when we are in the kernel, used to load
+    # the real payload.
+
+    .stage2 : ALIGN(16) {
+        *(.stage2.*)
+    }
+
+    # The loader for our paylaod
+    .kshelf_loader.start : {
+        *(.kshelf_loader.text.start)
+    }
+
+    .kshelf_loader.text : ALIGN(16) {
+        *(.kshelf_loader.text)
+        *(.kshelf_loader.rodata)
+        *(.kshelf_loader.data)
+        *(.kshelf_loader.bss)
+        *(.kshelf_loader.data.rel.local)
+    }
+
+    # now the payload, stored in the .data section but including these for the
+    # sake of it.
+
+    .payload : ALIGN(16) {
+        *(.text)
+        *(.data)
+        *(.bss)
+    }
+
+    # the end!
+
+    _kshelf_loader_end = .;
+
+    ...
+}
+</code></pre>=============================================================================
+
+A nice detail is that the payload is optional as its defined with a weak
+attribute in the kshelf-loader:
+<pre><code class="language-c">
+__attribute__((weak)) unsigned char payload[0];
+__attribute__((weak, section(".data"))) unsigned int payload_len = 0;
+</code></pre>
+During the patching phase the runtime is linked twice, first with dummy values
+to determine the final runtime size and then with the offsets of various
+functions and values contained in the runtime (for example, where the runtimes
+UEFI / BIOS entry points are relatively, etc). All the offsets can be obtained
+by parsing the map file the linker is capable of producing with
+`-Map=path/to/mapfile`.
+
+The second time is performed with the real values that have been determine by
+looking at the kernel (space to place the runtime in the BIOS path, the
+addresses to patch, symbol offsets required before kallsyms_lookup_name()) can
+be called, and from the patching process itself (calculated UEFI entrypoint).
+
+-[ Adjusting the PE Header and Adding the Runtime ----------------------------
+
+There are quite a few changes that need to be made to the PE Header. First, we
+need to remove any signature attached to the PE (used for Secure Boot).
+Second, on older kernels the .reloc section needs to be removed, which is not
+used to boot kernels (and was removed in 6.7 [11]), to free up a space to
+define our own section. This section is given RWX permissions, and ensuring it
+has enough space for the runtime and payload (which is known from the dummy
+link).
+
+In addition to adding the extra section, the following changes will need to be
+made:
+* the PEs SizeOfImage and SizeofCode, will need to be corrected to account for
+  the new section.
+* The previous section will need to be padded for the BIOS path in a manner
+  similar to what was done by jbtzhm.
+* The NX_COMPAT flag will need to be disabled as it is not currently supported
+  by the patching process.
+* The UEFI Entrypoint will need to be pointed to the newly added section.
+
+There is a bit of a dance to be done with this step and the previous linking
+step. The size for the runtime is determined as mentioned by using dummy
+values, before being linked again by passing in the original UEFI entrypoint
+and a few offsets for the BIOS path.
+
+To fully understand the changes made, readers are advised to read
+src/patch-bzimage/add_data.py in the project. That section sets out the full
+logic and address the quirks involved in padding properly, which are numerous
+and rather dull to explain.
+
+-[ Hooking the BIOS Path -----------------------------------------------------
+
+For a BIOS bootloader to be able to boot the kernel, the x86 boot protocol is
+used. There are several boot protocol versions, but as the focus in this
+project is on only 5.15+, the only relevant boot protocol version is Protocol
+2.15 [12]. The boot protocol defines a fixed header at offset 0x1F1 in the
+bzImage which is used as a mechanism for the kernel and bootloader to
+communicate between each other.
+
+There are a few relevant fields in this header:
+* code32_start, at offset 0x214, which is an address the kernel will jump to
+  as it transitions to protected mode.
+* relocatable_kernel, at 0x234, a flag indicating if the kernel is relocatable
+  or not.
+* pref_address, at 0x258, the preferred kernel loading address.
+
+All of these are modified. First code32_start is set to our hook (details
+discussed in the next section). This is at a fixed address (0x100_000 + its
+offset from the start of the kernel image), and is not the virtual address
+used in the PE header. The kernel is then marked as non-relocatable, and the
+pref_address is defined to be 0x100_000 in order to avoid any issues involving
+them.
+
+With those set, we can now move onto booting the kernel.
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│Runtime                                                                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+The runtime has multiple stages and branches depending whether it is booted
+via UEFI or BIOS. This is further complicated by the fact that before 6.6 a
+UEFI runtime service needs to be used for the UEFI path. This requires more
+complicated work in order to run the payload and not cause a panic().
+
+Around the releases of 6.6/6.7 a significant amount of work was done on the
+x86 boot path, which is why those versions are relevant.
+
+The ultimate flow can be explained with:
+
+  ┌──────────────────────────────────┐ ┌──────────────────────────────────┐
+  │                                  │ │                                  │
+  │          Boot Via BIOS           │ │          Boot via UEFI           │
+  │                                  │ │                                  │
+  └─────────────────┳────────────────┘ └─────────────────────────────┳────┘
+                    ┃                                                ┃
+╔═══════════════════╬════════════════════════════════════════════════╬═════╗
+║Runtime            ┃                                                ┃     ║▒
+║   ┌───────────────▼──────────────────────────────────────────────┐ ┃     ║▒
+║   │code32_start Hook                                             │░┃     ║▒
+║   └──┬───────────────────────────────────────────────────────────┘░┃     ║▒
+║    ░░│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░┃     ║▒
+║      │                                                             ┃     ║▒
+║      │  ┌──────────────────────────────────────────────────────────▼──┐  ║▒
+║      │  │Setup ExitBootServices() Hook                                │░ ║▒
+║      │  └──────────────────────────────────────────────┬──────────────┘░ ║▒
+║      │   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│░░░░░░░░░░░░░░░░ ║▒
+║      │                                                 │                 ║▒
+║      │   ┌─────────────────────────────────────────────┼──────────────┐  ║▒
+║      │   │ExitBootServices() Hook                      │              │░ ║▒
+║      │   │[Method used depends on kernel version]      │              │░ ║▒
+║      │   │                                             │              │░ ║▒
+║      │   │                                             │              │░ ║▒
+║      │   │                ┌────────────────────────────┤              │░ ║▒
+║      │   │                │                            │              │░ ║▒
+║      │   │                │                            │              │░ ║▒
+║      │   │  ┌─────────────▼────────────┐ ┌─────────────▼────────────┐ │░ ║▒
+║      │   │  │                          │ │                          │ │░ ║▒
+║      │   │  │                          │ │                          │ │░ ║▒
+║      │   │  │     Direct Patching      │ │  Hook A Runtime Service  │ │░ ║▒
+║      │   │  │    (For Kernels &gt;6.6)    │ │  (Supports all Kernels)  │ │░ ║▒
+║      │   │  │                          │ │                          │ │░ ║▒
+║      │   │  │                          │ │                          │ │░ ║▒
+║      │   │  └────┬─────────────────────┘ └───────────────────────┬──┘ │░ ║▒
+║      │   │       │                                               │    │░ ║▒
+║      │   └───────┼───────────────────────────────────────────────┼────┘░ ║▒
+║      │    ░░░░░░░│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│░░░░░░ ║▒
+║      │           │                                               │       ║▒
+║  ┌───▼───────────▼────────────────────────────────────────────┐  │       ║▒
+║  │Decompression Hook                                          │░ │       ║▒
+║  │                                                            │░ │       ║▒
+║  │ ┌────────────────────────────────────────────────────────┐ │░ │       ║▒
+║  │ │                                                        │ │░ │       ║▒
+║  │ │   Copy Payload into spare space at the end of .text    │ │░ │       ║▒
+║  │ │                                                        │ │░ │       ║▒
+║  │ └───────────────────────────┬────────────────────────────┘ │░ │       ║▒
+║  │                             │                              │░ │       ║▒
+║  │ ┌───────────────────────────▼────────────────────────────┐ │░ │       ║▒
+║  │ │                                                        │ │░ │       ║▒
+║  │ │          Hook an Initcall to call the Payload          │ │░ │       ║▒
+║  │ │                                                        │ │░ │       ║▒
+║  │ └────────────────────────────────────────────────────────┘ │░ │       ║▒
+║  └──┬─────────────────────────────────────────────────────────┘░ │       ║▒
+║   ░░│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │       ║▒
+║     │                                                            │       ║▒
+║     │┌───────────────────────────────────────────────────────────▼────┐  ║▒
+║     ││Runtime Services Hook                                           │░ ║▒
+║     │└───────────────────────────────────────┬────────────────────────┘░ ║▒
+║     │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│░░░░░░░░░░░░░░░░░░░░░░░░░░ ║▒
+║     │                                        │                           ║▒
+║     │                                        │                           ║▒
+║ ┌───▼────────────────────────────────────────▼─────────────────────────┐ ║▒
+║ │                                                                      │ ║▒
+║ │                           Run the Payload!                           │ ║▒
+║ │                                                                      │ ║▒
+║ └──────────────────────────────────────────────────────────────────────┘ ║▒
+╚══════════════════════════════════════════════════════════════════════════╝▒
+ ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+
+-[ BIOS Entrypoint / code32_start hook ---------------------------------------
+
+The code32_start hook runs right as the
+kernel transitions to protected mode. This hook is used to make a simple patch
+to the boot code so that just after the kernel is decompressed, another hook
+that has been prepared is called.
+
+The patch is just a simple, with _offset_bios_entry being the address of our
+decompression hook: push _offset_bios_entry ret
+
+To make this patch, the kernel on the disk is examined to find one of two
+patterns, both of which jump to the decompressed kernel. One is for pre 6.6
+and one for after, and using these two is enough to work reliably across all
+the kernel versions.
+
+For post 6.6, the pattern is
+<pre><code class="language-txt">
+    4c 89 fe ff e0 f4 eb fd 66 0f 1f 44 00 00
+</code></pre>
+And or pre 6.6 the pattern is:
+<pre><code class="language-txt">
+    e8 XX XX XX XX 5e ff e0
+</code></pre>
+These are just the jmp rax (ff e0) instructions in
+arch/x86/boot/compressed/head_64.S and the surrounding context. This is
+sufficient to be able to pattern match reliably, which is replaced with a call
+to the decompression hook.
+
+One slight quirk with this patch is the address that it jumps to. The kernel
+gets relocated before the defined hook is called, which chops off our appended
+code. This breaks using a relative offset, but the original mapping of the
+kernel remains at a low fixed address (0x100_000 + the offset to the defined
+code) which is why we push and ret to jump to it.
+
+Finally after setting all that up it continues booting by calling the original
+entrypoint (which should be 0x100_000).
+
+-[ UEFI Entrypoint -----------------------------------------------------------
+
+As the UEFI entrypoint was adjusted to point to the our code, it is jumped to
+straight from the firmware. At this point we setup a hook on
+ExitBootServices(), which is always called during boot to leave the UEFI Boot
+Services context. This just requires a single pointer change in the
+SystemTable-&gt;BootServices structure, which the UEFI firmware kindly passes to
+us.
+
+This can be implemented as simply as:
+<pre><code class="language-c">
+EFI_EXIT_BOOT_SERVICES orig_exitbootservices = \
+    (EFI_EXIT_BOOT_SERVICES) 0x41424344;
+EFI_SYSTEM_TABLE *systable = (EFI_SYSTEM_TABLE *) 0x41424344;
+EFI_BOOT_SERVICES *bootservices = (EFI_BOOT_SERVICES *) 0x41424344;
+
+void main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+    bootservices = SystemTable-&gt;BootServices;
+    systable = SystemTable;
+
+    orig_exitbootservices = bootservices-&gt;ExitBootServices;
+    bootservices-&gt;ExitBootServices = exit_bootservices_hook;
+}
+</code></pre>
+A point of note is that the code to setup the hook is implemented in C, and
+called by a small stub (what the UEFI entrypoint is pointing to) that saves
+registers and actually calls the original entrypoint. The original entrypoint
+is passed in via the linking step, and once it is called it the boot process
+continues normally.
+
+This part is one of the reasons this code in not currently suitable for use
+with NX_COMPAT, due to the use of globals to store references to the system
+table.
+
+-[ ExitBootServices() Hook ---------------------------------------------------
+
+At this point, there are two options on how to proceed for kernels more recent
+than 6.6, and only one for releases before that.
+
+On the more recent kernels the kernel is decompressed and in memory at this
+point, which means the same approach can be implemented as the BIOS path,
+which is discussed in more detail in the next section. In brief however, this
+is where the new code is copied into a part of the .text ELF section that is
+used nominally as padding, and an initcall hook is used to jump to it. Finding
+the memory region containing the kernel is implemented by checking the size of
+each mapping, and if one is large enough, a magic value obtained during the
+linking step is used to check if its really the kernel.
+
+On older kernels, or if the mapping containing the kernel can not be found, a
+UEFI runtime service is hooked instead to let the kernel run the payload.
+
+When booted with UEFI, the kernel will access a few UEFI runtime services. Of
+note is the one setting up efivarfs (normally located at
+/sys/firmware/efi/efivars on a running system) which occurs quite early in the
+boot during the initcall stage, which calls RT-&gt;GetNextVariableName(). Later
+on the kernel also calls RT-&gt;GetVariable() from integrity_load_keys(), which
+occurs after all the initcalls have finished running. In skp, the former is
+used as its called earlier in the boot process.
+
+In the runtime hook path, the original function after the payload is setup
+need to be restored and called. This is a trivial structure update.
+
+-[ Decompression Hook --------------------------------------------------------
+
+On the BIOS path, we are continuing from the previously mentioned low address
+that remains mapped and contains our code. Here we copy a patch into the
+freshly decompressed kernel and hook an initcall. Otherwise on the UEFI path,
+we are still in Boot Services, but the kernel is decompressed and in a region
+we can access from our ExitBootServices() hook.
+
+To allow built in modules and other features to run code during boot, the
+kernel implements a mechanism called initcalls, which has existed since the
+earliest days of the kernel (which surprised me as the original article didn't
+use them). Initcalls are ordered in levels, stored as a list containing every
+initcall of that level, and then started from do_initcalls() (in /init/main.c
+in the kernel tree) by their level. The level lists consist of offsets from
+that specific location in that list to the target function being called
+(`&(level[initcall) + level[initcall]`). We will be hooking one to redirect
+execution to our payload, which we need to get into the kernel memory somehow.
+
+To do this, spare space in the .text section can be used as a cavity. This is
+normally filled with a large number of 0xCC bytes, so during patching time a
+large group of them that have enough space to contain the payload is searched
+for. The initcall is then modified to point to this reclaimed space, as its a
+known offset from the start of the kernel, which was passed in via rax
+register in the BIOS path, or is the start of the memory region found in the
+UEFI path.
+
+I chose to hook the regulator_init_complete() initcall, found by looking at
+the kernel ELF and searching for the symbol with a regex
+(`__initcall__kmod_core[_0-9a-z]*regulator_init_complete[_0-9a-z]*`). There is
+no specific reason to use this one beyond finding it many kernel builds. Any
+widely used one is viable.
+
+This decompression hook is similar to what bootkitty does, though we go
+further and inject the code directly into the kernel, rather than just
+disabling the module signature checking.
+
+-[ Running the Payload -------------------------------------------------------
+
+Now the paths have joined together, we now need to get something useful
+running. For this, I used an adaption of my kSHELF loader from tmp.0ut
+#4[9].
+
+When running from the initcall path, we are cleanly mapped into kernel memory.
+The kernel is at a known offset to where the code is being loaded, which can
+be used to find out the relative address of kallsyms_lookup_name() given we
+know it from kernel ELF at patching time. With kallsyms_lookup_name()
+resolved, the rest of the symbols needed to implement a basic loader to map
+the kSHELF into memory and make it executable can be resolved easily. Once the
+payload is mapped, the kernel will continue to boot after it returns and has
+done its setup.
+
+The UEFI runtime hook has a few pain points that need to be addressed to work
+reliably across kernel versions. When a UEFI runtime service is invoked, the
+kernel enters a temporary mm with the UEFI related memory mapped into memory,
+while also keeping the kernel mapped, so it is possible to call kernel
+functions freely (accounting for the difference in ABIs between UEFI land /
+Linux land) if the address of the kernel is known. To do this, read the stack
+to get the address of __efi_call + 40, so the following can obtain the base
+address of the kernel if you know the relative offset of __efi_call from the
+base of the kernel:
+<pre><code class="language-x86asm">
+    mov rax, [rsp]
+    sub rax, __efi_call + 40
+</code></pre>
+With that, any symbol in the kernel can be called. However, there remains some
+complexity, as in some kernels you can freely call whatever you want, allocate
+memory, etc, but other kernels, such as 5.15, are broken. To try and fix this,
+preemption (stored in a percpu value) was initially disabled, but that causes
+issues with calls like vmalloc() in more recent kernels, and it remains
+difficult to transition out of this scope.
+
+To work around that, kmalloc() with the GFP_ATOMIC flag can be used freely to
+allocate memory for the payload. This is suitable for allocations of roughly
+128KB (vmalloc() would normally be preferred but kmalloc() can achieve the
+same page alignment requirements since 5.4[13] for us to safely set_memory_x()
+the pages).
+
+The payload can then be invoked by execute_in_process_context() (part of the
+workqueue subsystem) so that it can be ran in a more normal environment.
+Calling it requires interrupts to be disabled so it doesn't try to run the
+provided function immediately. This can be done by calling irq_enter_rcu(),
+saving the eflags and then calling execute_in_process_context(), before
+restoring the eflags and calling irq_exit_rcu().
+
+If you do not restore the eflags, you will have the kernel complain about a
+firmware bug because it expects them to be consistent (and irq enter/exit
+functions trash them slightly). I used the irq_{enter,exit} functions as I
+wanted functions that could be resolved with kallsyms_lookup_name() as it was
+more reliable than changing percpu values directly from this code.
+
+Essentially:
+<pre><code class="language-c">
+    asm ("pushf; pop %0" : "=rm" (flags) : : "memory"); // save the eflags
+    irq_enter_rcu(); // this disables preemption
+    execute_in_process_context(start, ew); // schedule the payload to run
+    irq_exit_rcu(); // cleanup
+    asm ("mov %0, %%rax; push %%rax; popf" : : "rm" (flags) : "rax" );
+</code></pre>
+With that, you should be freely running the kSHELF in your patched kernel:
+<pre><code class="language-txt">
+[  2.556448] PATCHED KERNEL
+[  2.556716] payload_len: 6072
+[  2.557044] Called via UEFI Runtime hook
+[  2.557399] Loading payload
+[  2.557903] relative relocation: 1689
+[  2.558248] relative relocation: 944
+[  2.558574] relative relocation: 4672
+[  2.558729] relative relocation: 880
+[  2.559118] relocating sym: register_ftrace_function
+[  2.559772] relocating sym: commit_creds
+[  2.560154] relocating sym: kallsyms_lookup_name
+[  2.560599] relocating sym: prepare_creds
+[  2.560777] relocating sym: ftrace_set_filter_ip
+[  2.561206] relocating sym: unregister_ftrace_function
+[  2.561775] relocating sym: _printk
+[  2.562075] RX
+[  2.562255] RW
+[  2.562403] Entrypoint: ffff888101ca8370
+[  2.562898] Greetings from SHELF
+[  2.567905] efivars: Registered efivars operations
+...
+[  2.602202] rootkit: Loaded &gt;:-)
+</code></pre>
+As an alternative to using kSHELFs, it is possible to use the existing kernel
+infrastructure to load a normal LKM, like how kmatryoshka[14] does.
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃Conclusion                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Hopefully this was interesting! If you are interested in doing further work on
+this, there are a few directions you could take this:
+
+* It would be useful to support more architectures as some modern aarch64
+  systems also use UEFI.
+* Supporting UEFI secure boot setups could be done having a boot kit component
+  to enroll a custom MOK, which can be used to boot these patched kernels.
+* This could be implemented by repacking the kernel, like the prior 32bit ARM
+  work, using a "donor" kernel tree and replacing the unpacked kernel there
+  before rebuilding. This approach probably would require more work and
+  probably be less reliable than approaches used in this report, but is an
+  option for other architectures beyond x86.
+* Finally, Unified Kernel Images (UKIs) are becoming more common, so
+  supporting them would be interesting.
+
+Finally, I want to say my thanks to jbtzhm for their original article in
+Phrack, and many thanks to the FOSS maintainers who build the projects that
+make work like this possible:
+* marin-m for vmlinux-to-elf, a core part of this project which which it would
+  not have been possible without.
+* WerWolv for ImHex, which provided me my initial understanding of the bzImage
+  structure with all the handy patterns files.
+* hasherezade for PE-Bear, which helped me debug some some nasty bugs in my PE
+  patching code. Clearly marking sections as not being mapped was a life
+  saver!
+
+~bah
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃References                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+[1] <a href="https://phrack.org/issues/60/8#article">https://phrack.org/issues/60/8#article</a>
+[2] <a href="https://github.com/Caesurus/CTF_Writeups/blob/main/2024-04-zImageKernelPatch/README.MD">https://github.com/Caesurus/CTF_Writeups/blob/main/2024-04-zImageKernelPatch/README.MD</a>
+[3] <a href="https://jamchamb.net/2022/01/02/modify-vmlinuz-arm.html">https://jamchamb.net/2022/01/02/modify-vmlinuz-arm.html</a>
+[4] <a href="https://stackoverflow.com/questions/76571876/how-to-repack-vmlinux-elf-back-to-bzimage-file">https://stackoverflow.com/questions/76571876/how-to-repack-vmlinux-elf-back-to-bzimage-file</a>
+[5] <a href="https://www.welivesecurity.com/en/eset-research/bootkitty-analyzing-first-uefi-bootkit-linux/">https://www.welivesecurity.com/en/eset-research/bootkitty-analyzing-first-uefi-bootkit-linux/</a>
+[6] <a href="https://blog.b.horn.uk/posts/grabit/">https://blog.b.horn.uk/posts/grabit/</a>
+[7] <a href="https://github.com/ufrisk/pcileech/tree/master">https://github.com/ufrisk/pcileech/tree/master</a>
+[8] <a href="https://phrack.org/issues/68/11.html#article">https://phrack.org/issues/68/11.html#article</a>
+[9] <a href="https://tmpout.sh/4/5.html">https://tmpout.sh/4/5.html</a>
+[10] <a href="https://github.com/marin-m/vmlinux-to-elf">https://github.com/marin-m/vmlinux-to-elf</a>
+[11] <a href="https://github.com/torvalds/linux/commit/fa5750521e0a4efbc1af05223da9c4bbd6c21c83">https://github.com/torvalds/linux/commit/fa5750521e0a4efbc1af05223da9c4bbd6c21c83</a>
+[12] <a href="https://www.kernel.org/doc/html/v6.1/x86/boot.html">https://www.kernel.org/doc/html/v6.1/x86/boot.html</a>
+[13] <a href="https://github.com/torvalds/linux/commit/59bb47985c1db229ccff8c5deebecd54fc77d2a9">https://github.com/torvalds/linux/commit/59bb47985c1db229ccff8c5deebecd54fc77d2a9</a>
+[14] <a href="https://github.com/milabs/kmatryoshka">https://github.com/milabs/kmatryoshka</a>
+
+
+--[ <a href="19.html">PREV</a> | <a href="index.html">HOME</a> | <a href="21.html">NEXT</a> ]--
+
+</div>
+<script>hljs.highlightAll();</script>
+</body>
