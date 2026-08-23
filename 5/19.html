@@ -1351,7 +1351,7 @@ Let's apply gASLR to the program and see the difference in the output...
 
 ### gASLR in action
 <pre><code class="language-txt">
-elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ shiva-ld -e ./test-i /lib/shiva \
+elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ shiva-ld -e ./test -i /lib/shiva \
 &gt; -5 $PWD -P gASLR.o -o test.gASLR
 ...............
 [+] Input executable: ./test
