@@ -1375,10 +1375,9 @@ test1() is at 0x7ee279f61000
 </code></pre>
 gASLR_demo - original [14]
 
-In the program output above we can see that the function addresses change each 
-time to addresses that are at a different offset from the executable base 
-address. The gASLR module is using `mmap()` to create a unique base mapping for 
-each function individually.
+As shown in the demo shown above, the gASLR module has been applied to
+./test.gASLR and it is using mmap() internally  to create a unique base
+mapping for each individual function.
 
 ## Future work on gASLR
 
