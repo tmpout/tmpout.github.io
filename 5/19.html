@@ -27,7 +27,7 @@ Fine grained load time ASLR for ELF executables        │                   █
 in X86_64 Linux                                        │                   █   │
 ~ elfmaster                                            └───────────────────█ ──┘
 
-## Table of Contents
+<y>-= Table of Contents</y>
 
 - Fine grained load time ASLR for ELF executables in X86_64 Linux
 - Introduction with a little background
@@ -69,7 +69,7 @@ in X86_64 Linux                                        │                   █
 - ELF binary hacking workshops
 - Contact
 
-## Introduction with a little background
+<y>-= Introduction with a little background</y>
 
 Good day ladies and gentlemen. It is my honor to share some of my research into 
 writing custom ELF dynamic linkers, ELF ABI enhancements, and chained dynamic 
@@ -77,7 +77,7 @@ linking (Multiple dynamic linkers simultaneously) for solving complex security
 problems such as process-image hardening with load-time granular ASLR-- which 
 is a security feature that I will be demonstrating in this paper.
 
-### Origins of this paper
+<y>-= Origins of this paper</y>
 
 This paper, in many respects, is a follow up to my paper in tmpout issue 2,
 "preloading the linker for fun and profit"[1] which illustrates how a custom 
@@ -85,7 +85,7 @@ dynamic linker can be chained together with ld-linux.so and load ET_REL objects
 to implement ELF viruses. That research ultimately led into the project known as 
 Shiva[2] and also see Shiva Github[3].
 
-### Original research goals
+<y>-= Original research goals</y>
 
 The original paper showed how chaining a custom ELF interpreter could be used 
 as a slick new Linux virus technique, yes, but I knew that it had strong 
@@ -99,7 +99,7 @@ gives lightning fast instrumentation for custom tracers and debugging engines.
 See my Toorcamp 2022 talk "Advancing the programmability and security of the 
 Linux userland runtime"[4].
 
-### Shiva as a binary patching engine
+<y>-= Shiva as a binary patching engine</y>
 
 Shiva eventually became funded by DARPA AMP and it evolved into a binary 
 patching engine allowing developers with no reverse engineering knowledge to 
@@ -115,14 +115,14 @@ other capabilities...
 Shiva is a multi-purpose dynamic linker with two major module types. Modules 
 are ELF relocatable objects that come in two varieties for Shiva loading: 
 
-#### 1. ELF Microprograms
+<y>-= 1. ELF Microprograms</y>
 
 These are programs written in C and compiled into ET_REL objects that are 
 installed by Shiva at load-time. These ELF microprograms are powerful for 
 writing security modules, as I illustrated in my 2022 Toorcamp presentation: 
 Debugging engines, exploit mitigations, and tracers.
 
-#### 2. ELF Micropatches
+<y>-= 2. ELF Micropatches</y>
 
 ELF Micropatches in Shiva are similar to ELF microprograms but they have no 
 init function; instead they use symbolic definition and custom Shiva macros to 
@@ -141,7 +141,7 @@ In todays paper we will be using the ELF microprogram loading capabilities. It
 is different than the ELF patching capabilities, although both use relocatable 
 modules.
 
-### Illustration 1.0: Loaded Shiva module in process image
+<y>-= Illustration 1.0: Loaded Shiva module in process image</y>
 
                                                             ELF ET_DYN
                                                           EXECUTABLE (PIE)
@@ -181,7 +181,7 @@ Ox6000000 ┌────────────────────┐    
 
 Shiva module process image - original[7]
 
-## ELF microprograms for security hardening in the process image
+<y>-= ELF microprograms for security hardening in the process image</y>
 
 This fascinating concept of chaining a custom dynamic linker into the execution 
 flow helps to bridge the gap that allows developers to build sophisticated 
@@ -200,9 +200,9 @@ exploit mitigations, viruses, and yes backdoors! Among many other fascinating
 magical concepts while experimenting with my programmable and custom dynamic 
 linker that I now call Shiva. I even wrote a fuzzer for ld-linux.so in 2022.
 
-### What is ASLR and gASLR?
+<y>-= What is ASLR and gASLR?</y>
 
-#### ASLR definition
+<y>-= ASLR definition</y>
 
 ASLR (Address space layout randomization) is a feature in modern OS's such as 
 Linux that randomizes the base address of the executable and libraries at each 
@@ -219,7 +219,7 @@ address can be leaked by an exploit that is able to gain a read-primitive. Once
 an attacker determines the base address it is trivial to know the location of 
 code gadgets and global data.
 
-#### gASLR definition
+<y>-= gASLR definition</y>
 
 gASLR is "Granular ASLR". It randomizes the program at a granular level. In 
 other words it does fine-grained randomization. Instead of just randomizing the 
@@ -234,7 +234,7 @@ microrogram. Our current implementation re-writes every function within the main
 executable at load-time at a random location in memory and re-links the code and
 data just in time before program execution.
 
-## Chained dynamic linking concept
+<y>-= Chained dynamic linking concept</y>
 
 I highly recommend that you read my original paper[1] to understand the concept 
 of chaining in a custom dynamic linker. There's an entire algorithm I 
@@ -257,7 +257,7 @@ this with the path to our new custom ELF interpreter, in this case "/lib/shiva".
          -&gt; [ld-linux.so] 
              -&gt; [_start()]
 
-### Illustration 1.1: Chained dynamic linking execution flow
+<y>-= Illustration 1.1: Chained dynamic linking execution flow</y>
 
 Shiva's dynamic linking workflow - original[9]
 
@@ -286,7 +286,7 @@ LINUX KERNEL (1)
                                 ▲                                      │
                                 └──────────────────────────────────────┘
 
-## Writing a basic Shiva module in C
+<y>-= Writing a basic Shiva module in C</y>
 
 Similarly to Linux LKM's, Shiva modules have an init function that will execute 
 as the module entry point. Shiva modules can execute this init routine either 
@@ -296,76 +296,77 @@ write a Shiva module that fuzzes ld-linux.so then you would want the module to
 run before ld-linux.so so that it could mutate the Dynamic auxiliary data 
 before ld-linux.so is executed.
 
-See `shiva/modules/include/shiva_module.h`
+See <t>shiva/modules/include/shiva_module.h</t>
 
-`SHIVA_MODULE_PRE_LDSO`
+<t>SHIVA_MODULE_PRE_LDSO</t>
 
 or
 
-`SHIVA_MODULE_POST_LDSO`
+<t>SHIVA_MODULE_POST_LDSO</t>
 
-If you do not specify one then Shiva will default to `SHIVA_MODULE_POST_LDSO`.
+If you do not specify one then Shiva will default to <t>SHIVA_MODULE_POST_LDSO</t>.
 
 Shiva modules have access to the following structures and code libraries that 
 are statically linked into the binary of the Shiva interpreter itself:
 
-#### 1. struct shiva_ctx  from shiva/shiva.h
+<y>-= 1. struct shiva_ctx  from shiva/shiva.h</y>
 
 This struct is the main context structure for Shiva, it contains all other 
-important structs within it such as `struct shiva_module`. The Shiva module's 
-`shiva_init` function takes this as it's one and only argument, giving the 
+important structs within it such as <t>struct shiva_module</t>. The Shiva module's 
+<t>shiva_init</t> function takes this as it's one and only argument, giving the 
 developer of a Shiva module complete access to Shiva's internal ELF linking and 
 binary routines.
 
 
-####2. libelfmaster
+<y>-= 2. libelfmaster</y>
 
 This library[10] is used by Shiva for all of the internal ELF heavy lifting, 
 parsing, etc. See https://github.com/elfmaster/libelfmaster
 
-####3. musl-libc
+<y>-= 3. musl-libc</y>
 
 This is the C libary used to compile Shiva. It is baked into the Shiva binary 
 and can be accessed in addition to glibc from within the scope of Shiva 
 modules. In order to force musl-libc resolution over glibc, use the 
-`SHIVA_MODULE_FORCE_MUSL_RESOLUTION` macro. This can be necessary at time to 
+<t>SHIVA_MODULE_FORCE_MUSL_RESOLUTION</t> macro. This can be necessary at time to 
 avoid certain glibc functions that use STT_IFUNC relocations, which Shiva does 
 not support.
 
-####4. Dynamically linked symbols (Functions and global variables)
+<y>-= 4. Dynamically linked symbols (Functions and global variables)</y>
 
 If the program that you are writing a module for has access to a specific 
 shared library at load-time then so do you. If a library is loaded by 
-`dlopen()` then Shiva modules cannot access that symbol without special 
+<t>dlopen()</t> then Shiva modules cannot access that symbol without special 
 hacking. This will be fixed in a future version.
 
-####5. libcapstone
+<y>-= 5. libcapstone</y>
 
 Shiva uses libcapstone internally to disassemble code. Shiva modules can use 
 libcapstone to disassemble the code of the target process, or anything else 
 that they choose to open.
 
-### Build Shiva for x86_64 Linux
+<y>-= Build Shiva for x86_64 Linux</y>
 
-If you haven't already, checkout the source code to Shiva's `x86_64_port` 
+If you haven't already, checkout the source code to Shiva's <t>x86_64_port</t> 
 branch. 
 
-### Build for x86_64 Linux
+<y>-= Build for x86_64 Linux</y>
 
 Clone Shiva[11] and read README.md for the x86_64 build instructions.
 <pre><code class="language-sh">
 git clone https://github.com/advanced-microcode-patching/shiva
 </code></pre>
 
-### Source code for our first Shiva module: sections.c
+<y>-= Source code for our first Shiva module: sections.c</y>
 
-Our first Shiva module makes use of the Shiva context pointer `shiva_ctx_t 
-*ctx` and the `libelfmaster` API to iterate over the section headers of the 
-loaded ELF executable, printing them to stdout before the target program runs.
+Our first Shiva module makes use of the Shiva context pointer
+<t>shiva_ctx_t *ctx</t> and the <t>libelfmaster</t> API to iterate over the section
+headers of the loaded ELF executable, printing them to stdout before the target
+program runs.
 
-Navigate to `shiva/modules/x86_64_modules/sections`
+Navigate to <t>shiva/modules/x86_64_modules/sections</t>
 
-The `sections.c` file contains the source code for our first module.
+The <t>sections.c</t> file contains the source code for our first module.
 <pre><code class="language-c">
 #define _GNU_SOURCE
 #include "shiva_module.h"
@@ -391,7 +392,7 @@ shiva_init(struct shiva_ctx *ctx)
 }
 </code></pre>
 
-### Compiling our first Shiva module (aka ELF microprogram)
+<y>-= Compiling our first Shiva module (aka ELF microprogram)</y>
 
 The Shiva modules must be compiled with a large code model so that they can 
 properly link into a process image where the module is further than 2GB from 
@@ -400,25 +401,25 @@ the main executable in memory.
 $ gcc -I /opt/shiva/include -I /opt/elfmaster/include -mcmodel=large -c sections.c
 </code></pre>
 You can also run the Makefile that is included in this directory. Simply type 
-`make module` to build the sections.o module.
+<t>make module</t> to build the sections.o module.
 
-### Testing our sections.o module.
+<y>-= Testing our sections.o module.</y>
 
-Shiva is both a regular program and an interpreter. Just like `ld-linux.so` it 
+Shiva is both a regular program and an interpreter. Just like <t>ld-linux.so</t> it 
 can be run directly or used as the ELF program interpreter. When testing the 
 effects of a module it can be useful to simply run Shiva directly as the 
 program loader. See the Shiva UserlandExec source code [16].
 
 Let's first run /bin/ls by itself to get a baseline and then again with Shiva 
 to see the effect that the module has on our program. We are expecting it to 
-print out the ELF section headers to `/bin/ls` or whatever executable you 
+print out the ELF section headers to <t>/bin/ls</t> or whatever executable you 
 choose to run with the module.
 <pre><code class="language-txt">
 $ /bin/ls
 Makefile  prog.c  sections.c  sections.o
 </code></pre>
-Set the `sections.o` module with the `SHIVA_MODULE_PATH` environment variable 
-and run `/bin/ls` again but this time with Shiva as the loader.
+Set the <t>sections.o</t> module with the <t>SHIVA_MODULE_PATH</t> environment variable 
+and run <t>/bin/ls</t> again but this time with Shiva as the loader.
 <pre><code class="language-txt">
 $ export SHIVA_MODULE_PATH=./sections.o
 $ shiva /bin/ls
@@ -457,23 +458,23 @@ Printing ELF section headers of program before runtime!
 Makefile  prog.c  sections.c  sections.o
 $ 
 </code></pre>
-The `shiva_init()` function in in `sections.o` module is executed and it 
+The <t>shiva_init()</t> function in in <t>sections.o</t> module is executed and it 
 iterates over the section header table printing each section string name of the 
 loaded ELF executable. 
 For real-world modules we don't want to have to invoke Shiva directly everytime 
 we run the program, it would defeat the purpose of any kind of security 
 features that we add since a user could simply run the program without Shiva.
 
-### Using shiva-ld to "prelink" our sections.o module to /bin/ls
+<y>-= Using shiva-ld to "prelink" our sections.o module to /bin/ls</y>
 
 Create a local copy of /bin/ls in our CWD (In 
-`shiva/modules/x86_64_modules/sections`)
+<t>shiva/modules/x86_64_modules/sections</t>)
 <pre><code class="language-txt">
 $ cp /bin/ls .
 </code></pre>
 
 
-#### shiva-ld usage
+<y>-= shiva-ld usage</y>
 <pre><code class="language-txt">
 -=[Shiva Prelinker v2.0.]=-Usage: shiva-ld -e test_bin -p patch1.o -i /lib/shiva -s /opt/shiva/modules/ -o test_bin_final [-cdN]
 [-e] --input_exec   Input ELF executable
@@ -484,12 +485,12 @@ $ cp /bin/ls .
 [-d] --disable-cflow    Do not generate CFG data (i.e. .shiva.xref and .shiva.branch)
 [-N] --needed-injection Injects shared object dependency via DT_NEEDED entry
 </code></pre>
-The following command will copy `ls` to `ls.new`. The new version `ls.new` will 
-have the path `/lib/shiva` set as the primary ELF interpreter and the dynamic 
+The following command will copy <t>ls</t> to <t>ls.new</t>. The new version <t>ls.new</t> will 
+have the path <t>/lib/shiva</t> set as the primary ELF interpreter and the dynamic 
 segment will be moved into a newly added PT_LOAD segment in order to make room 
 for several new custom dynamic segment types. There are also three new ELF 
-sections that you will see in `ls.new` which are  `.shiva.xref`, 
-`.shiva.branch`, and `.shiva.strtab`. These sections live within the new 
+sections that you will see in <t>ls.new</t> which are  <t>.shiva.xref</t>, 
+<t>.shiva.branch</t>, and <t>.shiva.strtab</t>. These sections live within the new 
 PT_LOAD segment and contains control flow information that Shiva uses to 
 generate relocation meta-data at load-time.
 <pre><code class="language-txt">
@@ -502,20 +503,20 @@ $ shiva-ld -e ls -p sections.o -i /lib/shiva -s /opt/shiva/modules -o ls.new
 Updating dynamic segment vaddr: 0x24000 offset: 0x22000 size: 0x1f0
 Finished prelinking.
 </code></pre>
-Copy the Shiva module `/opt/shiva/modules` because that's where we specified 
-the module search path with the   `-s` flag above.
+Copy the Shiva module <t>/opt/shiva/modules</t> because that's where we specified 
+the module search path with the   <t>-s</t> flag above.
 <pre><code class="language-sh">
 $ sudo cp sections.o /opt/shiva/modules
 </code></pre>
-Now run `ls.new` directly. The Linux kernel will invoke `/lib/shiva` as the 
+Now run <t>ls.new</t> directly. The Linux kernel will invoke <t>/lib/shiva</t> as the 
 primary ELF interpreter. Shiva will check the dynamic segment for 
-`SHIVA_DT_NEEDED` and `SHIVA_DT_SEARCH` to find the basename of our module 
-`sections.o` and the search path of our module `/opt/shiva/modules`. Once Shiva 
+<t>SHIVA_DT_NEEDED</t> and <t>SHIVA_DT_SEARCH</t> to find the basename of our module 
+<t>sections.o</t> and the search path of our module <t>/opt/shiva/modules</t>. Once Shiva 
 has finished loading and relocating this module it will map the original 
 interpreter into memory and eventually pass control to it for finalizing the 
 loading and linking of shared libraries. In this module we specified 
-`SHIVA_MODULE_POST_LDSO` which instructs Shiva to run the module after 
-`ld-linux.so` has finished.
+<t>SHIVA_MODULE_POST_LDSO</t> which instructs Shiva to run the module after 
+<t>ld-linux.so</t> has finished.
 <pre><code class="language-txt">
 $ ./ls.new
 Printing ELF section headers of program before runtime!
@@ -555,12 +556,12 @@ Printing ELF section headers of program before runtime!
 [21] .shiva.branch
 ls  ls.new  Makefile  prog.c  sections.c  sections.o
 </code></pre>
-We were able to run the executable `ls.new` directly and no longer need to run 
-`/bin/shiva` as the loader. Shiva gets automatically loaded by the kernel as 
-the ELF interpreter when we use the prelinker `shiva-ld` to attach the 
+We were able to run the executable <t>ls.new</t> directly and no longer need to run 
+<t>/bin/shiva</t> as the loader. Shiva gets automatically loaded by the kernel as 
+the ELF interpreter when we use the prelinker <t>shiva-ld</t> to attach the 
 necessary meta-data to the target executable. 
 
-Let me show you the modifications to the `PT_INTERP` and `PT_DYNAMIC` 
+Let me show you the modifications to the <t>PT_INTERP</t> and <t>PT_DYNAMIC</t> 
 segments...
 
 <pre><code class="language-txt">
@@ -604,53 +605,53 @@ Dynamic section at offset 0x22000 contains 31 entries:
 Congratulations, you now know how to build a basic ELF microprogram as a Shiva 
 module.
 
-## Implementing gASLR as a Shiva module
+<y>-= Implementing gASLR as a Shiva module</y>
 
 OK let's get to the cool stuff! gASLR (Granular ASLR) at load-time, implemented 
 as an ELF microprogram that get's loaded and installed by Shiva at runtime.
 
-### Design and implementation
+<y>-= Design and implementation</y>
 
 Although our gASLR can technically be applied to existing ELF executables, say 
 on an ubuntu 24 install, it would be slow since those ELF binaries do not have 
-a preserved `.rela.text` section by default, and it will be unreliable since 
+a preserved <t>.rela.text</t> section by default, and it will be unreliable since 
 they are built with a small code model which may prevent functions that are 
 randomly moved more than 2GB away from eachother from being properly re-linked.
 
-### Our gASLR requires preserved text relocations
+<y>-= Our gASLR requires preserved text relocations</y>
 
-Generally speaking the ELF relocations that apply to the `.text` section are 
-used for linking the programs compilation units with `/bin/ld`. The ELF 
+Generally speaking the ELF relocations that apply to the <t>.text</t> section are 
+used for linking the programs compilation units with <t>/bin/ld</t>. The ELF 
 relocations of this type only apply to ELF relocatable objects by default. 
-Notice that `.o` files have `.rela.text` sections but executables do not. This 
+Notice that <t>.o</t> files have <t>.rela.text</t> sections but executables do not. This 
 is because executables don't require .text relocations since the compilation 
 units (Of code and data) are already linked into the ELF executable.
 
-For those of us crazy enough to want to re-link the `.text` section at program 
-load-time we ideally want there to exist a preserved `.rela.text` section in 
+For those of us crazy enough to want to re-link the <t>.text</t> section at program 
+load-time we ideally want there to exist a preserved <t>.rela.text</t> section in 
 the executable we are applying gALSR too.
 Our Shiva module needs to move the location of every function of the target 
 program into a random memory location which requires the re-linking of every 
 function. This means that in order to efficiently re-write every function into 
-a new address range we will need the **text relocations** of the executable 
+a new address range we will need the <strong>text relocations</strong> of the executable 
 that we are applying gASLR too.
 
-#### Emit a preserved text relocation section
+<y>-= Emit a preserved text relocation section</y>
 <pre><code class="language-sh">
 $ gcc -Wl,--emit-relocs test.c -o test
 </code></pre>
-The `.rela.text` section in an executable is slightly different than those in 
-an ET_REL file. The text relocations in an ET_REL object have `r_offset` values 
-that are offsets relative to the start of the `.text` section. In an ELF 
-executable the `.rela.text` has `r_offset` values that are relative from the 
+The <t>.rela.text</t> section in an executable is slightly different than those in 
+an ET_REL file. The text relocations in an ET_REL object have <t>r_offset</t> values 
+that are offsets relative to the start of the <t>.text</t> section. In an ELF 
+executable the <t>.rela.text</t> has <t>r_offset</t> values that are relative from the 
 base of the program.
 
 Since the text relocations are relative to the base of the program then the 
-`r_offset` values will become invalid once we randomize the location of each 
+<t>r_offset</t> values will become invalid once we randomize the location of each 
 function. So our gASLR module must update the relocation records for each 
 function before using it to re-link them.
 
-#### Source code snippet of gASLR.c line 466: move_function()
+<y>-= Source code snippet of gASLR.c line 466: move_function()</y>
 <pre><code class="language-c">
 bool
 move_function(struct shiva_ctx *ctx, struct aslr_ctx *aslr, struct func_entry *fe)
@@ -680,18 +681,18 @@ move_function(struct shiva_ctx *ctx, struct aslr_ctx *aslr, struct func_entry *f
 }
 </code></pre>
 In the source code above we simply subtract the base address of each function 
-from it's `r_offset` values to achieve the new r_offset values.
+from it's <t>r_offset</t> values to achieve the new r_offset values.
 
 Our current implementation of gASLR moves each function it's own random base 
 address that was mmap'd. In future versions I will make sure that each function 
 is placed at a random offset of the new base address to make locating functions 
 less predictable at a page boundary.
 
-### ELF executable must have a large code model
+<y>-= ELF executable must have a large code model</y>
 
 As we mentioned earlier Shiva modules must be compiled with the large code 
 model, while typical ELF executables use the small code model by default. The 
-gASLR implementation randomly relocates the executable’s `.text` section, and 
+gASLR implementation randomly relocates the executable’s <t>.text</t> section, and 
 mmap() may place code more than 2 GB apart. Workarounds such as MAP_32BIT 
 reduce available entropy and weaken security. Therefore, the current gASLR 
 implementation requires the target executable to be built with the large code 
@@ -700,16 +701,16 @@ executable's that have a small code model too, but in the meantime we only
 support executables with large code models.
 
 
-#### How to build an executable for gASLR compatibility
+<y>-= How to build an executable for gASLR compatibility</y>
 
 1. Preserved text relocations
 2. Large code model
 <pre><code class="language-sh">
 gcc -mcmodel=large -Wl,--emit-relocs test.c -o test
 </code></pre>
-## gASLR source code
+<y>-= gASLR source code</y>
  
-Change to the directory `shiva/modules/x86_64_modules/aslr`
+Change to the directory <t>shiva/modules/x86_64_modules/aslr</t>
 
 $ cat gASLR.c
 <pre><code class="language-c">
@@ -1284,28 +1285,28 @@ shiva_init(struct shiva_ctx *ctx)
 }
 </code></pre>
 
-### Summary of gASLR.c source code
+<y>-= Summary of gASLR.c source code</y>
 
 1. Move every function within the .text section to a new location in memory
-2. Update the `.rela.text` relocation entries `r_offset` values to align with 
+2. Update the <t>.rela.text</t> relocation entries <t>r_offset</t> values to align with 
 the new function locations
-3. Apply each `.rela.text` relocation to each function that has been moved. 
+3. Apply each <t>.rela.text</t> relocation to each function that has been moved. 
 
-You might call this technique  **JIT function transplantation**. 
+You might call this technique  <strong>JIT function transplantation</strong>. 
 
-## gASLR demo
+<y>-= gASLR demo</y>
 
-From the `shiva/modules/x86_64_modules/aslr` directory you will see several 
+From the <t>shiva/modules/x86_64_modules/aslr</t> directory you will see several 
 files including test.c, gASLR.c and a Makefile.
 
 
-To illustrate the effects of gASLR I created a simple program called `test.c` 
+To illustrate the effects of gASLR I created a simple program called <t>test.c</t> 
 that prints the address of it's functions at runtime. With standard ASLR in 
-effect you will notice that the two functions `main()` and `test1()` are always 
+effect you will notice that the two functions <t>main()</t> and <t>test1()</t> are always 
 at a fixed offset from the base address of the executable, whereas with gASLR 
 applied to ./test the functions will be mapped to their own base address.
 
-### Source code for test.c in gASLR demo
+<y>-= Source code for test.c in gASLR demo</y>
 
 gaslr_test_source - test.c - original [12]
 <pre><code class="language-c">
@@ -1335,7 +1336,7 @@ int main(void)
 
 Let's compile this program and run it with standard ASLR in effect.
 
-### Running ./test with standard ASLR
+<y>-= Running ./test with standard ASLR</y>
 <pre><code class="language-txt">
 $ gcc -Wl,--emit-relocs -mcmodel=large test.c-o test 
 $ ./test 
@@ -1345,11 +1346,11 @@ test1() is at 0x5a3b72d0a149
 </code></pre>
 test_without_gaslr - original [13]
 
-The program output shows that the address of `main()` and of `test1()` stay at 
-the same fixed offsets from the base address `0x5a3b72d0a000` during each run. 
+The program output shows that the address of <t>main()</t> and of <t>test1()</t> stay at 
+the same fixed offsets from the base address <t>0x5a3b72d0a000</t> during each run. 
 Let's apply gASLR to the program and see the difference in the output...
 
-### gASLR in action
+<y>-= gASLR in action</y>
 <pre><code class="language-txt">
 elfmaster@arcana-laptop:~/amp/shiva/modules/x86_64_modules/aslr$ shiva-ld -e ./test -i /lib/shiva \
 &gt; -5 $PWD -P gASLR.o -o test.gASLR
@@ -1376,10 +1377,10 @@ test1() is at 0x7ee279f61000
 gASLR_demo - original [14]
 
 As shown in the demo shown above, the gASLR module has been applied to
-./test.gASLR and it is using mmap() internally  to create a unique base
+./test.gASLR and it is using <t>mmap()</t> internally  to create a unique base
 mapping for each individual function.
 
-## Future work on gASLR
+<y>-= Future work on gASLR</y>
 
 Presently this is just a prototype and is lacking the code to handle all 
 possible relocation types and only accomplishes the basic security goals-- in a 
@@ -1394,13 +1395,13 @@ better version we would also add in the following features:
  Given a little bit more time I could have it polished up and ready for 
 production use. I just need the time to get it done!
 
-## Closing thoughts
+<y>-= Closing thoughts</y>
 
 Shiva bridges the gap between binary patching and dynamic instrumentation and 
 is extremely powerful for building ELF microprograms that solve hard security 
 problems! Thank you so much for taking the time to read this...
 
-## ELF binary hacking workshops
+<y>-= ELF binary hacking workshops</y>
 
 For those interested in learning more about Shiva and how to use it for binary 
 patching as well as for building security features, fuzzers, debuggers, and 
@@ -1409,14 +1410,14 @@ webpage. I'd love to train more people to see what kind of awesome projects come
 out of Shiva.
 
 
-## Contact
+<y>-= Contact</y>
 
 Please contact me with questions, comments, collaboration ideas, etc.
 
 elfmaster [at] arcana-research.io
 
 
-## References
+<y>-= References</y>
 
 [1] <a href="https://tmpout.sh/2/6.html">https://tmpout.sh/2/6.html</a>
 [2] <a href="https://arcana-research.io/shiva">https://arcana-research.io/shiva</a>
