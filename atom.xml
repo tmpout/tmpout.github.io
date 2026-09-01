@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>tmp.0ut</title>
+  <link rel="alternate" type="text/html" href="https://tmpout.sh"/>
+  <link rel="self" type="application/atom+xml" href="https://tmpout.sh/atom.xml"/>
+  <updated>2025-03-21T16:36:24Z</updated>
+  <id>urn:uuid:24912b04-c3d6-4c23-9433-7f3953504759</id>
+  <author>
+    <name>tmp.0ut Staff</name>
+    <email>stdin@tmpout.sh</email>
+  </author>
+  <entry>
+    <title>Volume 1</title>
+    <link rel="alternate" type="text/html" href="https://tmpout.sh/1/"/>
+    <id>urn:uuid:c328f43a-fb2b-4208-9dd4-87b6b9831872</id>
+    <updated>2023-08-30T19:31:50Z</updated>
+    <content type="html" xml:base="https://tmpout.sh/1/"><![CDATA[
+<h2>tmp.0ut Volume 1 - April 2021</h2>
+
+<h3>CONTENTS</h3>
+<pre><!--
+-->1.0  <a href="0.html">Intro</a> ....................................................... <b>tmp.0ut Staff</b>
+1.1  <a href="1.html">Dead Bytes</a> .................................................... <b>xcellerator</b>
+1.2  <a href="2.html">Implementing the PT_NOTE Infection Method In x64 Assembly</a> ........... <b>sblip</b>
+1.3  <a href="3.html">PT_NOTE To PT_LOAD ELF Injector In Rust</a> ............................. <b>d3npa</b>
+1.4  <a href="4.html">PT_NOTE Disinfector In Python</a> .................................... <b>manizzle</b>
+1.5  <a href="5.html">Fuzzing Radare2 For 0days In About 30 Lines Of Code</a> ..... <b>Architect, s01den</b>
+1.6  <a href="6.html">The Polymorphic False-Disassembly Technique</a> ........................ <b>s01den</b>
+1.7  <a href="7.html">Lin64.Eng3ls: Some Anti-RE Techniques In A Linux Virus</a> ...... <b>s01den, sblip</b>
+1.8  <a href="Linux.Midrashim.asm">Linux.Midrashim.asm</a> ................................................... <b>TMZ</b>
+1.9  <a href="9.html">In-Memory LKM Loading</a> ........................................... <b>netspooky</b>
+1.10 <a href="10/">Linux SHELF Loading</a> .................................... <b>ulexec, Anonymous_</b>
+1.11 <a href="11.html">Return To Original Entry Point Despite PIE</a> ......................... <b>s01den</b>
+1.12 <a href="12.html">Writing Viruses In MIPS Assembly For Fun (And No Profit)</a> ........... <b>s01den</b>
+1.13 <a href="13.html">Interview: herm1t</a> ........................................... <b>tmp.0ut Staff</b>
+1.14 <a href="14.html">GONE IN 360 SECONDS - Linux/Retaliation</a> ............................ <b>qkumba</b>
+1.15 <a href="Linux.Nasty.asm">Linux.Nasty.asm</a> ....................................................... <b>TMZ</b>
+1.16 <a href="Linux.Precinct3.asm">Linux.Precinct3.asm</a> ............................................. <b>netspooky</b>
+1.17 <a href="17/">Underground Worlds</a> ................................................. <b>s01den</b><!--
+--></pre>
+
+<pre>
+  >> For the txt version of this zine, visit <a href="https://tmpout.sh/1/txt/index.txt">https://tmpout.sh/1/txt/index.txt</a>
+     (all .html files are renamed to .txt!) or download the zip of this zine
+     here: <a href="https://tmpout.sh/1/tmp.0ut.1.txt.zip">https://tmpout.sh/1/tmp.0ut.1.txt.zip</a><!--
+--></pre>
+
+<h3>TRANSLATIONS</h3>
+<pre><!--
+-->  Translations of tmp.0ut are being done by community members. To get involved, please join our <a href="https://discord.gg/qbMZN5QbQb">Discord</a>!
+
+  * <a href="de/">de/</a>
+  * <a href="es/">es/</a>
+  * <a href="fr/">fr/</a>
+  * <a href="he/">he/</a>
+  * <a href="it/">it/</a>
+  * <a href="ja/">ja/</a>
+  * <a href="ru/">ru/</a>
+  * <a href="tr/">tr/</a>
+  * <a href="uk/">uk/</a><!--
+--></pre>
+    ]]></content>
+  </entry>
+  <entry>
+    <title>Volume 2</title>
+    <link rel="alternate" type="text/html" href="https://tmpout.sh/2/"/>
+    <id>urn:uuid:a1ce1480-c8b6-402e-90e6-eefb9ffd6d34</id>
+    <updated>2023-07-04T06:33:28Z</updated>
+    <content type="html" xml:base="https://tmpout.sh/2/"><![CDATA[
+<h2>VOLUME2 - FEB2022</h2>
+<pre><!--
+-->[00] <a href="./0.html">Intro</a>......................................................... <b>tmp.0ut Staff</b>
+[01] <a href="./1.html">Bare Metal Jacket</a>................................................. <b>Wintrmvte</b>
+[02] <a href="./2.html">A short note on entrypoint obscuring in ELF binaries</a>................. <b>s01den</b>
+[03] <a href="./3.html">Some ELF Parser Bugs</a>.............................................. <b>netspooky</b>
+[04] <a href="./4.html">every Boring Problem Found in eBPF</a>.............................. <b>FridayOrtiz</b>
+[05] <a href="./5.html">SHELF encounters of the elements kind</a>................................ <b>ulexec</b>
+[06] <a href="./6.html">Preloading the linker for fun and profit</a>.......................... <b>elfmaster</b>
+[07] <a href="./7.html">Lin64.M4rx: How to write a virtual machine in order to hide</a>
+     <a href="./7.html">your viruses and break your brain forever</a>............................ <b>s01den</b>
+[08] <a href="./Lin64.M4rx.asm">Lin64.M4rx.asm</a>....................................................... <b>s01den</b>
+[09] <a href="./9.html">MARX OF THE BEAST - RE of Lin64.M4rx</a>................................. <b>qkumba</b>
+[10] <a href="./10.html">A brief tour of VXnake by anonymous_</a>............................. <b>hexadecim8</b>
+[11] <a href="./11.html">Elf Binary Mangling Pt. 4: Limit Break</a>............................ <b>netspooky</b>
+[12] <a href="./12.html">Bashing ELFs Like a Caveman</a>............................................. <b>RiS</b>
+[13] <a href="./13.html">BGGP2021 Wrapup</a>................................................... <b>netspooky</b>
+[14] <a href="./14.html">84 byte aarch64 ELF</a>............................................... <b>netspooky</b>
+[15] <a href="./15.html">ELF Resources and Links</a>....................................... <b>tmp.0ut Staff</b><!--
+--></pre>
+
+<h3>TRANSLATIONS</h3>
+<pre><!--
+-->  * <a href="tr/">tr/</a><!--
+--></pre>
+    ]]></content>
+  </entry>
+  <entry>
+    <title>Volume 3</title>
+    <link rel="alternate" type="text/html" href="https://tmpout.sh/3/"/>
+    <id>urn:uuid:a9bbf509-ea9e-4a95-8265-386399c7e85a</id>
+    <updated>2024-01-20T01:52:21Z</updated>
+    <content type="html" xml:base="https://tmpout.sh/3/"><![CDATA[
+<h2>#003 - 2023-11</h2>
+<pre><!--
+--><a href='01.html'>Intro</a> ~ <b>t0</b>
+<a href='02.html'>Second Part To Hell Interview</a> ~ <b>t0</b>
+<a href='03.html'>UNIX VIRUSES 25th Anniversary</a> ~ <b>silvio</b>
+<a href='04.html'>Hijacking __cxa_finalize to achieve entry point obscuring</a> ~ <b>vrzh</b>
+<a href='Linux.ElizaCanFix.asm'>Linux.ElizaCanFix.asm</a> ~ <b>vrzh</b>
+<a href='06.html'>Concealing Namespaces Within a File Descriptor</a> ~ <b>Fanda Uchytil</b>
+<a href='07.html'>Dumping libc memory space to bypass ASLR</a> ~ <b>jonaslyk</b>
+<a href='08.html'>ARM32 ELF Sizecoding</a> ~ <b>deater</b>
+<a href='09.html'>A Silver Bullet To ELF Projects</a> ~ <b>echel0n</b>
+<a href='10.html'>in-memory-only fd-less ELF execution (with Perl)</a> ~ <b>isra</b>
+<a href='isra_exec_elf64.pl'>isra_exec_elf64.pl</a> ~ <b>isra</b>
+<a href='12.html'>u used 2 call me on my polymorphic shell phone</a> ~ <b>ic3qu33n</b>
+<a href='13.html'>Weird ELFs, or a tale of breaking parsers once again</a> ~ <b>g1inko</b>
+<a href='14.html'>inspect0rGadget.asm - x64 ROP Gadget Finder</a> ~ <b>s01den</b>
+<a href='15.test-1.c'>Reverse Text Disinfector</a> ~ <b>qkumba</b>
+<a href='16.html'>RE of Linux.Nasty.asm</a> ~ <b>qkumba</b>
+<a href='Linux.Anansi.c'>Linux.Anansi.c</a> ~ <b>sad0p</b>
+<a href='Linux.Slinger.asm'>Linux.Slinger.asm</a> ~ <b>lvti</b>
+<a href='19.html'>LKM Golf</a> ~ <b>rqu &amp; netspooky</b>
+<a href='20.html'>easylkb: Easy Linux Kernel Builder</a> ~ <b>ackmage &amp; netspooky</b>
+<a href='21.html'>23 Open Problems for Digital Self-Replicators</a> ~ <b>Second Part To Hell</b>
+<a href='22.html'>Cramming a Tiny Program into a Tiny ELF File: A Case Study</a> ~ <b>lm978</b>
+<a href='23.html'>silent syscall hooking on arm64 linux by patching svc handler</a> ~ <b>wintermute</b>
+<a href='24.html'>HVice - HyperVisor intrusion countermeasure electronics</a> ~ <b>wintermute</b>
+<a href='25.html'>BGGP4 Recap</a> ~ <b>Binary Golf Association</b>
+<a href='26.html'>LLMorpher</a> ~ <b>Second Part To Hell</b>
+<a href='27.html'>QRLog Malware Analysis</a> ~ <b>mauro</b>
+<a href='28.html'>HandJar.B</a> ~ <b>r3s1stanc3</b>
+<a href='29.html'>ClassWar</a> ~ <b>r3s1stanc3</b>
+<a href='30.html'>Linux.Linkin.pl: Another Perl x64 ELF virus</a> ~ <b>isra</b><!--
+--></pre>
+    ]]></content>
+  </entry>
+  <entry>
+    <title>Volume 4</title>
+    <link rel="alternate" type="text/html" href="https://tmpout.sh/4/"/>
+    <id>urn:uuid:b6744027-7dfc-4227-9de9-ca2346e6f3c1</id>
+    <updated>2025-03-21T20:36:58Z</updated>
+    <content type="html" xml:base="https://tmpout.sh/4/"><![CDATA[
+<pre><!--
+-->01 <b>tmp.0ut Staff</b> ................................ <a href="./1.html">Introduction</a>
+02 <b>tmp.0ut Staff</b> ........................ <a href="./2.html">Interview: elfmaster</a>
+03 <b>herm1t</b> .................... <a href="./3.html">Pride and Prejudice: Revisiting</a>
+............................... <a href="./3.html">pseudo-random index decryption</a>
+04 <b>S0S4</b> .. <a href="./4.html">Relocation Revelation: Unpacking the Secrets of ELF</a>
+05 <b>bah</b> ....... <a href="./5.html">Adapting SHELFs to make LKM-less Kernel Modules</a>
+06 <b>qkumba</b> ................. <a href="./6.html">DO I FEEL LUCKY? Linux/Slotmachine</a>
+07 <b>vrzh</b> .................................... <a href="./7.html">Linux.Slotmachine</a>
+08 <b>[DrgnS]gynvael</b> ..... <a href="./8.html">FixedASLR: .o ELF loader in a CTF task</a>
+09 <b>Orion</b> ...................... <a href="./9.html">Roll your own chroot container</a>
+10 <b>Matheuzsec &amp; Humzak711</b> .... <a href="./10.html">The Art of Linux Kernel Rootkit</a>
+11 <b>deluks</b> ........................ <a href="./11.html">Introduction to ELF symbols</a>
+12 <b>deluks</b> ................ <a href="./12.html">Introduction to ELF program headers</a>
+13 <b>gorplop</b> .. <a href="./13.html">Mutable Programs: A guide to simple polymorphism</a>
+14 <b>tasos</b> .......... <a href="./14.html">ProcFS hooking: A new way of communication</a>
+............................................. <a href="./14.html">for LKM rootkits</a>
+15 <b>isra</b> ........................................ <a href="./15.html">House of Pain</a>
+16 <b>Enrique Soriano</b> ............................... <a href="./16.html">Polyglottar</a>
+17 <b>Binary Golf Association</b> ....................... <a href="./17.html">BGGP5 Recap</a>
+18 <b>bad will</b> ................................ <a href="./18.html">tmp.0ut 4 mixtape</a><!--
+--></pre>
+<pre><!--
+->url: tmpout.sh/4
+twitter: @tmpout
+bsky: @tmpout.sh
+fedi: @tmpout@haunted.computer<!--
+--></pre>
+    ]]></content>
+  </entry>
+</feed>
