@@ -1,0 +1,300 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+                                                       ┌───────────────────────┐
+                                                       ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄       │
+                                                       │ █   █ █ █ █   █       │
+                                                       │ █   █ █ █ █▀▀▀▀       │
+                                                       │ █   █   █ █     ▄     │
+                                                       │                 ▄▄▄▄▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄   ▄ │
+                                                       │                 █   █ │
+                                                       │                 █   █ │
+                                                       │                 █▄▄▄█ │
+                                                       │                 ▄▄▄▄▄ │
+介绍SHELF加载技术                                      │                   █   │
+静态和位置无关代码的连接点                            │                   █   │
+~ @ulexec 和 @Anonymous_                              └───────────────────█ ──┘
+
+1. 引言
+
+在过去几年中，Linux攻击工具在复杂性和精密度方面有了多项改进。随着记录Linux威胁的公开报告数量增加，Linux恶意软件变得越来越流行。这些威胁包括政府支持的Linux植入程序，如APT28的VPNFilter、Drovorub或Winnti系列Linux恶意软件。
+
+然而，这种流行度的增加似乎还没有对当前Linux威胁形势的整体复杂性产生太大影响。这是一个相当年轻的生态系统，除了加密货币挖矿、DDoS和最近的勒索软件操作外，网络犯罪分子还未能找到可靠的盈利目标。
+
+在当今的Linux威胁环境中，即使是最小的改进或复杂性的引入往往都能导致反病毒软件的绕过，因此Linux恶意软件作者通常不会投入不必要的资源来使其植入程序变得复杂。这种现象发生有多种原因，且具有一定的模糊性。与Windows和MacOS等其他流行平台相比，Linux生态系统更加动态和多样化，这源于不同架构的ELF文件的多样性，ELF二进制文件可以以多种不同形式存在的事实，以及Linux威胁的可见性通常较差。
+
+由于这些问题，反病毒供应商在检测这些威胁时面临着完全不同的挑战。通常，对简单/不复杂威胁的不成比例的检测失败会给人留下Linux恶意软件本质上不复杂的印象。这种说法完全不符合事实，熟悉ELF文件格式的人都知道，ELF文件在创新方面有很大的空间，这是其他文件格式由于缺乏灵活性而无法提供的，即使我们多年来还没有看到它被大量滥用。
+
+在本文中，我们将讨论一种实现文件格式非常规功能的技术，该技术以通用方式将完整的可执行文件转换为shellcode，这再次证明了ELF二进制文件可以被操作以实现在其他文件格式中难以或无法复制的攻击创新。
+
+2. ELF反射加载入门
+
+为了理解这项技术，我们必须首先对此技术所基于的先前已知的ELF技术提供背景上下文，并比较其优势和权衡。
+
+大多数ELF打包器或任何实现ELF二进制加载的应用程序，主要基于所谓的User-Land-Exec。
+
+User-Land-Exec是由@thegrugq首次记录的一种方法，通过该方法可以在不使用execve系统调用族的情况下加载ELF二进制文件，因此得名。
+
+为了简单起见，下图展示了实现支持ET_EXEC和ET_DYN ELF二进制文件的普通User-Land-Exec的步骤，展示了UPX打包器对ELF二进制文件的实现：
+
+<a href="10.1.png"><img src="10.1.png" width="600px"></a>
+
+如我们所见，这种技术有以下要求（由@thegrugq提出）：
+
+  1. 清理地址空间
+  2. 如果二进制文件是动态链接的，加载动态链接器
+  3. 加载二进制文件
+  4. 初始化栈
+  5. 确定入口点（即动态链接器或主可执行文件）
+  6. 将执行转移到入口点
+
+在更技术性的层面上，我们得出以下要求：
+
+  1. 设置嵌入式可执行文件的栈及其对应的辅助向量
+  2. 解析PHDR并识别是否存在PT_INTERP段，表明该文件是动态链接的可执行文件
+  3. 如果存在PT_INTERP，则加载解释器
+  4. 加载目标嵌入式可执行文件
+  5. 根据目标可执行文件是否为动态链接的二进制文件，相应地转向映射的目标可执行文件或解释器的e_entry
+
+要了解更深入的解释，我们建议阅读@thegrugq关于此问题的综合论文[9]。
+
+常规User-Land-Exec的一个功能是避免execve足迹，这与其他技术（如memfd_create/execveat）形成对比，后者也广泛用于加载和执行目标ELF文件。由于加载器映射和加载目标可执行文件，嵌入式可执行文件具有非常规结构的灵活性。这对于规避和反取证目的有附带好处。
+
+另一方面，由于加载过程中涉及许多关键组件，反向工程师很容易识别出来，而且由于该技术严重依赖这些组件，因此有些脆弱。因此，编写基于User-Land-Exec的加载器一直比较繁琐。随着ELF文件格式添加更多功能，这种技术倾向于随时间成熟，从而增加其复杂性。
+
+我们将在本文中介绍的新技术依赖于实现具有减少约束集的通用User-Land-Exec加载器，支持据我们所知尚未报告的混合PIE和静态链接ELF二进制文件。
+
+我们认为这种技术代表了User-Land-Exec加载器先前版本的重大改进，因为基于技术实现约束的缺乏和这种新的混合静态/PIE ELF风格的性质，它可以提供的功能范围比以前的User-Land-Exec变体更广泛且更具规避性。
+
+3. 静态PIE可执行文件生成的内部机制
+
+3.1 背景
+
+2017年7月，H. J. Lu修补了GCC bugzilla中名为"Support creating static PIE"的错误条目。这个补丁提到了在他的glibc hjl/pie/static分支中实现静态基于PIE的实现，Lu在其中记录了通过向链接器提供–static和–pie标志以及PIE版本的crt*.o作为输入，可以生成静态PIE ELF可执行文件。需要注意的是，在这个补丁时，生成完全静态链接的PIE二进制文件是不可能的。[1]
+
+8月，Lu向GCC驱动程序提交了第二个补丁[2]，用于添加–static标志以支持他在前一个补丁中能够演示的静态PIE文件。该补丁在主干[3]中被接受，并在GCC v8中发布。
+
+此外，2017年12月在glibc[4]中提交了一个添加–enable-static-pie选项的补丁。这个补丁使得嵌入所需的ld.so部分以生成独立的静态PIE可执行文件成为可能。
+
+glibc允许静态PIE的主要变化是添加了_dl_relocate_static_pie函数，该函数由__libc_start_main调用。此函数用于定位运行时加载地址，读取动态段，并在初始化之前执行动态重定位，然后将执行控制流转移到目标应用程序。
+
+为了知道生成静态PIE可执行文件需要哪些标志和编译/链接阶段，我们向GCC传递了–static-pie –v标志。然而，我们很快意识到这样做时，链接器生成了大量的标志和对内部包装器的调用。例如，链接阶段由工具/usr/lib/gcc/x86_64-linux-gnu/9/collect2处理，GCC本身由/usr/lib/gcc/x86_64-linux-gnu/9/cc1包装。尽管如此，我们设法删除了不相关的标志，最终得到了以下步骤：
+
+<a href="10.2.png"><img src="10.2.png" width="600px"></a>
+
+这些步骤实际上与Lu提供的步骤相同，向链接器提供使用–fpie编译的输入文件，以及–static、-pie、-z text、--no-dynamic-linker。特别是，静态PIE创建最相关的组件是rcrt1.o、libc.a和我们自己提供的输入文件test.o。rcrt1.o对象包含_start代码，该代码具有在执行其入口点之前正确加载应用程序所需的代码，方法是调用__libc_start_main中包含的相应libc启动代码：
+
+<a href="10.3.png"><img src="10.3.png" width="600px"></a>
+
+如前所述，__libc_start_main将调用新添加的函数_dl_relocate_static_pie（在glibc源代码的elf/dl-reloc-static-pie.c文件中定义）。该函数执行的主要步骤在源代码中有注释：
+
+<a href="10.4.png"><img src="10.4.png" width="600px"></a>
+
+借助这些功能，GCC能够生成可以在任意地址加载的静态可执行文件。
+
+我们可以观察到_dl_relocate_static_pie将处理所需的动态重定位。rcrt1.o与常规crt1.o的一个显著区别是所有包含的代码都是位置无关的。检查生成的二进制文件的外观，我们看到以下内容：
+
+<a href="10.5.png"><img src="10.5.png" width="600px"></a>
+
+乍看之下，它们似乎是普通的动态链接PIE可执行文件，这是基于从ELF头部检索到的ET_DYN可执行文件类型。然而，仔细检查段时，我们会发现不存在通常表示动态链接可执行文件中解释器路径的PT_INTERP段，以及通常仅包含在静态链接可执行文件中的PT_TLS段的存在。
+
+<a href="10.6.png"><img src="10.6.png" width="600px"></a>
+
+如果我们检查动态链接器如何识别目标可执行文件，我们会看到它正确识别了文件类型：
+
+<a href="10.7.png"><img src="10.7.png" width="600px"></a>
+
+要加载此文件，我们只需要将所有PT_LOAD段映射到内存中，设置进程栈及其对应的辅助向量条目，然后转向映射的可执行文件的入口点。我们不需要担心映射RTLD，因为我们没有任何外部依赖或链接时地址限制。
+
+如我们所见，我们有四个在SCOP ELF二进制文件中常见的可加载段。然而，为了更容易部署，如果我们能将所有这些段合并为一个段，就像通常在ELF磁盘注入到外部可执行文件中那样，这将是至关重要的。我们可以使用–N链接器标志将数据和文本合并到单个段中来实现这一点。
+
+3.2. GCC的-N和static-pie标志的不兼容性
+
+如果我们同时向GCC传递–static-pie和–N标志，我们会看到它生成以下可执行文件：
+
+<a href="10.8.png"><img src="10.8.png" width="600px"></a>
+
+我们注意到使用–static-pie时生成的ELF类型是ET_DYN，而现在与–N一起使用时结果是ET_EXEC。
+
+此外，如果我们仔细查看段的虚拟地址，我们会看到生成的二进制文件不是位置无关的可执行文件。这是因为虚拟地址似乎是绝对地址而不是相对地址。为了理解为什么我们的程序没有按预期链接，我们检查了正在使用的链接器脚本。
+
+由于我们使用的是binutils的ld链接器，我们查看了ld如何选择链接器脚本；这是在ld/ldmain.c代码的第345行完成的：
+
+<a href="10.9.png"><img src="10.9.png" width="600px"></a>
+
+ldfile_open_default_command_file实际上是对编译时生成的架构无关函数的间接调用，该函数包含一组根据传递给ld的标志选择的内部链接器脚本。因为我们使用的是x86_64架构，生成的源代码将是ld/elf_x86_64.c，用于选择脚本的函数是gldelf_x86_64_get_script，它只是一组if-else-if语句来选择内部链接器脚本。–N选项将config.text_read_only变量设置为false，这迫使选择函数使用不生成PIC的内部脚本，如下所示：
+
+<a href="10.10.png"><img src="10.10.png" width="600px"></a>
+
+这种选择默认脚本的方式使得–static-pie和–N标志不兼容，因为基于–N选择脚本的强制测试在–static-pie之前解析。
+
+3.3. 通过自定义链接器脚本绕过
+
+–N、-static和–pie标志之间的不兼容性使我们陷入了死胡同，我们被迫考虑不同的方法来克服这个障碍。我们尝试的是提供一个自定义脚本来驱动链接器。由于我们本质上需要合并两个独立链接器脚本的行为，我们的方法是选择其中一个脚本并调整它以生成具有剩余脚本功能的所需结果。
+
+我们选择了–static-pie的默认脚本而不是与–N一起使用的脚本，因为在我们的情况下，修改它比更改–N默认脚本以支持PIE生成更容易。
+
+要实现这个目标，我们需要更改段的定义，这些定义由链接器脚本中的PHDRS [5]字段控制。如果不使用该命令，链接器将提供默认生成的程序头 - 但是，如果我们在链接器脚本中忽略这一点，链接器将不会创建任何额外的程序头，并将严格遵循主题链接器脚本中定义的指导原则。
+
+考虑到上述细节，我们向默认链接器脚本添加了一个PHDRS命令，从使用–static-pie时默认创建的所有原始段开始：
+
+<a href="10.11.png"><img src="10.11.png" width="600px"></a>
+
+之后我们需要知道每个节如何映射到每个段 - 为此我们可以使用readelf，如下所示：
+
+<a href="10.12.png"><img src="10.12.png" width="600px"></a>
+
+了解了映射关系后，我们只需要更改链接器脚本中的节输出定义，在每个函数定义的末尾添加适当的段名称，如以下示例所示：
+
+<a href="10.13.png"><img src="10.13.png" width="600px"></a>
+
+在这里，.tdata和.tbss节被分配给按照我们在readelf –l命令输出中看到的相同顺序映射的段。最终，我们得到了一个工作脚本，精确地将所有映射在数据中的节更改为文本段：
+
+<a href="10.14.png"><img src="10.14.png" width="600px"></a>
+
+如果我们使用这个链接器脚本编译我们的测试文件，我们会看到以下生成的可执行文件：
+
+<a href="10.15.png"><img src="10.15.png" width="600px"></a>
+
+我们现在有了一个只有一个可加载段的static-pie。同样的方法可以重复使用来删除其他不相关的段，只保留执行二进制文件所需的关键段。例如，以下是具有运行所需最小程序头的static-pie可执行文件实例：
+
+<a href="10.16.png"><img src="10.16.png" width="600px"></a>
+
+以下是我们所需ELF结构的最终输出 - 只有一个由链接器脚本生成的PT_LOAD段，其PHDRS命令配置如下面的截图所示：
+
+<a href="10.17.png"><img src="10.17.png" width="600px"></a>
+
+4. SHELF加载
+
+这种生成的ELF风格给我们提供了一些其他ELF类型无法提供的有趣功能。为了简单起见，我们将这种类型的ELF二进制文件标记为SHELF，并将在本文的其余部分中引用它。以下是SHELF加载所需阶段的更新图：
+
+<a href="10.18.png"><img src="10.18.png" width="600px"></a>
+
+如上图所示，与传统的ELF加载方案相比，加载SHELF文件的过程在复杂性方面大大降低。
+
+为了说明加载这些类型文件的约束集减少，以下是最小化SHELF User-Land-Exec方法的代码片段：
+
+<a href="10.19.png"><img src="10.19.png" width="600px"></a>
+
+使用这种方法，主题SHELF文件在内存和磁盘上的外观如下：
+
+<a href="10.20.png"><img src="10.20.png" width="600px"></a>
+
+如我们所见，进程映像中缺少ELF头和程序头。这是这种ELF风格使我们能够实现的一个功能，将在下一节中讨论。
+
+4.1 反取证功能
+
+这种新的User-Land-Exec方法还有两个可选阶段，对反取证目的有用。由于dl_relocate_static_pie函数将从辅助向量获取重定位所需的所有字段，这给我们留下了空间来处理主题SHELF文件结构在内存和磁盘上的外观。
+
+删除ELF头将直接影响重建能力，因为大多数基于Linux的扫描器将通过首先识别ELF头来扫描进程内存中的现有ELF映像。ELF头将被解析，并将包含有关在何处定位程序头表以及随后文件的映射工件的更多信息。
+
+删除ELF头很简单，因为加载器实际上不需要这个工件 - 主题文件中所需的所有信息都将从前面提到的辅助向量中检索。
+
+可以隐藏的另一个工件是程序头表。与ELF头相比，这是一个略有不同的情况。辅助向量需要定位程序头表，以便RTLD通过应用所需的运行时重定位成功加载文件。无论如何，有许多方法可以混淆PHT。最简单的方法是删除原始程序头表位置，并将其重新定位到只有辅助向量知道的文件中的某个位置。
+
+<a href="10.21.png"><img src="10.21.png" width="600px"></a>
+
+我们可以预先计算每个辅助向量条目的位置，并在包含文件中将每个条目定义为宏，在编译时为每个主题SHELF文件定制我们的加载器。以下是如何生成这些宏的示例：
+
+<a href="10.22.png"><img src="10.22.png" width="600px"></a>
+
+如我们所见，我们已经解析了主题SHELF文件的e_entry和e_phnum字段，创建了相应的宏来保存这些值。我们还必须选择一个随机基础映像来加载文件。最后，我们定位PHT并将其转换为数组，然后从其原始位置删除它。应用这些修改允许我们完全删除ELF头并更改主题SHELF文件PHT在磁盘和内存中的默认位置(!)
+
+如果无法成功检索程序头表，重建能力可能会受到严格限制，并且必须应用进一步的启发式方法才能成功重建进程映像。
+
+使程序头表的重建更加困难的另一种方法是通过检测glibc实现辅助向量字段解析的方式。
+
+4.2 通过PT_TLS修补来掩盖SHELF特性
+
+即使在通过在制作辅助向量时选择新的任意位置来修改程序头表的默认位置之后，程序头表仍然会驻留在内存中，并且可以通过一些努力找到。为了进一步掩盖我们自己，我们可以覆盖启动代码如何读取辅助向量字段。
+
+执行此操作的代码位于elf/dl_support.c中的_dl_aux_init函数中。抽象地说，代码遍历所有auxv_t条目，每个条目初始化glibc的内部变量：
+
+<a href="10.23.png"><img src="10.23.png" width="600px"></a>
+
+需要辅助向量的唯一原因是初始化内部_dl_*变量。知道这一点，我们可以完全绕过辅助向量的创建，并在将执行控制权传递给主题SHELF文件之前执行与_dl_aux_init相同的工作。
+
+唯一关键的条目是AT_PHDR、AT_PHNUM和AT_RANDOM。因此，我们只需要修补依赖于这些字段的相应_dl_*变量。作为如何检索这些值的示例，我们可以使用以下单行命令生成一个包含预计算宏的包含文件，这些宏保存每个dl_*变量的偏移量：
+
+<a href="10.24.png"><img src="10.24.png" width="600px"></a>
+
+找到这些变量的偏移量后，我们只需要以原始启动代码使用辅助向量的相同方式修补它们。为了说明这种技术，以下代码将程序头的地址初始化为new_address，并将程序头的数量初始化为正确的数量：
+
+<a href="10.25.png"><img src="10.25.png" width="600px"></a>
+
+此时，我们有一个不提供辅助向量的工作程序。因为主题二进制文件是静态链接的，并且加载SHELF文件的代码是我们的加载器，我们可以忽略辅助向量的AT_PHDR和AT_PHNUM或dl_phdr和dl_phnum中的其他每个段。有一个例外，即PT_TLS段，它是在ELF文件格式中实现线程本地存储的接口。
+
+以下位于csu/libc-tls.c中的__libc_setup_tls函数的代码显示了从PT_TLS段检索的信息类型：
+
+<a href="10.26.png"><img src="10.26.png" width="600px"></a>
+
+在上面的代码片段中，我们可以看到TLS初始化依赖于PT_TLS段的存在。我们有几种方法可以混淆这个工件，比如修补__libc_setup_tls函数使其仅返回，然后用我们自己的代码初始化TLS。在这里，我们选择实现一个快速的glibc补丁作为概念验证。
+
+为了避免需要PT_TLS程序头，我们添加了一个全局变量来保存PT_TLS的值，并在__libc_setup_tls内部设置值，从我们的全局变量而不是主题SHELF文件程序头表中读取。通过这个小改动，我们最终删除了所有程序头：
+
+<a href="10.27.png"><img src="10.27.png" width="600px"></a>
+
+使用以下脚本生成_phdr.h：
+
+<a href="10.28.png"><img src="10.28.png" width="600px"></a>
+
+我们可以在包含_phdr.h后以以下方式应用我们的补丁：
+
+<a href="10.29.png"><img src="10.29.png" width="600px"></a>
+
+应用上述方法，我们通过在没有ELF头、程序头表和辅助向量的情况下加载和执行我们的SHELF文件获得了高度的规避性 - 就像加载shellcode一样。以下图表说明了SHELF文件的加载过程有多么简单：
+
+<a href="10.30.png"><img src="10.30.png" width="600px"></a>
+
+5. 结论
+
+我们已经介绍了ELF文件反射加载的内部机制，解释了User-Land-Exec的先前实现及其优势和缺点。然后我们解释了GCC代码库中实现static-pie二进制文件支持的最新补丁，讨论了我们想要的结果，以及我们为实现生成具有单个PT_LOAD段的static-pie ELF文件而采取的方法。最后，我们讨论了SHELF加载可以提供的反取证功能，我们认为与先前版本的ELF反射加载相比，这是一个相当大的改进。
+
+我们认为这可能是下一代ELF反射加载，它可能有助于读者理解ELF文件格式可以提供的攻击能力的范围。如果您想访问源代码，请联系@sblip或@ulexec。
+
+6. 参考文献
+
+[1] (支持static pie)
+    https://gcc.gnu.org/bugzilla/show_bug.cgi?id=81498
+[2] (gcc第一个补丁)
+    https://gcc.gnu.org/ml/gcc-patches/2017-08/msg00638.html
+[3] (gcc补丁)
+    https://gcc.gnu.org/viewcvs/gcc?view=revision&revision=252034
+[4] (glibc --enable-static-pie)
+    https://sourceware.org/git/?p=glibc.git;a=commit; \
+      h=9d7a3741c9e59eba87fb3ca6b9f979befce07826
+[5] (链接器脚本文档)
+    https://sourceware.org/binutils/docs/ld/PHDRS.html#PHDRS
+[6] https://sourceware.org/binutils/docs/ld/
+      Output-Section-Phdr.html#Output-Section-Phdr
+[7] https://www.akkadia.org/drepper/tls.pdf
+[8] (为什么ld不允许-static -pie -N)
+    https://sourceware.org/git \
+      /gitweb.cgi?p=binutils-gdb.git;a=blob;f=ld/ldmain.c; \
+      h=c4af10f4e9121949b1b66df6428e95e66ce3eed4;hb=HEAD#l345
+[9] (grugq ul_exec论文)
+    https://grugq.github.io/docs/ul_exec.txt
+[10] (ELF UPX内部机制)
+     https://ulexec.github.io/ulexec.github.io/article \
+       /2017/11/17/UnPacking_a_Linux_Tsunami_Sample.html
+
+</pre></div></center></body></html> 

